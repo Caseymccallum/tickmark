@@ -18,15 +18,15 @@
  * it, and it is useless without the passphrase. It has to be here, or the decryption could not
  * happen in the browser at all, which would put the plaintext back on the server.
  */
-import { decryptEnvelope, unwrapPracticeKey } from './tickmark-crypto.js';
+import { decryptWithKeys, unwrapPracticeKey } from './tickmark-crypto.js';
 
-const keyElement = document.getElementById('wrapped-key');
+const keyElement = document.getElementById('key-records');
 const passphraseField = document.getElementById('passphrase');
 const unlockButton = document.getElementById('unlock');
 const unlockStatus = document.getElementById('unlock-status');
 
-/** The unwrapped private key, for this page only. Never stored, never sent. */
-let privateKey = null;
+/** The unwrapped private keys, for this page only. Never stored, never sent. */
+let privateKeys = [];
 
 const setStatus = (element, text) => {
   if (element) element.textContent = text;
@@ -47,21 +47,39 @@ async function unlock() {
     setStatus(unlockStatus, 'Type your passphrase first.');
     return false;
   }
-  setStatus(unlockStatus, 'Unwrapping your key…');
-  try {
-    privateKey = await unwrapPracticeKey(JSON.parse(keyElement.textContent).wrapped, passphrase);
-    // Cleared from the field as soon as it has been used, so it is not sitting on screen for the
-    // rest of the session.
-    passphraseField.value = '';
-    setUnlocked(true);
-    setStatus(unlockStatus, 'Key unlocked for this tab. You can save files now.');
-    return true;
-  } catch {
-    privateKey = null;
+
+  const records = JSON.parse(keyElement.textContent).keys;
+  setStatus(unlockStatus, `Unwrapping ${records.length === 1 ? 'your key' : `${records.length} keys`}…`);
+
+  // One passphrase, and it may not open every key: a practice that rotated and chose a new
+  // passphrase at the same time has keys sealed differently, and the ones that do not open are
+  // skipped rather than treated as a failure. What matters is how many opened, and the page says.
+  const opened = [];
+  for (const record of records) {
+    try {
+      opened.push(await unwrapPracticeKey(record.wrapped, passphrase));
+    } catch {
+      // Not this passphrase, for this key.
+    }
+  }
+
+  passphraseField.value = '';
+  if (opened.length === 0) {
+    privateKeys = [];
     setUnlocked(false);
-    setStatus(unlockStatus, 'That passphrase does not open this key.');
+    setStatus(unlockStatus, 'That passphrase does not open any of this practice\'s keys.');
     return false;
   }
+
+  privateKeys = opened;
+  setUnlocked(true);
+  setStatus(
+    unlockStatus,
+    opened.length === records.length
+      ? 'Key unlocked for this tab. You can save files now.'
+      : `${opened.length} of ${records.length} keys unlocked. Files sent under the others will not open with this passphrase.`,
+  );
+  return true;
 }
 
 if (keyElement) {
@@ -78,7 +96,7 @@ if (keyElement) {
   for (const button of saveButtons()) {
     button.addEventListener('click', async () => {
       const status = button.parentElement.querySelector('.status');
-      if (!privateKey && !(await unlock())) return;
+      if (privateKeys.length === 0 && !(await unlock())) return;
 
       const name = button.dataset.name;
       try {
@@ -91,7 +109,7 @@ if (keyElement) {
         const envelope = new Uint8Array(await response.arrayBuffer());
 
         setStatus(status, `Opening ${name}…`);
-        const plaintext = await decryptEnvelope(privateKey, envelope);
+        const plaintext = await decryptWithKeys(privateKeys, envelope);
 
         // The plaintext goes straight to a download and is not rendered. Putting it on the page
         // would mean a client's bank statement as DOM, in a tab that also runs whatever else the

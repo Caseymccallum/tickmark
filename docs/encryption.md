@@ -64,6 +64,49 @@ The server checks the magic and the version and refuses anything that fails. Tha
 *plaintext* upload is rejected: the server will not store a document it could read and then call it
 encrypted.
 
+## Rotating a key
+
+A practice can make a new key at any time from `Keys → Make a new key`. What that does, exactly:
+
+- New uploads are encrypted to the **newest** key: the client's page is handed it.
+- **Every older key is kept.** This is not tidiness, it is the whole design. Each file already
+  stored is encrypted to the key that was current when it arrived, and ECDH offers no way to move an
+  envelope to a new key without the old private key. Deleting an old key would make every document
+  its clients had sent unopenable, so the product does not offer a way to delete one.
+- Opening a file tries each key the practice holds, newest first. This is safe because AES-GCM's
+  authentication tag means a wrong key *fails* rather than returning something plausible — and it is
+  why rotation needed no change to the file format, which matters: a format change would make every
+  file written before it a special case.
+
+**What rotation is for, and what it is not for.** It changes what happens to the *next* file. That
+makes it the right response to a key being lost or exposed, and a reasonable thing to do
+periodically. It is **not an undo**: it cannot un-disclose anything already taken. If someone has a
+copy of an old key and a copy of the files encrypted to it, a new key changes nothing about those
+files. No design can fix that, and a product that implied otherwise would be lying.
+
+The page says all of this where the practice will read it, including the sentence that matters most:
+a new key does not re-encrypt anything.
+
+**Not built:** re-encrypting old files to a new key, which is the only thing that would make an old
+key safe to delete. It needs the old passphrase, a pass through every stored envelope, and a way to
+resume if the browser is closed halfway through — so it is a project rather than a patch, and until
+it exists the honest answer is that old keys stay.
+
+## Changing a passphrase
+
+`Keys` offers this per key, and it is a much smaller operation than rotation: the key is unwrapped
+with the old passphrase and sealed again with the new one, so **the key itself does not change** and
+nothing has to be re-encrypted. Every file stays readable and no stored document is touched.
+
+Two consequences worth knowing:
+
+- A practice that rotates *and* chooses a new passphrase at the same time ends up with keys sealed
+  under different passphrases. The unlock step tries the given passphrase against each key and reports
+  how many opened — *"2 of 3 keys unlocked"* — rather than failing, because which files are reachable
+  with which passphrase is the useful information.
+- Losing a passphrase is still unrecoverable. A copy of a key without its passphrase is a file nobody
+  can open, and that is the same property as the guarantee seen from the other side.
+
 ## The threat model
 
 **Protected:**
@@ -108,12 +151,12 @@ which later offers something better can be used without a migration.
 
 ## How a practice opens a file
 
-**In the browser, on the request page.** The page carries the practice's *wrapped* private key, which
-leaks nothing — the server already stores it, and it is useless without the passphrase. The practice
-types the passphrase into a field on that page, the key is unwrapped there, and it is kept in a
-variable in that tab so that saving three files does not mean paying for 600,000 rounds of PBKDF2
-three times. Saving a file fetches the envelope, opens it in the tab, and hands the plaintext to the
-browser as a download.
+**In the browser, on the request page.** The page carries the practice's *wrapped* private keys, which
+leak nothing — the server already stores them, and they are useless without the passphrase. The
+practice types the passphrase into a field on that page, the keys are unwrapped there, and they are
+kept in a variable in that tab so that saving three files does not mean paying for 600,000 rounds of
+PBKDF2 three times. Saving a file fetches the envelope, opens it in the tab, and hands the plaintext
+to the browser as a download.
 
 Three consequences worth stating rather than leaving to be discovered:
 

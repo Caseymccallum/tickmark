@@ -27,12 +27,10 @@ export function recordEvent(db, { requestId, kind, detail = null, at = now() }) 
     .run(newId(), requestId, kind, detail, at);
 }
 
-export function createPractitioner(db, { email, passwordHash, publicKey = null, wrappedPrivateKey = null, at = now() }) {
+export function createPractitioner(db, { email, passwordHash, at = now() }) {
   const id = newId();
-  db.prepare(
-    `INSERT INTO practitioner (id, email, password_hash, public_key, wrapped_private_key, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, email, passwordHash, publicKey, wrappedPrivateKey, at);
+  db.prepare('INSERT INTO practitioner (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
+    .run(id, email, passwordHash, at);
   return id;
 }
 
@@ -155,30 +153,61 @@ export function history(db, requestId) {
 }
 
 export function practitionerByEmail(db, email) {
-  return db
-    .prepare('SELECT id, email, password_hash, public_key, wrapped_private_key FROM practitioner WHERE email = ?')
-    .get(email);
+  return db.prepare('SELECT id, email, password_hash FROM practitioner WHERE email = ?').get(email);
 }
 
 /**
- * Store a practice's public key, and the private half already wrapped under a passphrase the
- * server has never seen.
- *
- * The wrapping happens in the browser. If the server wrapped it, the server could unwrap it,
- * and the claim that a self-hosted Tickmark cannot read a client's documents would be false
- * in exactly the situation where it matters: when the host is compromised.
+ * A practice's keys, newest first. The newest is the one a client's browser encrypts to; the older
+ * ones exist because files already stored are encrypted to them and cannot be moved.
  */
-export function savePracticeKeys(db, practitionerId, { publicKey, wrappedPrivateKey }) {
-  db.prepare('UPDATE practitioner SET public_key = ?, wrapped_private_key = ? WHERE id = ?')
-    .run(JSON.stringify(publicKey), wrappedPrivateKey, practitionerId);
+export function practiceKeys(db, practitionerId) {
+  return db
+    .prepare(
+      `SELECT id, public_key, wrapped_private_key, created_at
+         FROM practice_key WHERE practitioner_id = ?
+        ORDER BY created_at DESC, rowid DESC`,
+    )
+    .all(practitionerId)
+    .map((row) => ({
+      id: row.id,
+      publicKey: JSON.parse(row.public_key),
+      wrappedPrivateKey: row.wrapped_private_key,
+      createdAt: row.created_at,
+    }));
 }
 
-export function practiceKeys(db, practitionerId) {
-  const row = db
-    .prepare('SELECT public_key, wrapped_private_key FROM practitioner WHERE id = ?')
-    .get(practitionerId);
-  if (!row || !row.public_key) return null;
-  return { publicKey: JSON.parse(row.public_key), wrappedPrivateKey: row.wrapped_private_key };
+export function currentPracticeKey(db, practitionerId) {
+  return practiceKeys(db, practitionerId)[0] ?? null;
+}
+
+/**
+ * Add a key. Rotation is this and nothing else — no key is removed, because removing one would
+ * orphan every file encrypted to it.
+ *
+ * The wrapping happened in the browser, as it always does. If the server wrapped it, the server
+ * could unwrap it, and the claim that a self-hosted Tickmark cannot read a client's documents would
+ * be false in exactly the situation where it matters: when the host is compromised.
+ */
+export function addPracticeKey(db, practitionerId, { publicKey, wrappedPrivateKey, at = now() }) {
+  const id = newId();
+  db.prepare(
+    `INSERT INTO practice_key (id, practitioner_id, public_key, wrapped_private_key, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, practitionerId, JSON.stringify(publicKey), wrappedPrivateKey, at);
+  return id;
+}
+
+/**
+ * Re-wrap one key under a new passphrase.
+ *
+ * Changing a passphrase does not rotate anything: the same key comes back, sealed differently. That
+ * is why it is cheap, and why it is worth having as a separate act from rotation.
+ */
+export function replaceWrappedKey(db, practitionerId, keyId, wrappedPrivateKey) {
+  const row = db.prepare('SELECT id FROM practice_key WHERE id = ? AND practitioner_id = ?').get(keyId, practitionerId);
+  if (!row) return false;
+  db.prepare('UPDATE practice_key SET wrapped_private_key = ? WHERE id = ?').run(wrappedPrivateKey, keyId);
+  return true;
 }
 
 export function clientsOf(db, practitionerId) {
@@ -297,7 +326,9 @@ export function tokenLookup(db, token, at = new Date()) {
       `SELECT t.id AS token_id, t.expires_at, t.revoked_at,
               r.id, r.title, r.due_at, r.practitioner_id,
               c.name AS client_name,
-              p.public_key AS practice_public_key
+              (SELECT k.public_key FROM practice_key k
+                WHERE k.practitioner_id = r.practitioner_id
+                ORDER BY k.created_at DESC, k.rowid DESC LIMIT 1) AS practice_public_key
          FROM access_token t
          JOIN request r ON r.id = t.request_id
          JOIN client c ON c.id = r.client_id

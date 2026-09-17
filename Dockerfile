@@ -11,6 +11,11 @@ WORKDIR /app
 # The application is source. There is nothing to compile and nothing to fetch.
 COPY package.json ./
 COPY src ./src
+# `web/` is not optional. The server imports the envelope format from it so that it can tell an
+# encrypted upload from a plaintext one, and it serves those files to the browser as the scripts that
+# do the encrypting and the opening. The image builds without them and then cannot start — which is
+# how this line came to be written.
+COPY web ./web
 
 # Data on a volume, so that stopping the container does not delete a practice's
 # records and so that a backup is a file copy. Owned by the unprivileged user the

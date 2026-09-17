@@ -91,9 +91,9 @@ test('the request page carries what the browser needs to open a file', async () 
     const { client, requestId, uploadId, keys } = await receive(context);
     const page = await (await client.get(`/requests/${requestId}`)).text();
 
-    const keyTag = /<script type="application\/json" id="wrapped-key">([\s\S]*?)<\/script>/.exec(page)?.[1];
+    const keyTag = /<script type="application\/json" id="key-records">([\s\S]*?)<\/script>/.exec(page)?.[1];
     assert.ok(keyTag, 'the wrapped key is in the page');
-    assert.equal(JSON.parse(keyTag).wrapped, keys.wrappedPrivateKey, "it is the practice's own key record");
+    assert.equal(JSON.parse(keyTag).keys[0].wrapped, keys.wrappedPrivateKey, "it is the practice's own key record");
 
     assert.match(page, new RegExp(`data-url="/requests/${requestId}/files/${uploadId}"`), 'the file has a save url');
     assert.match(page, /data-name="bank statements\.pdf"/, 'and knows the name to save it under');
@@ -120,7 +120,7 @@ test('the decrypting script is served, and is the module the tests just used', a
     assert.match(response.headers.get('content-type'), /javascript/);
     const source = await response.text();
     assert.match(source, /from '\.\/tickmark-crypto\.js'/, 'it imports the one crypto module');
-    assert.match(source, /decryptEnvelope/, 'and calls the function the tests called');
+    assert.match(source, /decryptWithKeys/, 'and calls the function the tests called');
   });
 });
 

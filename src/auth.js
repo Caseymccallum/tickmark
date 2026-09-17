@@ -36,7 +36,8 @@ export function sessionFor(db, token, at = new Date()) {
   if (typeof token !== 'string' || token.length === 0) return null;
   const row = db
     .prepare(
-      `SELECT s.id, s.expires_at, p.id AS practitioner_id, p.email, p.public_key
+      `SELECT s.id, s.expires_at, p.id AS practitioner_id, p.email,
+              EXISTS (SELECT 1 FROM practice_key k WHERE k.practitioner_id = p.id) AS has_key
          FROM session s JOIN practitioner p ON p.id = s.practitioner_id
         WHERE s.token_hash = ?`,
     )
@@ -48,7 +49,7 @@ export function sessionFor(db, token, at = new Date()) {
   }
   // `hasKey` travels with the identity because a practice without a key cannot be sent files,
   // and every signed-in page needs to know that without asking the database again.
-  return { id: row.practitioner_id, email: row.email, hasKey: row.public_key !== null };
+  return { id: row.practitioner_id, email: row.email, hasKey: row.has_key === 1 };
 }
 
 export function endSession(db, token) {

@@ -26,11 +26,23 @@ CREATE TABLE IF NOT EXISTS practitioner (
   id                  TEXT PRIMARY KEY,
   email               TEXT NOT NULL UNIQUE,
   password_hash       TEXT NOT NULL,
-  -- Null until the practice generates the key its files are encrypted to. The columns
-  -- are nullable rather than filled with a placeholder, because a placeholder would be a
-  -- lie the encryption code could later believe.
-  public_key          TEXT,
-  wrapped_private_key TEXT,
+  created_at          TEXT NOT NULL
+);
+
+-- A practice's keys, as a history rather than a single value.
+--
+-- Rotation cannot be a swap. Every file already stored is encrypted to the key that was current
+-- when it arrived, and ECDH offers no way to move an envelope to a new key without the old private
+-- key — so a practice that rotates *must* keep the old key, or every document its clients have sent
+-- becomes unopenable. The row stays, and the newest row is the one new uploads use.
+--
+-- What that means for a compromise is stated in docs/encryption.md rather than glossed: rotation
+-- protects what arrives afterwards. It cannot un-disclose what has already been taken.
+CREATE TABLE IF NOT EXISTS practice_key (
+  id                  TEXT PRIMARY KEY,
+  practitioner_id     TEXT NOT NULL REFERENCES practitioner(id),
+  public_key          TEXT NOT NULL,
+  wrapped_private_key TEXT NOT NULL,
   created_at          TEXT NOT NULL
 );
 
@@ -110,7 +122,38 @@ CREATE INDEX IF NOT EXISTS item_request   ON request_item(request_id, position);
 CREATE INDEX IF NOT EXISTS upload_item    ON upload(request_item_id);
 CREATE INDEX IF NOT EXISTS event_request  ON event(request_id, at);
 CREATE INDEX IF NOT EXISTS session_token  ON session(token_hash);
+CREATE INDEX IF NOT EXISTS practice_key_owner ON practice_key(practitioner_id, created_at);
 `;
+
+/**
+ * Bring an older database up to this schema.
+ *
+ * There is exactly one migration so far, and it exists because the first version kept a practice's
+ * key in two columns on `practitioner`. Any database created by that version has them, and a key
+ * sitting in a column this code no longer reads is a key that would be silently lost.
+ *
+ * The columns are dropped rather than left in place: a dead column that could later be read by
+ * mistake is the kind of thing this project flags. The data moves first, in the same function, and
+ * there is a test that runs it against a database made with the old schema.
+ */
+function migrate(db) {
+  const columns = db.prepare("SELECT name FROM pragma_table_info('practitioner')").all().map((row) => row.name);
+  if (!columns.includes('public_key')) return 0;
+
+  const carried = db
+    .prepare('SELECT id, public_key, wrapped_private_key, created_at FROM practitioner WHERE public_key IS NOT NULL')
+    .all();
+  const insert = db.prepare(
+    'INSERT INTO practice_key (id, practitioner_id, public_key, wrapped_private_key, created_at) VALUES (?, ?, ?, ?, ?)',
+  );
+  for (const row of carried) {
+    insert.run(randomUUID(), row.id, row.public_key, row.wrapped_private_key, row.created_at);
+  }
+
+  db.exec('ALTER TABLE practitioner DROP COLUMN public_key');
+  db.exec('ALTER TABLE practitioner DROP COLUMN wrapped_private_key');
+  return carried.length;
+}
 
 /** Open the database, creating the file and its directory if they are not there. */
 export function openDatabase(file = ':memory:') {
@@ -118,6 +161,7 @@ export function openDatabase(file = ':memory:') {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  db.migratedKeys = migrate(db);
   return db;
 }
 

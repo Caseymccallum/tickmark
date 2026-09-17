@@ -17,12 +17,17 @@ account of that, including four things it does not protect.
 What works today: creating a practice, making an encryption key, building a request, creating a
 link the client opens with no account, receiving encrypted uploads, seeing what is still
 outstanding, **drafting the reminder** for what has not arrived, **closing a request** when there is
-nothing left to ask for, and **opening what arrived in the browser** — the passphrase is typed into
-the page, the file is decrypted there, and the server never sees it.
+nothing left to ask for, **opening what arrived in the browser** — the passphrase is typed into the
+page, the file is decrypted there, and the server never sees it — and **rotating the key**, with the
+old one kept so that nothing already sent becomes unopenable.
 
-What does not exist yet: **key rotation**, and nothing else from the first version's scope. There is
-a command line tool (`node tools/decrypt.mjs`) for scripting and for a server with no browser in
-front of it.
+What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
+let an old key be deleted. Until it exists, old keys stay, and `docs/encryption.md` says why.
+
+`docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,
+and the records survive a restart. That sentence is here because it was tested, not because it was
+written — an earlier version of this file claimed the opposite, and running it found a missing copy
+of `web/` that the build itself could not detect.
 
 ## Running it
 
@@ -37,8 +42,8 @@ You will be asked for a passphrase the first time you try to send a client a lin
 key your clients' documents are encrypted to, it is never sent to the server, and nothing can
 recover it. Read [the encryption document](docs/encryption.md) before choosing it.
 
-`docker compose up` is written and is the intended install, but it has not been built on
-a machine with Docker yet, and this file will not claim it works until it has been.
+`docker compose up` is the intended install and it is now verified — built, run, driven through the
+whole loop including a rotation, and restarted to confirm the volume keeps the records.
 
 ## The problem it exists for
 

@@ -21,9 +21,19 @@ empties stops being read, which makes the tool useless in its second season rath
 drafting a reminder makes a fresh one. That is the visible cost of a deliberate decision, and it is
 on the screen where the practice can see it rather than in a footnote.
 
-**Not built:** rotation of a practice's key. That is the last thing from the first version's scope,
-and it is not urgent — a key made today works, and a practice that wants a new one has no way to ask
-for it yet.
+**Not built:** re-encrypting old files to a new key, which is the only thing that would let an old key
+be deleted safely. Everything else in the first version's scope is done, and the honest limits of the
+encryption are in `docs/encryption.md` rather than in this file.
+
+## Keys are a history, not a value
+
+The plan said one key per practice. It is a table, and the reason is that rotation cannot be a swap:
+every file already stored is encrypted to the key that was current when it arrived, so a practice
+must keep its old keys or lose access to its own records. The newest row is the one new uploads use,
+older rows open the files sent while they were current, and there is no way to delete one.
+
+That last part is deliberate. A delete button would be a button that orphans a season of client
+documents, and until there is a way to re-encrypt them first, the feature should not exist.
 
 **Two of the three claims in the wedge below are now true of the software** — it runs on the
 operator's own hardware with no dependencies, and files are encrypted to a key the server does not
@@ -108,15 +118,18 @@ Seven things, and nothing else:
 
 ## The data model
 
-Eight tables, and the count went up by one during the first week of building: `session`
-was added because **signing out has to actually revoke access**, which needs server-side
-state. The plan said seven; the code says eight, and the code is right.
+Nine tables, and the count went up twice during the first week of building. `session` was added because
+**signing out has to actually revoke access**, which needs server-side state. `practice_key` was added
+because **rotation cannot be a swap** — a key is a history, not a value, and a schema that cannot hold
+a second key cannot rotate. The plan said seven; the code says nine, and the code is right.
 
 The **record** is a table, not a log file, because the product's value includes being
 able to answer questions about the past.
 
-- `practitioner` — email, password hash (scrypt), public key, and the private key
-  wrapped under a passphrase-derived key
+- `practitioner` — email and password hash. **No key columns**: a practice's keys are a history, in
+  `practice_key`, and a schema that cannot hold a second key cannot rotate
+- `practice_key` — a key the practice holds: the public half, the private half already wrapped under a
+  passphrase the server has never seen, and when it was made. The newest is the one new uploads use
 - `client` — belongs to a practice; name and optional email
 - `request` — belongs to a client; title, due date, closed date
 - `request_item` — belongs to a request; label, note, position

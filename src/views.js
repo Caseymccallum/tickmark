@@ -83,6 +83,8 @@ export function page({ title, practitioner = null, body, banner = null }) {
     <nav>
       ${practitioner
         ? html`<span class="note">${practitioner.email}</span>
+            <a href="/requests">Requests</a>
+            <a href="/keys">Keys</a>
             <form method="post" action="/signout"><button type="submit">Sign out</button></form>`
         : html`<a href="/signin">Sign in</a>`}
     </nav>

@@ -44,6 +44,7 @@ import { newId, now } from './db.js';
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
 import {
+  addPracticeKey,
   closeRequest,
   closedCount,
   createPractitioner,
@@ -58,10 +59,10 @@ import {
   recordEvent,
   recordUpload,
   reopenRequest,
+  replaceWrappedKey,
   requestFor,
   requestsFor,
   revokeToken,
-  savePracticeKeys,
   tokenLookup,
   tokensFor,
   uploadsOf,
@@ -79,6 +80,7 @@ const ASSETS = new Map([
   ['upload.js', 'application/javascript; charset=utf-8'],
   ['setup.js', 'application/javascript; charset=utf-8'],
   ['download.js', 'application/javascript; charset=utf-8'],
+  ['keys.js', 'application/javascript; charset=utf-8'],
 ]);
 
 export const ROUTES = [
@@ -90,6 +92,8 @@ export const ROUTES = [
   ['POST', '/signout', signOut],
   ['GET', '/setup', setupForm],
   ['POST', '/setup', saveKeys],
+  ['GET', '/keys', keysPage],
+  ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase],
   ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
   ['GET', '/requests/new', newRequestForm],
@@ -559,11 +563,12 @@ function viewRequest({ db, response, practitioner, params }) {
     </tr>`;
   });
 
-  // The wrapped key travels in the page because the decryption happens here. It leaks nothing — the
-  // server already stores it, and it is useless without the passphrase — and it has to be here, or
-  // the plaintext would have to be produced by the server, which is the one thing that must not
-  // happen.
-  const keys = practitioner.hasKey ? practiceKeys(db, practitioner.id) : null;
+  // The wrapped keys travel in the page because the decryption happens here. They leak nothing — the
+  // server already stores them, and they are useless without the passphrase — and they have to be
+  // here, or the plaintext would have to be produced by the server, which is the one thing that must
+  // not happen. All of them, because a file sent before the last rotation is encrypted to an older
+  // key.
+  const keys = practiceKeys(db, practitioner.id);
 
   return sendPage(response, 200, page({
     title: found.title,
@@ -572,13 +577,13 @@ function viewRequest({ db, response, practitioner, params }) {
       <h1>${found.title} <span class="note">for ${found.client_name}</span></h1>
       ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
       <p>${received} of ${items.length} received${found.due_at ? html`, due ${found.due_at}` : ''}.</p>
-      ${keys && received > 0
+      ${keys.length > 0 && received > 0
         ? html`<div class="unlock">
             <label for="passphrase">Your passphrase, to open what has arrived</label>
             <input id="passphrase" type="password" autocomplete="current-password">
             <button type="button" id="unlock">Unlock</button>
             <p id="unlock-status" class="note">It is used in this browser and sent nowhere. Unlocking
-            keeps the key in this tab so that saving several files does not mean typing it again.</p>
+            keeps the keys in this tab so that saving several files does not mean typing it again.</p>
           </div>`
         : ''}
       <table>
@@ -638,7 +643,7 @@ function viewRequest({ db, response, practitioner, params }) {
             <form method="post" action="/requests/${found.id}/close">
               <button type="submit">Close this request</button>
             </form>`}
-      ${keys ? jsonTag('wrapped-key', { wrapped: keys.wrappedPrivateKey }) : ''}
+      ${keys.length > 0 ? jsonTag('key-records', { keys: keys.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey })) }) : ''}
       ${received > 0 ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
   }));
 }
@@ -985,7 +990,7 @@ const MIN_ITERATIONS = 100000;
  * protect the practice's own private half so weakly that the promise is nominal. A hostile
  * client could still store nonsense for its own account, which harms nobody but itself.
  */
-function keyProblem(publicKeyJson, wrapped) {
+function publicKeyProblem(publicKeyJson) {
   let publicKey;
   try {
     publicKey = JSON.parse(publicKeyJson);
@@ -998,7 +1003,10 @@ function keyProblem(publicKeyJson, wrapped) {
   if (!BASE64URL_32.test(String(publicKey.x ?? '')) || !BASE64URL_32.test(String(publicKey.y ?? ''))) {
     return 'That public key is not the shape a P-256 point has.';
   }
+  return null;
+}
 
+function wrappedKeyProblem(wrapped) {
   const parts = String(wrapped).split('$');
   if (parts.length !== 6 || parts[0] !== 'pbkdf2' || parts[1] !== 'sha-256') {
     return 'That key record is not in the form Tickmark writes.';
@@ -1010,18 +1018,30 @@ function keyProblem(publicKeyJson, wrapped) {
   return null;
 }
 
-function setupForm({ response, practitioner }) {
+function keyProblem(publicKeyJson, wrapped) {
+  return publicKeyProblem(publicKeyJson) ?? wrappedKeyProblem(wrapped);
+}
+
+function setupForm({ db, response, practitioner }) {
   if (!requireSignIn({ practitioner, response })) return;
-  if (practitioner.hasKey) return redirect(response, '/requests');
+  const existing = practiceKeys(db, practitioner.id);
+  const first = existing.length === 0;
   return sendPage(response, 200, page({
-    title: 'Set up encryption',
+    title: first ? 'Set up encryption' : 'Add a new key',
     practitioner,
     body: html`
-      <h1>One passphrase, and then clients can send you files</h1>
-      <p>Tickmark makes a key pair in this browser. The public half is kept here; the private
-      half never leaves your browser except wrapped under a passphrase, which is never sent
-      either. That is what makes the promise real rather than polite: whoever runs this server
-      — including you — can hold a client's documents without being able to read them.</p>
+      <h1>${first ? 'One passphrase, and then clients can send you files' : 'A new key, for files that arrive from now on'}</h1>
+      <p>Tickmark makes a key pair in this browser. The public half is kept here; the private half
+      never leaves your browser except wrapped under a passphrase, which is never sent either. That
+      is what makes the promise real rather than polite: whoever runs this server — including you —
+      can hold a client's documents without being able to read them.</p>
+      ${first
+        ? ''
+        : html`<p class="warning"><strong>A new key does not re-encrypt anything.</strong> Files your
+            clients have already sent stay encrypted to the key they arrived under, and you go on
+            being able to open them. A new key changes what happens to the <em>next</em> file — so it
+            is the right response to a key being exposed, and it is not an undo for a copy somebody
+            has already taken.</p>`}
       <form id="setup" method="post" action="/setup">
         <label for="passphrase">Passphrase</label>
         <input id="passphrase" name="passphrase" type="password" required autocomplete="new-password">
@@ -1039,7 +1059,6 @@ function setupForm({ response, practitioner }) {
 
 async function saveKeys({ db, request, response, practitioner }) {
   if (!requireSignIn({ practitioner, response })) return;
-  if (practitioner.hasKey) return fail(response, 400, 'This practice already has a key.', practitioner);
 
   const fields = formFields(await readBody(request));
   const publicKeyJson = field(fields, 'public_key');
@@ -1047,9 +1066,81 @@ async function saveKeys({ db, request, response, practitioner }) {
   const problem = keyProblem(publicKeyJson, wrapped);
   if (problem) return fail(response, 400, problem, practitioner);
 
-  savePracticeKeys(db, practitioner.id, {
+  addPracticeKey(db, practitioner.id, {
     publicKey: JSON.parse(publicKeyJson),
     wrappedPrivateKey: wrapped,
   });
-  return redirect(response, '/requests');
+  return redirect(response, '/keys');
+}
+
+/**
+ * The practice's keys: what exists, which one is current, and how to change a passphrase.
+ *
+ * Rotation is presented as what it is, and there is no button to delete an old key. Deleting one
+ * would orphan every file encrypted to it, and a button that destroys a practice's access to its own
+ * clients' documents should not exist until there is a way to re-encrypt those files first.
+ */
+function keysPage({ db, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const keys = practiceKeys(db, practitioner.id);
+
+  const rows = keys.map((key, index) => html`<tr>
+    <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
+    <td>${index === 0
+      ? html`<strong>current</strong> — new files are encrypted to this one`
+      : 'older — opens the files sent while it was current'}</td>
+    <td>
+      <form class="passphrase" data-key-id="${key.id}" method="post" action="/keys/${key.id}/passphrase">
+        <input type="password" name="old" placeholder="current passphrase" required autocomplete="current-password">
+        <input type="password" name="fresh" placeholder="new passphrase" required autocomplete="new-password">
+        <input type="password" name="again" placeholder="the new one again" required autocomplete="new-password">
+        <button type="submit">Change the passphrase</button>
+        <span class="status note"></span>
+      </form>
+    </td>
+  </tr>`);
+
+  return sendPage(response, 200, page({
+    title: 'Keys',
+    practitioner,
+    banner: keys.length === 0
+      ? html`<p class="warning">This practice has no key yet, so it cannot be sent files.
+          <a href="/setup">Make one</a>.</p>`
+      : null,
+    body: html`
+      <h1>Keys</h1>
+      ${keys.length === 0
+        ? ''
+        : html`<table>
+            <thead><tr><th align="left">Made</th><th align="left">What it is for</th><th align="left">Passphrase</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`}
+      <p><a href="/setup">Make a new key</a> — for files that arrive from now on. The ones you have
+      keep working.</p>
+      <p class="note">Changing a passphrase does not change the key, so nothing has to be
+      re-encrypted and no file becomes unopenable. Store the new one somewhere that is not this
+      server: a copy of a key without its passphrase is a file nobody can open.</p>
+      ${keys.length > 0 ? jsonTag('key-records', { keys: keys.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey })) }) : ''}
+      ${keys.length > 0 ? raw('<script type="module" src="/assets/keys.js"></script>') : ''}`,
+  }));
+}
+
+/**
+ * Accept a key re-wrapped under a new passphrase.
+ *
+ * The server cannot check the old passphrase, because checking it would mean being able to open the
+ * record — which is the thing it must not be able to do. What it does check is that the new record
+ * is one it would have written: the right shape, and a KDF cost inside what this version accepts.
+ */
+async function changePassphrase({ db, request, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const wrapped = field(fields, 'wrapped_private_key');
+
+  const problem = wrappedKeyProblem(wrapped);
+  if (problem) return fail(response, 400, problem, practitioner);
+
+  const changed = replaceWrappedKey(db, practitioner.id, params[0], wrapped);
+  if (!changed) return fail(response, 404, 'There is no key of yours with that id.', practitioner);
+  return redirect(response, '/keys');
 }

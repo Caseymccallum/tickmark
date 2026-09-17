@@ -84,22 +84,27 @@ export async function generatePracticeKey(passphrase) {
   const publicKey = await subtle.exportKey('jwk', pair.publicKey);
   const pkcs8 = new Uint8Array(await subtle.exportKey('pkcs8', pair.privateKey));
 
+  return { publicKey, wrappedPrivateKey: await wrapPkcs8(pkcs8, passphrase) };
+}
+
+/** Seal a private key under a passphrase, as the record this format stores. */
+async function wrapPkcs8(pkcs8, passphrase) {
+  if (typeof passphrase !== 'string' || passphrase.normalize('NFC').length < MIN_PASSPHRASE) {
+    throw new Error(`a passphrase of at least ${MIN_PASSPHRASE} characters is required`);
+  }
   const salt = random(KDF.saltBytes);
   const iv = random(IV_BYTES);
   const wrappingKey = await deriveWrappingKey(passphrase, salt);
   const wrapped = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, pkcs8));
 
-  return {
-    publicKey,
-    wrappedPrivateKey: [
-      'pbkdf2',
-      'sha-256',
-      KDF.iterations,
-      toBase64Url(salt),
-      toBase64Url(iv),
-      toBase64Url(wrapped),
-    ].join('$'),
-  };
+  return [
+    'pbkdf2',
+    'sha-256',
+    KDF.iterations,
+    toBase64Url(salt),
+    toBase64Url(iv),
+    toBase64Url(wrapped),
+  ].join('$');
 }
 
 async function deriveWrappingKey(passphrase, salt, iterations = KDF.iterations) {
@@ -124,6 +129,28 @@ async function deriveWrappingKey(passphrase, salt, iterations = KDF.iterations) 
  * a record handed to someone cannot demand a minute of their CPU.
  */
 export async function unwrapPracticeKey(wrappedPrivateKey, passphrase) {
+  return subtle.importKey(
+    'pkcs8',
+    await unwrapToPkcs8(wrappedPrivateKey, passphrase),
+    { name: 'ECDH', namedCurve: CURVE_NAME },
+    false,
+    ['deriveBits'],
+  );
+}
+
+/**
+ * Change the passphrase of a key without changing the key.
+ *
+ * The same private key comes back out and is sealed again under a new passphrase, so every file
+ * encrypted to it still opens and nothing has to be re-encrypted. That is why this is a small
+ * operation and rotation is not.
+ */
+export async function rewrapPrivateKey(wrappedPrivateKey, oldPassphrase, newPassphrase) {
+  return wrapPkcs8(await unwrapToPkcs8(wrappedPrivateKey, oldPassphrase), newPassphrase);
+}
+
+/** The unwrapped PKCS#8 bytes, which only the two functions above should ever see. */
+async function unwrapToPkcs8(wrappedPrivateKey, passphrase) {
   const parts = String(wrappedPrivateKey).split('$');
   if (parts.length !== 6 || parts[0] !== 'pbkdf2' || parts[1] !== 'sha-256') {
     throw new Error('that is not a Tickmark key record');
@@ -141,14 +168,11 @@ export async function unwrapPracticeKey(wrappedPrivateKey, passphrase) {
   }
 
   const wrappingKey = await deriveWrappingKey(passphrase, salt, iterations);
-  let pkcs8;
   try {
-    pkcs8 = await subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, wrapped);
+    return new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, wrapped));
   } catch {
     throw new Error('that passphrase does not open this key');
   }
-
-  return subtle.importKey('pkcs8', pkcs8, { name: 'ECDH', namedCurve: CURVE_NAME }, false, ['deriveBits']);
 }
 
 // --- the file envelope -------------------------------------------------------------------
@@ -245,4 +269,34 @@ export async function decryptEnvelope(privateKey, envelope) {
 
   const plaintext = await subtle.decrypt({ name: 'AES-GCM', iv, additionalData: header }, fileKey, ciphertext);
   return new Uint8Array(plaintext);
+}
+
+/**
+ * Open an envelope with whichever of a practice's keys it belongs to.
+ *
+ * An envelope does not record which key it was encrypted to. It does not need to: AES-GCM's tag
+ * means a wrong key *fails* rather than returning something plausible, so trying each key in turn is
+ * safe, and it is the reason rotation needs no change to the file format — which matters, because a
+ * format change would mean every file written before it became a special case.
+ *
+ * The attempt is ordered, so a practice's current key is tried first and the common case costs one
+ * derivation.
+ */
+export async function decryptWithKeys(privateKeys, envelope) {
+  const keys = privateKeys.filter(Boolean);
+  if (keys.length === 0) throw new Error('no key was given to open this file with');
+
+  let lastError = null;
+  for (const privateKey of keys) {
+    try {
+      return await decryptEnvelope(privateKey, envelope);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(
+    keys.length === 1
+      ? lastError.message
+      : `none of this practice's ${keys.length} keys opens that file (${lastError.message})`,
+  );
 }

@@ -32,6 +32,7 @@ const PLAN_TABLES = [
   'access_token',
   'client',
   'event',
+  'practice_key',
   'practitioner',
   'request',
   'request_item',
