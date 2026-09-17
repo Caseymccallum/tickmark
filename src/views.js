@@ -58,8 +58,11 @@ const STYLE = `
 /**
  * The page shell. `practitioner` is the signed-in practice, or null on a public page —
  * the header is the one place that decision is made.
+ *
+ * `banner` is a rendered fragment rather than a string, so that a caller who wants a link
+ * in it can build one with `html` and get escaping everywhere else.
  */
-export function page({ title, practitioner = null, body, message = null }) {
+export function page({ title, practitioner = null, body, banner = null }) {
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -78,7 +81,7 @@ export function page({ title, practitioner = null, body, message = null }) {
         : html`<a href="/signin">Sign in</a>`}
     </nav>
   </header>
-  ${message ? html`<p class="${message.kind === 'error' ? 'error' : 'warning'}">${message.text}</p>` : ''}
+  ${banner}
   ${body}
 </body>
 </html>`;

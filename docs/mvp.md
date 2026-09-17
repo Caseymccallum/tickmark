@@ -3,6 +3,23 @@
 This is the plan the code is written against. It says what ships, what does not, and
 what would make the whole thing not worth building.
 
+## Where the build is
+
+Written down so that this document is never mistaken for a description of the software.
+
+**Built:** accounts and sessions; requests, clients and items; the client link with an
+expiry and a revoke; uploads, stored byte-for-byte with a digest and an append-only
+record of the arrival; the practice's view of what is outstanding.
+
+**Not built, and this is the list that matters:** the browser-side encryption (so an
+uploaded file is currently readable by whoever runs the server), the reminder text, and
+the download of a stored file through the browser.
+
+**Nothing in the wedge section below is true of the software as it stands.** It describes
+what the finished first version is for. The two claims that are already true are that it
+runs on the operator's own hardware and reads its own source: there are still no
+dependencies, and the database and the uploads are files in one directory.
+
 ## The market, as measured
 
 Not guessed — read off the incumbents' own pricing pages on 2026-09-17:

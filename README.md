@@ -8,11 +8,18 @@ bank statements, an ID scan, a signed engagement letter — send them a link, an
 the list get ticked off. Nobody needs an account to send you a file. The reminders, the
 tracking and the record of what arrived and when are yours, on your own server.
 
-**Status: early, and honest about it.** What works today: creating a practice, signing
-in and out, and building a request — a titled list of documents for a named client, with
-the items you need. What does not exist yet: **the client link, the uploads, the
-encryption, and the reminders.** The pages say so where a user would otherwise assume
-they were there.
+**Status: early, and honest about it.** What works today: creating a practice, signing in
+and out, building a request, creating a link the client opens with no account, and
+receiving uploads — a file that arrives is stored byte-for-byte and ticked off on the
+practice's page, with the arrival recorded.
+
+What does not exist yet: **the encryption and the reminders.**
+
+The encryption is the one that matters, and the pages say so where a user would otherwise
+assume otherwise: **a client's file currently reaches the server exactly as they sent it,
+so whoever runs the server can read it.** The link page says this to the client in as many
+words, and the request page says it to the practice. Until it changes, do not send a link
+to a real client.
 
 ## Running it
 

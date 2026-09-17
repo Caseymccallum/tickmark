@@ -10,55 +10,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openDatabase } from '../src/db.js';
-import { createApp, parseItems } from '../src/app.js';
+import { parseItems } from '../src/app.js';
+import { PASSWORD, signUp, withServer } from './helpers.js';
 
-/** A browser-like client that keeps its own cookie jar. */
-function agent(base) {
-  let cookie = '';
-  return {
-    get cookie() {
-      return cookie;
-    },
-    async request(path, options = {}) {
-      const headers = { ...(options.headers ?? {}) };
-      if (cookie) headers.cookie = cookie;
-      const response = await fetch(base + path, { ...options, headers, redirect: 'manual' });
-      const set = response.headers.getSetCookie();
-      if (set.length > 0) {
-        cookie = set.map((value) => value.split(';')[0]).join('; ');
-      }
-      return response;
-    },
-    post(path, fields) {
-      return this.request(path, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(fields).toString(),
-      });
-    },
-    get(path) {
-      return this.request(path);
-    },
-  };
-}
-
-/** Start the real server on a port nobody chose, and hand the test a way to talk to it. */
-async function withServer(run) {
-  const db = openDatabase();
-  const server = createApp(db);
-  await new Promise((resolve) => server.listen(0, resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
-  try {
-    await run({ base, db, agent: () => agent(base) });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    db.close();
-  }
-}
-
-const PASSWORD = 'a long enough password';
-const signUp = (client, email, password = PASSWORD) => client.post('/signup', { email, password });
+// The cookie jar and the server-starting helper live in `helpers.js`, shared with the
+// link tests: two copies of a harness are two chances for it to be wrong in different
+// ways, and then a red test is the harness's fault rather than the product's.
 
 test('a practice can be created, and lands on its own dashboard', async () => {
   await withServer(async ({ agent }) => {

@@ -7,6 +7,7 @@
  * database rows, so that a caller never has to know the schema.
  */
 import { newId, now } from './db.js';
+import { hashToken } from './crypto.js';
 
 /** Run `fn` in a transaction, rolling back on any throw. */
 export function inTransaction(db, fn) {
@@ -103,10 +104,14 @@ export function issueToken(db, { requestId, tokenHash, expiresAt, at = now() }) 
 /**
  * Record an arriving file. `sha256` is the digest of the *ciphertext*, which is all the
  * server ever holds.
+ *
+ * `id` may be supplied so that the caller can name the file on disk after the row that
+ * describes it. Left to itself it generates one, and a caller that writes bytes under an
+ * id of its own would end up with two identifiers for one file — which is exactly the kind
+ * of quiet mismatch that makes an operator's backup script wrong.
  */
-export function recordUpload(db, { requestId, requestItemId, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, at = now() }) {
+export function recordUpload(db, { id = newId(), requestId, requestItemId, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, at = now() }) {
   return inTransaction(db, () => {
-    const id = newId();
     db.prepare(
       `INSERT INTO upload (id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -218,4 +223,70 @@ export function uploadsOf(db, requestId) {
         WHERE i.request_id = ? ORDER BY u.uploaded_at`,
     )
     .all(requestId);
+}
+
+/**
+ * The request a link token opens — or why it does not.
+ *
+ * The token is looked up by its digest, so this is the only place the plain token and the
+ * stored row meet. It returns a state rather than a boolean because the three failures
+ * deserve three different sentences: a link that expired should tell the client to ask
+ * for a new one, and should not pretend that the request never existed.
+ */
+export function tokenLookup(db, token, at = new Date()) {
+  if (typeof token !== 'string' || token.length === 0) return { state: 'unknown' };
+  const row = db
+    .prepare(
+      `SELECT t.id AS token_id, t.expires_at, t.revoked_at,
+              r.id, r.title, r.due_at,
+              c.name AS client_name
+         FROM access_token t
+         JOIN request r ON r.id = t.request_id
+         JOIN client c ON c.id = r.client_id
+        WHERE t.token_hash = ?`,
+    )
+    .get(hashToken(token));
+
+  if (!row) return { state: 'unknown' };
+  if (row.revoked_at) return { state: 'revoked' };
+  if (row.expires_at <= at.toISOString()) return { state: 'expired' };
+  return { state: 'open', tokenId: row.token_id, request: row };
+}
+
+/**
+ * An item, **scoped to the request it must belong to**.
+ *
+ * A valid link to request A must not be able to deliver a file to an item of request B,
+ * and the way to make that impossible is to make the query unable to find it.
+ */
+export function itemInRequest(db, requestId, itemId) {
+  return (
+    db
+      .prepare('SELECT id, label, note FROM request_item WHERE id = ? AND request_id = ?')
+      .get(itemId, requestId) ?? null
+  );
+}
+
+export function tokensFor(db, requestId) {
+  return db
+    .prepare(
+      `SELECT id, expires_at, created_at, revoked_at
+         FROM access_token WHERE request_id = ? ORDER BY created_at DESC`,
+    )
+    .all(requestId);
+}
+
+/** Revoke a link. Scoped by practice, so one practice cannot revoke another's. */
+export function revokeToken(db, practitionerId, tokenId, at = now()) {
+  const row = db
+    .prepare(
+      `SELECT t.id, t.request_id, t.revoked_at
+         FROM access_token t JOIN request r ON r.id = t.request_id
+        WHERE t.id = ? AND r.practitioner_id = ?`,
+    )
+    .get(tokenId, practitionerId);
+  if (!row || row.revoked_at) return false;
+  db.prepare('UPDATE access_token SET revoked_at = ? WHERE id = ?').run(at, tokenId);
+  recordEvent(db, { requestId: row.request_id, kind: 'link.revoked', at });
+  return true;
 }

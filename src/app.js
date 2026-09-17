@@ -19,25 +19,36 @@
  *    information for an attacker and nothing for a user.
  */
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { hashPassword, verifyPassword } from './crypto.js';
+import { hashPassword, hashToken, newToken, verifyPassword } from './crypto.js';
 import { clearSessionCookie, createSession, endSession, practitionerFor, sessionCookie } from './auth.js';
 import { RequestError, field, formFields, readBody } from './http.js';
-import { html, page, redirect, sendPage } from './views.js';
+import { html, page, raw, redirect, sendPage } from './views.js';
+import { newId, now } from './db.js';
 import {
   createPractitioner,
   createRequest,
   findOrCreateClient,
   history,
+  issueToken,
+  itemInRequest,
   itemsOf,
   practitionerByEmail,
+  recordUpload,
   requestFor,
   requestsFor,
+  revokeToken,
+  tokenLookup,
+  tokensFor,
   uploadsOf,
 } from './store.js';
 
 const MIN_PASSWORD = 12;
 const MAX_ITEMS = 50;
+const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
 
 export const ROUTES = [
   ['GET', '/', home],
@@ -50,6 +61,11 @@ export const ROUTES = [
   ['GET', '/requests/new', newRequestForm],
   ['POST', '/requests', createRequestPage],
   ['GET', /^\/requests\/([^/]+)$/, viewRequest],
+  ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
+  ['POST', /^\/requests\/([^/]+)\/revoke$/, revokeLink],
+  // Public: no session, gated by the token in the path.
+  ['GET', /^\/r\/([^/]+)$/, clientPage],
+  ['POST', /^\/r\/([^/]+)\/items\/([^/]+)$/, receiveUpload],
 ];
 
 function sendJson(response, status, value) {
@@ -85,7 +101,7 @@ function requireSignIn({ practitioner, response }) {
   return false;
 }
 
-export function createApp(db) {
+export function createApp(db, { blobDir = 'data/blobs', maxUploadBytes = DEFAULT_MAX_UPLOAD } = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
 
@@ -111,7 +127,8 @@ export function createApp(db) {
         }
         if (!params) continue;
 
-        await handler(await contextFor(db, request, response, url, params.slice(1)));
+        const context = await contextFor(db, request, response, url, params.slice(1));
+        await handler({ ...context, blobDir, maxUploadBytes });
         return;
       }
       return fail(response, 404, 'There is no page at that address.');
@@ -393,6 +410,7 @@ function viewRequest({ db, response, practitioner, params }) {
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   const items = itemsOf(db, found.id);
+  const links = tokensFor(db, found.id);
   const filesFor = new Map();
   for (const upload of uploadsOf(db, found.id)) {
     const list = filesFor.get(upload.request_item_id) ?? [];
@@ -427,8 +445,233 @@ function viewRequest({ db, response, practitioner, params }) {
       <ul>
         ${events.map((event) => html`<li><code>${event.kind}</code> <span class="note">${event.at}${event.detail ? ` — ${event.detail}` : ''}</span></li>`)}
       </ul>
-      <p class="warning">There is no client link yet. Sending the list to a client is the
-      next piece of work, and until it exists this page is only a checklist you keep
-      for yourself.</p>`,
+      <h2>The link for this client</h2>
+      ${links.length === 0
+        ? html`<p class="note">No link has been created yet.</p>`
+        : html`<ul>
+            ${links.map((link) => html`<li>
+              created ${link.created_at}, expires ${link.expires_at}
+              ${link.revoked_at
+                ? html`<strong> — revoked</strong>`
+                : html` <form method="post" action="/requests/${found.id}/revoke" style="display:inline">
+                    <input type="hidden" name="token_id" value="${link.id}">
+                    <button type="submit">Revoke</button>
+                  </form>`}
+            </li>`)}
+          </ul>`}
+      <form method="post" action="/requests/${found.id}/link">
+        <label for="days">A new link, valid for</label>
+        <select id="days" name="days">
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="90">90 days</option>
+        </select>
+        <button type="submit">Create a link</button>
+      </form>
+      <p class="warning">Files uploaded through a link are stored <strong>as they
+      are</strong>: the browser-side encryption that is meant to make the server unable to
+      read them is not built yet. Until it is, do not send a link to a real client.</p>`,
   }));
 }
+
+/**
+ * Create a link, and show it once.
+ *
+ * It cannot be shown again, and that is not an oversight: only a digest of the token is
+ * stored, so the plain token exists in this process for the length of one response. A
+ * practice that loses it creates another, which is the correct answer and also the honest
+ * one.
+ */
+async function issueLink({ db, request, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practitioner.id, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const days = Math.min(Math.max(Number(field(fields, 'days', '30')) || 30, 1), 365);
+
+  const token = newToken();
+  issueToken(db, {
+    requestId: found.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+  });
+
+  return sendPage(response, 200, page({
+    title: found.title,
+    practitioner,
+    banner: html`<p class="warning"><strong>This is the link — copy it now. It will not be
+      shown again.</strong> Only a digest of it is stored, so nobody can recover it later,
+      including whoever runs this server.<br>
+      <code>/r/${token}</code></p>`,
+    body: html`<h1>${found.title}</h1>
+      <p>Send that link to ${found.client_name}. It stops working after ${days} days, and
+      you can revoke it from the <a href="/requests/${found.id}">request page</a>.</p>`,
+  }));
+}
+
+async function revokeLink({ db, request, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practitioner.id, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const tokenId = field(fields, 'token_id');
+  const revoked = tokenId ? revokeToken(db, practitioner.id, tokenId) : false;
+  if (!revoked) {
+    return fail(response, 400, 'That link is not one of yours, or it was already revoked.', practitioner);
+  }
+  return redirect(response, `/requests/${found.id}`);
+}
+
+/**
+ * The client's page. No account, no session — the token in the path is the whole of the
+ * authorization, which is why it is 256 random bits and why only its digest is stored.
+ */
+function clientPage({ db, response, params }) {
+  const found = tokenLookup(db, params[0]);
+
+  if (found.state === 'expired') {
+    return sendPage(response, 410, page({
+      title: 'This link has expired',
+      body: html`<h1>This link has expired</h1>
+        <p>Ask the practice to send a new one — they can make one in a moment.</p>`,
+    }));
+  }
+  if (found.state === 'revoked') {
+    return sendPage(response, 410, page({
+      title: 'This link has been cancelled',
+      body: html`<h1>This link has been cancelled</h1>
+        <p>Ask whoever sent it to you for a new one.</p>`,
+    }));
+  }
+  if (found.state === 'unknown') {
+    return sendPage(response, 404, page({
+      title: 'No such link',
+      body: html`<h1>No such link</h1>
+        <p>Check the address you were sent: it may have wrapped across two lines in an
+        email, or lost a character on the way.</p>`,
+    }));
+  }
+
+  const open = found.request;
+  const items = itemsOf(db, open.id);
+  const arrived = new Set(uploadsOf(db, open.id).map((upload) => upload.request_item_id));
+
+  const rows = items.map((item) => html`<tr>
+    <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
+    <td>${arrived.has(item.id) ? html`<strong>received</strong>` : 'still needed'}</td>
+    <td>
+      <form class="upload" method="post" action="/r/${params[0]}/items/${item.id}">
+        <input type="file" name="file" required>
+        <button type="submit">Send</button>
+        <div class="status note"></div>
+      </form>
+    </td>
+  </tr>`);
+
+  return sendPage(response, 200, page({
+    title: open.title,
+    banner: html`<p class="warning"><strong>This is not private yet.</strong> Anything you
+      send goes to the practice's server and is stored there as it is. The encryption that
+      will make it unreadable to whoever runs the server is not built yet.</p>`,
+    body: html`
+      <h1>${open.title}</h1>
+      <p>${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
+      <table>
+        <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="note">Nothing here needs an account. Come back to this page with the same
+      link to send the rest — the list shows what has already arrived.</p>
+      ${raw(UPLOAD_SCRIPT)}`,
+  }));
+}
+
+/**
+ * The client's upload, sent by the page's own script as a raw body.
+ *
+ * The filename arrives in a header and is recorded as a *label* only. It is never used to
+ * build a path, so a filename like `../../etc/passwd` cannot become one — the bytes are
+ * stored under an id this process generated. That property is what makes the storage layer
+ * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
+ * starts joining the filename into a path.
+ */
+async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes }) {
+  const [token, itemId] = params;
+  const found = tokenLookup(db, token);
+  if (found.state !== 'open') {
+    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
+  }
+
+  const item = itemInRequest(db, found.request.id, itemId);
+  if (!item) return fail(response, 404, 'That document is not part of this request.');
+
+  const type = String(request.headers['content-type'] ?? '');
+  if (!type.startsWith('application/octet-stream')) {
+    return fail(response, 415, 'This page sends files as raw bytes, which needs JavaScript to be enabled.');
+  }
+
+  const body = await readBody(request, maxUploadBytes);
+  if (body.length === 0) return fail(response, 400, 'That file was empty.');
+
+  const uploadId = newId();
+  const directory = join(blobDir, found.request.id);
+  await mkdir(directory, { recursive: true });
+  const storagePath = join(directory, `${uploadId}.bin`);
+  await writeFile(storagePath, body);
+
+  const header = (name, fallback, limit) =>
+    request.headers[name] ? decodeURIComponent(String(request.headers[name])).slice(0, limit) : fallback;
+
+  recordUpload(db, {
+    id: uploadId,
+    requestId: found.request.id,
+    requestItemId: item.id,
+    filename: header('x-file-name', 'upload.bin', 255),
+    mime: header('x-file-type', 'application/octet-stream', 120),
+    sizeBytes: body.length,
+    sha256: createHash('sha256').update(body).digest('hex'),
+    storagePath,
+    clientNote: header('x-note', null, 500),
+    at: now(),
+  });
+
+  return sendJson(response, 201, { ok: true, received: item.label, bytes: body.length });
+}
+
+/**
+ * The only JavaScript the product ships, and it is inline rather than a file because it is
+ * a dozen lines and a build step would be a heavier thing than the feature.
+ *
+ * It exists because the encryption that comes next happens in the browser with Web Crypto,
+ * so the upload has to be a fetch rather than a form post. When that lands, this script
+ * encrypts the file before sending it and nothing on the server changes — which is the
+ * whole point of the server treating an upload as bytes it does not interpret.
+ */
+const UPLOAD_SCRIPT = `<script>
+for (const form of document.querySelectorAll('form.upload')) {
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const file = form.querySelector('input[type=file]').files[0];
+    const status = form.querySelector('.status');
+    if (!file) return;
+    status.textContent = 'Sending ' + file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-file-name': encodeURIComponent(file.name),
+          'x-file-type': file.type || 'application/octet-stream'
+        },
+        body: file
+      });
+      if (response.ok) { location.reload(); return; }
+      status.textContent = (await response.text()).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 200);
+    } catch (error) {
+      status.textContent = 'That did not work: ' + error.message;
+    }
+  });
+}
+</script>`;
