@@ -62,6 +62,7 @@ const STYLE = `
   button[disabled] { opacity: .5; cursor: default; }
   .error { border-left: 3px solid #b91c1c; background: #fef2f2; color: #7f1d1d; padding: .6rem .9rem; }
   .warning { border-left: 3px solid #b45309; background: #fffbeb; color: #713f12; padding: .6rem .9rem; }
+.success { border-left: 3px solid #15803d; background: #f0fdf4; color: #14532d; padding: .6rem .9rem; }
   code { background: #8882; padding: .1rem .3rem; border-radius: .2rem; }
 `;
 

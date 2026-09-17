@@ -17,10 +17,10 @@ account of that, including four things it does not protect.
 What works today: creating a practice, making an encryption key, building a request, **adding to it
 and taking things off it later**, creating a link the client opens with no account, receiving
 encrypted uploads, **seeing what is still outstanding and what needs re-sending**, **drafting the
-reminder** for what has not arrived, **closing a request** when there is nothing left to ask for,
-**opening what arrived in the browser** — the passphrase is typed into the page, the file is
-decrypted there, and the server never sees it — and **rotating the key**, with the old one kept so
-that nothing already sent becomes unopenable.
+reminder** for what has not arrived — and **sending it**, if you point Tickmark at a mail relay —
+**closing a request** when there is nothing left to ask for, **opening what arrived in the browser** —
+the passphrase is typed into the page, the file is decrypted there, and the server never sees it —
+and **rotating the key**, with the old one kept so that nothing already sent becomes unopenable.
 
 What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
 let an old key be deleted. Until it exists, old keys stay, and `docs/encryption.md` says why.
@@ -73,8 +73,8 @@ Tickmark's answer is: **on your server, and nobody else.**
   answers, and "signed engagement letter" cannot be satisfied by a utility bill
 - a **status** per item — outstanding, received, needs attention — and a per-request
   view of what is still owed
-- **reminders**: the tool tells you who is outstanding and drafts the message, so
-  chasing is a decision rather than a chore
+- **reminders**: the tool tells you who is outstanding and drafts the message — and sends it,
+  if you configure a mail relay, with every attempt recorded whether it worked or not
 - a **record**: an append-only log of what was sent, what arrived, and when, so the
   question "did we get it?" is answered by reading rather than remembering
 - **end-to-end encryption**: files are encrypted in the client's browser to your
@@ -137,6 +137,8 @@ before the code.
 | `NAMING.md` | Why it is called Tickmark, and every name that was rejected with a reason |
 | `docs/mvp.md` | The scope of the first version, the stack, the data model, and what is cut |
 | `docs/encryption.md` | What is encrypted, what is not, and why — the document the central claim rests on |
+| `docs/mail.md` | Sending reminders: what to configure, why a relay, and the TLS paths the tests do not cover |
+| `docs/roadmap.md` | What comes next and why, including what is deliberately not being built |
 | `docs/verify-demand.md` | The pre-build check: who is asked, what is asked, and what the answers decide |
 | `docs/demand-posts.md` | The posts for that check, ready to send |
 

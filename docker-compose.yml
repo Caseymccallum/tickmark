@@ -14,6 +14,11 @@ services:
     environment:
       PORT: "3000"
       TICKMARK_DATA: /data/tickmark.db
+      # Sending reminders is optional. Uncomment these and Tickmark sends the reminder
+      # itself rather than drafting it for you to copy. `docs/mail.md` explains what to
+      # point them at, and why a relay rather than sending directly.
+      # TICKMARK_SMTP_URL: "smtp://user@example.com:password@relay.example:587"
+      # TICKMARK_MAIL_FROM: "Tickmark Practice <office@practice.example>"
     volumes:
       - tickmark-data:/data
     restart: unless-stopped

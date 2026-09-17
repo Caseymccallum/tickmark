@@ -43,6 +43,7 @@ import { newId, now } from './db.js';
 // plaintext one. It cannot use the rest of that module: the key needed to open an envelope
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
+import { sendMail } from './mailer.js';
 import {
   addItems,
   addPracticeKey,
@@ -106,6 +107,7 @@ export const ROUTES = [
   ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
+  ['POST', /^\/requests\/([^/]+)\/send-reminder$/, sendReminder],
   ['POST', /^\/requests\/([^/]+)\/close$/, closeRequestPage],
   ['POST', /^\/requests\/([^/]+)\/reopen$/, reopenRequestPage],
   ['POST', /^\/requests\/([^/]+)\/items$/, addItemsPage],
@@ -180,6 +182,7 @@ export function createApp(db, {
   blobDir = 'data/blobs',
   maxUploadBytes = DEFAULT_MAX_UPLOAD,
   webDir = join(HERE, '..', 'web'),
+  mailer = null,
 } = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -207,7 +210,7 @@ export function createApp(db, {
         if (!params) continue;
 
         const context = await contextFor(db, request, response, url, params.slice(1));
-        await handler({ ...context, blobDir, maxUploadBytes, webDir });
+        await handler({ ...context, blobDir, maxUploadBytes, webDir, mailer });
         return;
       }
       return fail(response, 404, 'There is no page at that address.');
@@ -548,10 +551,16 @@ async function createRequestPage({ db, request, response, practitioner }) {
   return redirect(response, `/requests/${requestId}`);
 }
 
-function viewRequest({ db, response, practitioner, params }) {
+function viewRequest({ db, request, response, practitioner, params }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practitioner.id, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  // A reminder that was just sent says so here. The confirmation has to be on the page the practice
+  // lands on, because "did it go?" is the whole question a send raises, and the answer is otherwise
+  // only in the history below.
+  const sent = new URL(request.url, 'http://localhost').searchParams.get('sent');
+  const sentWithoutLink = new URL(request.url, 'http://localhost').searchParams.get('nolink') === '1';
 
   const allItems = itemsOf(db, found.id);
   const live = allItems.filter((item) => !item.withdrawn);
@@ -568,6 +577,16 @@ function viewRequest({ db, response, practitioner, params }) {
   const outstanding = live.filter((item) => filesOf(item).length === 0);
   const attention = live.filter((item) => item.needsAttention);
   const events = history(db, found.id);
+
+  // The confirmation line, when the practice has just arrived from a send.
+  const sentNotice = sent
+    ? html`<p class="${sentWithoutLink ? 'warning' : 'success'}"><strong>Reminder sent.</strong> Its
+        identifier is <code>${sent}</code> — if a client says it never arrived, this is what to quote to
+        your mail provider.${sentWithoutLink
+          ? html` <strong>There was no link in the message</strong>, so the client cannot send anything
+              from it — draft another reminder if that was not what you meant.`
+          : ''}</p>`
+    : null;
 
   /** What the practice can say about one item — which is what makes the list a living thing. */
   const controlsFor = (item) => html`
@@ -616,6 +635,7 @@ function viewRequest({ db, response, practitioner, params }) {
     practitioner,
     body: html`
       <h1>${found.title} <span class="note">for ${found.client_name}</span></h1>
+      ${sentNotice}
       ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
       <p>${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
       ${attention.length > 0
@@ -841,7 +861,7 @@ const copyableField = (name, text, rows) => html`
  * reminder makes a fresh one, and says so. That is the visible cost of that design decision, and
  * it belongs on the screen rather than in a footnote.
  */
-async function draftReminder({ db, request, response, practitioner, params }) {
+async function draftReminder({ db, request, response, practitioner, params, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practitioner.id, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -876,20 +896,139 @@ async function draftReminder({ db, request, response, practitioner, params }) {
     link: `${originOf(request)}/r/${token}`,
   });
 
-  return sendPage(response, 200, page({
+  return sendPage(response, 200, reminderPage({
+    mailer,
+    practitioner,
+    found,
+    draft,
+    days,
+    outstanding: outstanding.length,
+    total: itemsOf(db, found.id).length,
+  }));
+}
+
+/**
+ * The reminder, as a page the practice can edit before it goes anywhere.
+ *
+ * The fields are **editable**, which is the honest reading of "a draft": what is in them is what gets
+ * sent, so an edit is a decision rather than a decoration. The first version made them read-only, which
+ * is one keystroke away from the same thing but tells the practice their words do not matter.
+ *
+ * Sending is offered only when it can work — a mail server configured, and an address to send to — and
+ * when it cannot, the page says what is missing rather than showing a button that fails. Same rule as
+ * everywhere else here: no control that cannot do what it says.
+ */
+function reminderPage({ mailer, practitioner, found, draft, days, outstanding, total, error = null }) {
+  const canSend = Boolean(mailer) && Boolean(found.client_email);
+
+  const whyNot = !mailer
+    ? html`<p class="note">Tickmark cannot send this by itself, because this installation has no mail
+        server configured. Set <code>TICKMARK_SMTP_URL</code> and <code>TICKMARK_MAIL_FROM</code> and
+        restart it — <code>docs/roadmap.md</code> says what to point them at, and why deliverability is
+        a different problem from sending.</p>`
+    : !found.client_email
+      ? html`<p class="note">There is no email address for ${found.client_name} on this request, so there
+          is nowhere to send it. Add one, or copy the message and send it yourself.</p>`
+      : '';
+
+  return page({
     title: `A reminder for ${found.client_name}`,
     practitioner,
-    banner: html`<p class="warning">Tickmark does not send this. Copy it into whatever you send
-      mail with, to <strong>${found.client_email ?? 'the client'}</strong>.</p>`,
+    banner: error
+      ? html`<p class="error"><strong>Not sent.</strong> ${error}<br>Nothing you typed is lost — it is
+          below, and you can try again or copy it.</p>`
+      : canSend
+        ? html`<p class="warning">Sending from <strong>${mailer.describe()}</strong> to
+            <strong>${found.client_email}</strong>.</p>`
+        : html`<p class="warning">Tickmark does not send this. Copy it into whatever you send mail with,
+            to <strong>${found.client_email ?? 'the client'}</strong>.</p>`,
     body: html`
       <h1>A reminder for ${found.client_name}</h1>
-      <p>${outstanding.length} of ${itemsOf(db, found.id).length} still outstanding. The link in the
-      message is new, it works for ${days} days, and <strong>it is not recoverable</strong> — if you
-      lose it, draft the reminder again.</p>
-      ${copyableField('subject', draft.subject, 2)}
-      ${copyableField('message', draft.body, 16)}
+      <p>${outstanding} of ${total} still outstanding. The link in the message is new, it works for
+      ${days} days, and <strong>it is not recoverable</strong> — if you lose it, draft the reminder
+      again.</p>
+      ${whyNot}
+      <form method="post" action="/requests/${found.id}/send-reminder">
+        <label for="subject">Subject</label>
+        <textarea id="subject" name="subject" rows="2">${draft.subject}</textarea>
+        <label for="message">Message <span class="note">what you see is what gets sent</span></label>
+        <textarea id="message" name="message" rows="18" onclick="this.focus(); this.select();">${draft.body}</textarea>
+        ${canSend
+          ? html`<button type="submit">Send it to ${found.client_email}</button>`
+          : html`<button type="submit" disabled>Send it</button>`}
+      </form>
       <p><a href="/requests/${found.id}">Back to the request</a></p>`,
-  }));
+  });
+}
+
+/**
+ * Send the reminder that is on the screen.
+ *
+ * Two rules, and both are why this is not a one-line handler:
+ *
+ * 1. **The text comes from the form.** The practice may have edited it, and their words are what their
+ *    client should receive.
+ * 2. **A failure keeps the text.** The page is re-rendered with everything still in it and a sentence
+ *    saying what went wrong, because a send that loses what someone typed is worse than a send that
+ *    fails — and both are recorded, so "did we actually send it?" can be answered by reading.
+ */
+async function sendReminder({ db, request, response, practitioner, params, mailer }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practitioner.id, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+  if (!mailer) {
+    return fail(response, 400, 'This installation has no mail server configured, so nothing can be sent.', practitioner);
+  }
+  if (!found.client_email) {
+    return fail(response, 400, `There is no email address for ${found.client_name}, so there is nowhere to send it.`, practitioner);
+  }
+
+  const fields = formFields(await readBody(request));
+  const subject = field(fields, 'subject');
+  const body = typeof fields.message === 'string' ? fields.message : '';
+  const days = Math.min(Math.max(Number(field(fields, 'days', '30')) || 30, 1), 365);
+  const outstanding = outstandingOf(db, found.id);
+
+  const refuse = (error) => sendPage(
+    response,
+    400,
+    reminderPage({
+      mailer,
+      practitioner,
+      found,
+      draft: { subject: subject ?? '', body },
+      days,
+      outstanding: outstanding.length,
+      total: itemsOf(db, found.id).length,
+      error,
+    }),
+  );
+
+  if (!subject) return refuse('A subject is needed — a message with no subject is one a client is likely to delete.');
+  if (body.trim().length === 0) return refuse('The message was empty.');
+
+  try {
+    const { messageId } = await sendMail(mailer, { to: found.client_email, subject, body });
+
+    // A reminder with no link in it is a message the client cannot act on — they have nowhere to send
+    // anything. It is sent anyway, because the words are the practice's decision, but the page says so
+    // afterwards rather than letting a send look like a success when it was not: silence about this is
+    // exactly the "fails quietly" problem this feature exists to avoid.
+    const hasLink = /\/r\/[A-Za-z0-9_-]{20,}/.test(body);
+    recordEvent(db, {
+      requestId: found.id,
+      kind: 'reminder.sent',
+      detail: `to ${found.client_email} (${messageId})${hasLink ? '' : ' — with no link in it'}`,
+    });
+    return redirect(response, `/requests/${found.id}?sent=${encodeURIComponent(messageId)}${hasLink ? '' : '&nolink=1'}`);
+  } catch (error) {
+    recordEvent(db, {
+      requestId: found.id,
+      kind: 'reminder.failed',
+      detail: `to ${found.client_email} — ${error.message}`,
+    });
+    return refuse(error.message);
+  }
 }
 
 async function closeRequestPage({ db, response, practitioner, params }) {

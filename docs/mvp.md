@@ -102,19 +102,22 @@ Seven things, and nothing else:
 
 ## What ships after version one, and why it waits
 
-- **Email sending.** Version one drafts reminders; it does not send them. This is the
-  biggest single cut, and it is deliberate: automated sending means SMTP
-  configuration, deliverability, bounces, SPF/DKIM documentation, retry logic and
-  silent-failure modes (a notification that fails silently is worse than no
-  notification). Every one of those was a flagged gap in the author's previous
-  project, and none of them is the reason a practice would choose this tool. Shipping
-  the *tracking* first also tests the real question — does the client portal itself
-  get used — without the mail server in the way.
+The live version of this list is `docs/roadmap.md`, which carries the status of each item. What
+follows is the original ordering, kept because the reasons are the interesting part.
+
+- **Email sending.** *Shipped in Phase 2a* — see `docs/mail.md`. The original reasoning was right and
+  is worth keeping: this was the biggest cut, and it was cut because automated sending means
+  deliverability, bounces, SPF/DKIM documentation, retry logic and silent-failure modes, and none of
+  those is why a practice would choose this tool. Shipping the *tracking* first tested whether the
+  client portal gets used at all, without a mail server in the way. What the build added to that:
+  the deliverability problem is answered by pointing the tool at the practice's own provider as a
+  relay, a failed send keeps the text and reports the relay's own words, and there is deliberately no
+  queue or retry.
 - **Multiple users per practice.** Version one is one login for one practice.
-- **Decryption in the browser for download.** Version one exports a folder of
-  ciphertext plus the key, with a documented script; the browser viewer comes next.
-- **Docker Compose as the only install path.** A Helm chart, a Debian package and a
-  hosted one-click are all later, or never.
+- **Decryption in the browser for download.** *Shipped.* The browser viewer came before the export
+  tool turned out to be needed.
+- **Docker Compose as the only install path.** *Shipped and verified by running it.* A Helm chart, a
+  Debian package and a hosted one-click are all later, or never.
 
 ## The stack, and the trade-offs
 
