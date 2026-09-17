@@ -80,9 +80,12 @@ Seven things, and nothing else:
 
 ## The data model
 
-Seven tables. Drafted here, built in the schema file, and the shape is deliberate: the
-**record** is a table, not a log file, because the product's value includes being able
-to answer questions about the past.
+Eight tables, and the count went up by one during the first week of building: `session`
+was added because **signing out has to actually revoke access**, which needs server-side
+state. The plan said seven; the code says eight, and the code is right.
+
+The **record** is a table, not a log file, because the product's value includes being
+able to answer questions about the past.
 
 - `practitioner` — email, password hash (scrypt), public key, and the private key
   wrapped under a passphrase-derived key
@@ -95,6 +98,7 @@ to answer questions about the past.
   ciphertext**, a storage path, the client's note, and a timestamp
 - `event` — append-only: request created, link sent, file received, reminder drafted,
   request closed
+- `session` — a signed-in practice; the token is stored hashed, like a link token
 
 Three choices inside that are worth stating:
 

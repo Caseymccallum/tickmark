@@ -26,7 +26,7 @@ export function recordEvent(db, { requestId, kind, detail = null, at = now() }) 
     .run(newId(), requestId, kind, detail, at);
 }
 
-export function createPractitioner(db, { email, passwordHash, publicKey, wrappedPrivateKey, at = now() }) {
+export function createPractitioner(db, { email, passwordHash, publicKey = null, wrappedPrivateKey = null, at = now() }) {
   const id = newId();
   db.prepare(
     `INSERT INTO practitioner (id, email, password_hash, public_key, wrapped_private_key, created_at)
@@ -43,8 +43,23 @@ export function createClient(db, { practitionerId, name, email = null, at = now(
   return id;
 }
 
-/** A titled list of documents owed by one client. */
-export function createRequest(db, { practitionerId, clientId, title, dueAt = null, at = now() }) {
+/**
+ * A client, by name, for this practice only.
+ *
+ * Scoped by practice even though names are only unique within a practice: the second
+ * half of that sentence is an assumption about the data, and the scope is a fact about
+ * the query. Assumptions break; facts do not.
+ */
+export function findOrCreateClient(db, { practitionerId, name, email = null, at = now() }) {
+  const existing = db
+    .prepare('SELECT id FROM client WHERE practitioner_id = ? AND name = ? COLLATE NOCASE')
+    .get(practitionerId, name);
+  if (existing) return existing.id;
+  return createClient(db, { practitionerId, name, email, at });
+}
+
+/** A titled list of documents owed by one client, with its items, created atomically. */
+export function createRequest(db, { practitionerId, clientId, title, dueAt = null, items = [], at = now() }) {
   return inTransaction(db, () => {
     const id = newId();
     db.prepare(
@@ -52,6 +67,9 @@ export function createRequest(db, { practitionerId, clientId, title, dueAt = nul
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(id, practitionerId, clientId, title, dueAt, at);
     recordEvent(db, { requestId: id, kind: 'request.created', at });
+    // Inside the transaction on purpose: a request that exists with none of its items
+    // is a state the practice would have to notice and repair.
+    for (const label of items) addItem(db, { requestId: id, label, at });
     return id;
   });
 }
@@ -129,4 +147,75 @@ export function itemStatus(db, requestId) {
 
 export function history(db, requestId) {
   return db.prepare('SELECT kind, detail, at FROM event WHERE request_id = ? ORDER BY at, rowid').all(requestId);
+}
+
+export function practitionerByEmail(db, email) {
+  return db
+    .prepare('SELECT id, email, password_hash, public_key, wrapped_private_key FROM practitioner WHERE email = ?')
+    .get(email);
+}
+
+export function clientsOf(db, practitionerId) {
+  return db
+    .prepare('SELECT id, name, email FROM client WHERE practitioner_id = ? ORDER BY name')
+    .all(practitionerId);
+}
+
+/**
+ * The practice's dashboard: every request, who it is for, and how much of it has arrived.
+ *
+ * One query rather than a loop, because the shape of the screen is known and the
+ * alternative is a query per row.
+ */
+export function requestsFor(db, practitionerId) {
+  return db
+    .prepare(
+      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
+              c.name AS client_name,
+              (SELECT COUNT(*) FROM request_item i WHERE i.request_id = r.id) AS item_count,
+              (SELECT COUNT(DISTINCT u.request_item_id) FROM upload u
+                 JOIN request_item i2 ON i2.id = u.request_item_id
+                WHERE i2.request_id = r.id) AS received_count
+         FROM request r JOIN client c ON c.id = r.client_id
+        WHERE r.practitioner_id = ?
+        ORDER BY r.created_at DESC`,
+    )
+    .all(practitionerId)
+    .map((row) => ({ ...row, outstanding_count: row.item_count - row.received_count }));
+}
+
+/**
+ * One request, **scoped to the practice that owns it**.
+ *
+ * Authorization is in the query rather than in a check beside the query, because a check
+ * beside the query is a check somebody eventually forgets. A request belonging to
+ * another practice is indistinguishable from one that does not exist, which is also the
+ * right answer to give.
+ */
+export function requestFor(db, practitionerId, requestId) {
+  const row = db
+    .prepare(
+      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
+              c.id AS client_id, c.name AS client_name, c.email AS client_email
+         FROM request r JOIN client c ON c.id = r.client_id
+        WHERE r.id = ? AND r.practitioner_id = ?`,
+    )
+    .get(requestId, practitionerId);
+  return row ?? null;
+}
+
+export function itemsOf(db, requestId) {
+  return db
+    .prepare('SELECT id, label, note, position FROM request_item WHERE request_id = ? ORDER BY position, created_at')
+    .all(requestId);
+}
+
+export function uploadsOf(db, requestId) {
+  return db
+    .prepare(
+      `SELECT u.id, u.request_item_id, u.filename, u.size_bytes, u.sha256, u.client_note, u.uploaded_at
+         FROM upload u JOIN request_item i ON i.id = u.request_item_id
+        WHERE i.request_id = ? ORDER BY u.uploaded_at`,
+    )
+    .all(requestId);
 }

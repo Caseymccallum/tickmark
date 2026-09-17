@@ -28,7 +28,16 @@ import {
 } from '../src/store.js';
 import { createApp } from '../src/app.js';
 
-const PLAN_TABLES = ['access_token', 'client', 'event', 'practitioner', 'request', 'request_item', 'upload'];
+const PLAN_TABLES = [
+  'access_token',
+  'client',
+  'event',
+  'practitioner',
+  'request',
+  'request_item',
+  'session',
+  'upload',
+];
 
 /** A practice with one client and one request, which most tests need. */
 function scenario(db) {
@@ -188,14 +197,18 @@ test('the server answers /healthz, serves the page, and refuses everything else'
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { ok: true, practices: 0 });
 
-    const home = await fetch(`${base}/`);
+    const home = await fetch(`${base}/`, { redirect: 'manual' });
     assert.equal(home.status, 200);
     const html = await home.text();
-    assert.match(html, /Tickmark/);
-    assert.match(html, /Not built yet/, 'the placeholder must not claim the app exists');
+    assert.match(html, /The list of documents a client owes you/);
+    assert.match(html, /href="\/signup"/, 'a stranger is offered a way in');
 
-    const missing = await fetch(`${base}/requests`);
-    assert.equal(missing.status, 404, 'an unimplemented path must 404 rather than pretend');
+    const signedOut = await fetch(`${base}/requests`, { redirect: 'manual' });
+    assert.equal(signedOut.status, 303, 'a practice page sends a stranger to sign in');
+    assert.equal(signedOut.headers.get('location'), '/signin');
+
+    const missing = await fetch(`${base}/nope`);
+    assert.equal(missing.status, 404, 'an unknown path must 404 rather than pretend');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     db.close();

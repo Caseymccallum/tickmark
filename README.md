@@ -8,10 +8,23 @@ bank statements, an ID scan, a signed engagement letter — send them a link, an
 the list get ticked off. Nobody needs an account to send you a file. The reminders, the
 tracking and the record of what arrived and when are yours, on your own server.
 
-**Status: planning. No application code yet.** This repository currently contains the
-name, the decisions, and the plan. The first commit is honest about that on purpose —
-a README that describes software nobody has written is the easiest kind of claim to
-make and the hardest to check.
+**Status: early, and honest about it.** What works today: creating a practice, signing
+in and out, and building a request — a titled list of documents for a named client, with
+the items you need. What does not exist yet: **the client link, the uploads, the
+encryption, and the reminders.** The pages say so where a user would otherwise assume
+they were there.
+
+## Running it
+
+```
+node src/server.js
+```
+
+Then open <http://localhost:3000>. It needs Node 24 or later and nothing else — no
+`npm install`, because there are no dependencies to install. Data goes in `data/`.
+
+`docker compose up` is written and is the intended install, but it has not been built on
+a machine with Docker yet, and this file will not claim it works until it has been.
 
 ## The problem it exists for
 

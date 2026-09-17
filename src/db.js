@@ -1,5 +1,5 @@
 /**
- * The database: one file, seven tables, no dependencies.
+ * The database: one file, eight tables, no dependencies.
  *
  * `node:sqlite` ships in the runtime, so a practice that self-hosts this inherits no
  * driver, no ORM and no native module to compile. That matters more here than it would
@@ -10,6 +10,11 @@
  * The schema lives here rather than in a migrations directory because version one has
  * exactly one schema. When there is a second, this becomes a migrations directory and
  * this comment goes away.
+ *
+ * The plan in `docs/mvp.md` said seven tables. There are eight: `session` was added
+ * because signing out has to actually revoke access, and that needs server-side state
+ * — a signed cookie could be told to stop being valid, but only by keeping a list of
+ * secrets the process would lose on restart.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -21,8 +26,11 @@ CREATE TABLE IF NOT EXISTS practitioner (
   id                  TEXT PRIMARY KEY,
   email               TEXT NOT NULL UNIQUE,
   password_hash       TEXT NOT NULL,
-  public_key          TEXT NOT NULL,
-  wrapped_private_key TEXT NOT NULL,
+  -- Null until the practice generates the key its files are encrypted to. The columns
+  -- are nullable rather than filled with a placeholder, because a placeholder would be a
+  -- lie the encryption code could later believe.
+  public_key          TEXT,
+  wrapped_private_key TEXT,
   created_at          TEXT NOT NULL
 );
 
@@ -87,10 +95,21 @@ CREATE TABLE IF NOT EXISTS event (
   at         TEXT NOT NULL
 );
 
+-- A signed-in practice. The session token is stored the same way a link token is:
+-- hashed, so a stolen database is not a set of working sessions.
+CREATE TABLE IF NOT EXISTS session (
+  id              TEXT PRIMARY KEY,
+  practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
+  token_hash      TEXT NOT NULL UNIQUE,
+  expires_at      TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS request_client ON request(client_id);
 CREATE INDEX IF NOT EXISTS item_request   ON request_item(request_id, position);
 CREATE INDEX IF NOT EXISTS upload_item    ON upload(request_item_id);
 CREATE INDEX IF NOT EXISTS event_request  ON event(request_id, at);
+CREATE INDEX IF NOT EXISTS session_token  ON session(token_hash);
 `;
 
 /** Open the database, creating the file and its directory if they are not there. */
