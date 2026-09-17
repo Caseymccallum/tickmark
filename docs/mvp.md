@@ -11,8 +11,18 @@ Written down so that this document is never mistaken for a description of the so
 with the private half wrapped under a passphrase the server never sees; requests, clients and
 items; the client link with an expiry and a revoke; **encrypted uploads** the server cannot read;
 the append-only record of what arrived; the practice's view of what is outstanding; **the reminder
-draft**; **closing and reopening a request**; **opening what arrived, in the browser**; and a command
-line tool that does the same thing for scripting.
+draft**; **closing and reopening a request**; **opening what arrived, in the browser**; **a list that
+stays alive** — documents added after the fact, withdrawn without losing the record of having asked,
+flagged as needing attention with a reason the client reads, and notes the client attaches to what
+they send; and a command line tool that opens a stored file for scripting.
+
+**Three of those were not missing from the code so much as missing from the truth.** `docs/mvp.md`
+claimed *"the client … can add a note"* and *"per item: outstanding, received, needs attention"*, and
+nothing in the source mentioned attention at all — the column for a client note existed and no
+browser ever sent one, so it could only ever be null. The list also could not be added to after
+creation, which meant a practice who remembered one more document had no way to ask for it. All three
+are now built, and the finding is recorded here because the pattern is worth watching: a plan written
+in the future tense is a list of claims, and claims drift.
 
 **Two things here were not in the plan, and both for the same reason.** *Closing a request* was
 missing, and without it a practice's list grows all season and never empties — a list that never
@@ -138,10 +148,15 @@ able to answer questions about the past.
 - `upload` — belongs to an item; filename, MIME type, size, SHA-256 **of the
   ciphertext**, a storage path, the client's note, and a timestamp
 - `event` — append-only, and the product's entire vocabulary for what has happened:
-  `request.created`, `link.issued`, `link.revoked`, `upload.received`, `reminder.drafted`,
-  `request.closed`, `request.reopened`. Seven kinds, and the reason there is no eighth is that
-  anything the practice or the client does which is worth knowing later should have to justify a new
-  word here.
+  `request.created`, `items.added`, `item.withdrawn`, `item.restored`, `item.needs-attention`,
+  `item.attention-cleared`, `link.issued`, `link.revoked`, `upload.received`, `reminder.drafted`,
+  `request.closed`, `request.reopened`. Twelve kinds, and the reason there is no thirteenth is that
+  anything worth knowing later has to justify a new word here.
+
+  Two habits in that list are deliberate. An act on several items at once is *one* event — adding
+  four documents is `items.added`, not four rows — because a log that records one act four times is a
+  log nobody reads. And a status that can be set can be unset, and both are recorded: withdrawn and
+  restored, flagged and cleared, closed and reopened.
 - `session` — a signed-in practice; the token is stored hashed, like a link token
 
 Three choices inside that are worth stating:

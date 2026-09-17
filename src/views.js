@@ -50,6 +50,10 @@ const STYLE = `
   input, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem .6rem; }
   button { font: inherit; padding: .5rem 1rem; margin-top: 1.25rem; cursor: pointer; }
   .note { color: #666; }
+  form.inline { display: inline; }
+  form.inline input { width: auto; min-width: 12rem; font-size: .9rem; }
+  form.inline button { margin-top: 0; padding: .15rem .5rem; font-size: .9rem; }
+  td form.inline { margin-right: .25rem; }
   .file { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
   .file .name { font-weight: 600; }
   .unlock { border: 1px solid #8884; padding: .75rem 1rem; margin: 1rem 0; border-radius: .25rem; }

@@ -35,6 +35,9 @@ if (keyElement) {
             'content-type': 'application/octet-stream',
             'x-file-name': encodeURIComponent(file.name),
             'x-file-type': file.type || 'application/octet-stream',
+            // The client's own words about what they sent. A header, like the filename, because the
+            // body is the encrypted file and nothing else may travel in it.
+            'x-note': encodeURIComponent(form.querySelector('input[name=note]')?.value ?? ''),
           },
           body: envelope,
         });

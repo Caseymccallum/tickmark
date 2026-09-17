@@ -229,10 +229,11 @@ export function requestsFor(db, practitionerId, { includeClosed = false } = {}) 
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
               c.name AS client_name,
-              (SELECT COUNT(*) FROM request_item i WHERE i.request_id = r.id) AS item_count,
+              (SELECT COUNT(*) FROM request_item i
+                WHERE i.request_id = r.id AND i.withdrawn_at IS NULL) AS item_count,
               (SELECT COUNT(DISTINCT u.request_item_id) FROM upload u
                  JOIN request_item i2 ON i2.id = u.request_item_id
-                WHERE i2.request_id = r.id) AS received_count
+                WHERE i2.request_id = r.id AND i2.withdrawn_at IS NULL) AS received_count
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.practitioner_id = ?
           ${includeClosed ? '' : 'AND r.closed_at IS NULL'}
@@ -297,8 +298,118 @@ export function requestFor(db, practitionerId, requestId) {
 
 export function itemsOf(db, requestId) {
   return db
-    .prepare('SELECT id, label, note, position FROM request_item WHERE request_id = ? ORDER BY position, created_at')
-    .all(requestId);
+    .prepare(
+      `SELECT id, label, note, position, withdrawn_at, attention_at, attention_note
+         FROM request_item WHERE request_id = ? ORDER BY position, created_at`,
+    )
+    .all(requestId)
+    .map((row) => ({
+      id: row.id,
+      label: row.label,
+      note: row.note,
+      withdrawn: row.withdrawn_at !== null,
+      needsAttention: row.attention_at !== null,
+      attentionNote: row.attention_note,
+    }));
+}
+
+/**
+ * An item, scoped to its request **and to the practice that owns the request**.
+ *
+ * Every mutation below goes through this, so there is one place that can be wrong about who is
+ * allowed to change an item, rather than four.
+ */
+export function itemIn(db, practitionerId, requestId, itemId) {
+  return (
+    db
+      .prepare(
+        `SELECT i.id, i.label, i.withdrawn_at, i.attention_at
+           FROM request_item i JOIN request r ON r.id = i.request_id
+          WHERE i.id = ? AND i.request_id = ? AND r.practitioner_id = ?`,
+      )
+      .get(itemId, requestId, practitionerId) ?? null
+  );
+}
+
+/**
+ * Add items to a request that already exists.
+ *
+ * A label already on the request is skipped rather than added twice: a checklist with the same
+ * document in it twice is a checklist a client sends twice or ignores. One event for the act rather
+ * than one per label, because the practice did one thing.
+ */
+export function addItems(db, { requestId, labels, at = now() }) {
+  return inTransaction(db, () => {
+    const seen = new Set(
+      db
+        .prepare('SELECT label FROM request_item WHERE request_id = ?')
+        .all(requestId)
+        .map((row) => row.label.toLowerCase()),
+    );
+
+    const addedLabels = [];
+    const ids = [];
+    for (const label of labels) {
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      addedLabels.push(label);
+      ids.push(addItem(db, { requestId, label, at }));
+    }
+
+    if (ids.length > 0) {
+      recordEvent(db, {
+        requestId,
+        kind: 'items.added',
+        detail: ids.length === 1 ? addedLabels[0] : `${ids.length} items`,
+        at,
+      });
+    }
+    return ids;
+  });
+}
+
+/**
+ * Stop asking for an item, without losing that it was asked for.
+ *
+ * Withdrawing is reversible, like closing a request and for the same reason: a status that cannot be
+ * undone is a trap for whoever sets it by mistake.
+ */
+export function setItemWithdrawn(db, practitionerId, requestId, itemId, withdrawn, at = now()) {
+  const item = itemIn(db, practitionerId, requestId, itemId);
+  if (!item || Boolean(item.withdrawn_at) === withdrawn) return false;
+  db.prepare('UPDATE request_item SET withdrawn_at = ? WHERE id = ?').run(withdrawn ? at : null, itemId);
+  recordEvent(db, { requestId, kind: withdrawn ? 'item.withdrawn' : 'item.restored', detail: item.label, at });
+  return true;
+}
+
+/**
+ * Say that what arrived is not usable.
+ *
+ * The note is for the client — "the scan is unreadable", "this is the 2024 statement" — and the item
+ * stays outstanding, so the next reminder asks for it again and the client's page says what was
+ * wrong with the last attempt.
+ */
+export function setItemAttention(db, practitionerId, requestId, itemId, { note = null } = {}, at = now()) {
+  const item = itemIn(db, practitionerId, requestId, itemId);
+  if (!item) return false;
+  const trimmed = typeof note === 'string' && note.trim().length > 0 ? note.trim().slice(0, 500) : null;
+  db.prepare('UPDATE request_item SET attention_at = ?, attention_note = ? WHERE id = ?').run(at, trimmed, itemId);
+  recordEvent(db, {
+    requestId,
+    kind: 'item.needs-attention',
+    detail: trimmed ? `${item.label}: ${trimmed}` : item.label,
+    at,
+  });
+  return true;
+}
+
+export function clearItemAttention(db, practitionerId, requestId, itemId, at = now()) {
+  const item = itemIn(db, practitionerId, requestId, itemId);
+  if (!item || !item.attention_at) return false;
+  db.prepare('UPDATE request_item SET attention_at = NULL, attention_note = NULL WHERE id = ?').run(itemId);
+  recordEvent(db, { requestId, kind: 'item.attention-cleared', detail: item.label, at });
+  return true;
 }
 
 export function uploadsOf(db, requestId) {
@@ -352,7 +463,7 @@ export function tokenLookup(db, token, at = new Date()) {
 export function itemInRequest(db, requestId, itemId) {
   return (
     db
-      .prepare('SELECT id, label, note FROM request_item WHERE id = ? AND request_id = ?')
+      .prepare('SELECT id, label, note, withdrawn_at FROM request_item WHERE id = ? AND request_id = ?')
       .get(itemId, requestId) ?? null
   );
 }

@@ -44,7 +44,9 @@ import { newId, now } from './db.js';
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
 import {
+  addItems,
   addPracticeKey,
+  clearItemAttention,
   closeRequest,
   closedCount,
   createPractitioner,
@@ -63,6 +65,8 @@ import {
   requestFor,
   requestsFor,
   revokeToken,
+  setItemAttention,
+  setItemWithdrawn,
   tokenLookup,
   tokensFor,
   uploadsOf,
@@ -104,6 +108,8 @@ export const ROUTES = [
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
   ['POST', /^\/requests\/([^/]+)\/close$/, closeRequestPage],
   ['POST', /^\/requests\/([^/]+)\/reopen$/, reopenRequestPage],
+  ['POST', /^\/requests\/([^/]+)\/items$/, addItemsPage],
+  ['POST', /^\/requests\/([^/]+)\/items\/([^/]+)\/([a-z-]+)$/, changeItemPage],
   ['POST', /^\/requests\/([^/]+)\/revoke$/, revokeLink],
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
@@ -401,26 +407,39 @@ const originOf = (request) =>
 /**
  * The message a practice sends when something has not arrived.
  *
- * A pure function of the facts, exported so the wording has one home and can be tested directly.
- * It is a *draft*: the page puts it in a textarea the practice edits before sending, because the
- * tool does not know this client and the practice does.
+ * A pure function of the facts, exported so the wording has one home and can be tested directly. It is
+ * a *draft*: the page puts it in a textarea the practice edits before sending, because the tool does
+ * not know this client and the practice does.
  *
- * The escape hatch near the end is not politeness. A reminder that lists a document the client
- * cannot supply — because it does not apply to them, or they have already explained why — is a
- * reminder that gets ignored, and the cheapest way to prevent that is to invite the reply.
+ * Two lists rather than one, because "we have not seen this" and "what you sent does not work" are
+ * different sentences to receive, and the second one needs to say what was wrong.
+ *
+ * The escape hatch near the end is not politeness. A reminder listing a document the client cannot
+ * supply — because it does not apply to them, or they have already explained why — is a reminder that
+ * gets ignored, and the cheapest way to prevent that is to invite the reply.
  */
-export function reminderDraft({ clientName, title, dueAt, outstanding, link }) {
-  const documents = outstanding.length === 1 ? 'one document' : `${outstanding.length} documents`;
-  const lines = [
-    `Hello ${clientName},`,
-    '',
-    `We are still waiting on ${documents} for ${title}:`,
-    '',
-    ...outstanding.map((label) => `  - ${label}`),
-    '',
-    'You can send them at this link — no account or password needed:',
-    link,
-  ];
+export function reminderDraft({ clientName, title, dueAt, outstanding, again = [], link }) {
+  const lines = [`Hello ${clientName},`, ''];
+
+  if (outstanding.length > 0) {
+    lines.push(
+      `We are still waiting on ${outstanding.length === 1 ? 'one document' : `${outstanding.length} documents`} for ${title}:`,
+      '',
+      ...outstanding.map((label) => `  - ${label}`),
+      '',
+    );
+  }
+
+  if (again.length > 0) {
+    lines.push(
+      outstanding.length > 0 ? 'These need sending again:' : `These need sending again for ${title}:`,
+      '',
+      ...again.map((item) => `  - ${item.label}${item.note ? ` (${item.note})` : ''}`),
+      '',
+    );
+  }
+
+  lines.push('You can send them at this link — no account or password needed:', link);
   if (dueAt) lines.push('', `We had these marked as needed by ${dueAt}.`);
   lines.push(
     '',
@@ -428,6 +447,7 @@ export function reminderDraft({ clientName, title, dueAt, outstanding, link }) {
     '',
     'Thanks,',
   );
+
   return { subject: `Still needed for ${title}`, body: lines.join('\n') };
 }
 
@@ -533,7 +553,9 @@ function viewRequest({ db, response, practitioner, params }) {
   const found = requestFor(db, practitioner.id, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
-  const items = itemsOf(db, found.id);
+  const allItems = itemsOf(db, found.id);
+  const live = allItems.filter((item) => !item.withdrawn);
+  const withdrawn = allItems.filter((item) => item.withdrawn);
   const links = tokensFor(db, found.id);
   const filesFor = new Map();
   for (const upload of uploadsOf(db, found.id)) {
@@ -541,27 +563,46 @@ function viewRequest({ db, response, practitioner, params }) {
     list.push(upload);
     filesFor.set(upload.request_item_id, list);
   }
-  const received = items.filter((item) => (filesFor.get(item.id) ?? []).length > 0).length;
-  const outstanding = items.filter((item) => (filesFor.get(item.id) ?? []).length === 0);
+  const filesOf = (item) => filesFor.get(item.id) ?? [];
+  const received = live.filter((item) => filesOf(item).length > 0).length;
+  const outstanding = live.filter((item) => filesOf(item).length === 0);
+  const attention = live.filter((item) => item.needsAttention);
   const events = history(db, found.id);
 
-  const rows = items.map((item) => {
-    const files = filesFor.get(item.id) ?? [];
-    return html`<tr>
-      <td>${item.label}</td>
-      <td>${files.length > 0 ? html`<strong>received</strong>` : 'outstanding'}</td>
-      <td>${files.length === 0
-        ? html`<span class="note">—</span>`
-        : files.map((file) => html`<div class="file">
-            <span class="name">${file.filename}</span>
-            <span class="note">${file.uploaded_at}</span>
-            <button type="button" class="save" disabled
-                    data-url="/requests/${found.id}/files/${file.id}"
-                    data-name="${file.filename}">Save</button>
-            <span class="status note"></span>
-          </div>`)}</td>
-    </tr>`;
-  });
+  /** What the practice can say about one item — which is what makes the list a living thing. */
+  const controlsFor = (item) => html`
+    ${item.needsAttention
+      ? html`<form method="post" action="/requests/${found.id}/items/${item.id}/clear-attention" class="inline">
+          <button type="submit">Dealt with</button>
+        </form>`
+      : html`<form method="post" action="/requests/${found.id}/items/${item.id}/attention" class="inline">
+          <input type="text" name="attention_note" placeholder="why? the client sees this" maxlength="500">
+          <button type="submit">Needs attention</button>
+        </form>`}
+    <form method="post" action="/requests/${found.id}/items/${item.id}/withdraw" class="inline">
+      <button type="submit">Stop asking</button>
+    </form>`;
+
+  const rows = live.map((item) => html`<tr>
+    <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
+    <td>${item.needsAttention
+      ? html`<strong>needs attention</strong>${item.attentionNote ? html`<br><span class="note">${item.attentionNote}</span>` : ''}`
+      : filesOf(item).length > 0
+        ? html`<strong>received</strong>`
+        : 'outstanding'}</td>
+    <td>${filesOf(item).length === 0
+      ? html`<span class="note">—</span>`
+      : filesOf(item).map((file) => html`<div class="file">
+          <span class="name">${file.filename}</span>
+          <span class="note">${file.uploaded_at}</span>
+          <button type="button" class="save" disabled
+                  data-url="/requests/${found.id}/files/${file.id}"
+                  data-name="${file.filename}">Save</button>
+          <span class="status note"></span>
+          ${file.client_note ? html`<div class="note">they said: ${file.client_note}</div>` : ''}
+        </div>`)}</td>
+    <td>${found.closed_at ? html`<span class="note">closed</span>` : controlsFor(item)}</td>
+  </tr>`);
 
   // The wrapped keys travel in the page because the decryption happens here. They leak nothing — the
   // server already stores them, and they are useless without the passphrase — and they have to be
@@ -576,7 +617,12 @@ function viewRequest({ db, response, practitioner, params }) {
     body: html`
       <h1>${found.title} <span class="note">for ${found.client_name}</span></h1>
       ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
-      <p>${received} of ${items.length} received${found.due_at ? html`, due ${found.due_at}` : ''}.</p>
+      <p>${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
+      ${attention.length > 0
+        ? html`<p class="warning"><strong>${attention.length === 1 ? 'One document needs attention' : `${attention.length} documents need attention`}:</strong>
+            ${attention.map((item) => item.label).join(', ')}. The client's page says what is wrong with
+            each one, and the next reminder asks for them again.</p>`
+        : ''}
       ${keys.length > 0 && received > 0
         ? html`<div class="unlock">
             <label for="passphrase">Your passphrase, to open what has arrived</label>
@@ -587,9 +633,25 @@ function viewRequest({ db, response, practitioner, params }) {
           </div>`
         : ''}
       <table>
-        <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Files</th></tr></thead>
+        <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Files</th><th align="left">What you can say</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      ${!found.closed_at
+        ? html`<form method="post" action="/requests/${found.id}/items">
+            <label for="new-items">Remembered something else? <span class="note">one document per line</span></label>
+            <textarea id="new-items" name="items" rows="3" placeholder="The 2024 statements as well"></textarea>
+            <button type="submit">Add to this request</button>
+          </form>`
+        : ''}
+      ${withdrawn.length > 0
+        ? html`<h2>No longer being asked for</h2>
+            <ul>${withdrawn.map((item) => html`<li>${item.label}
+              <form method="post" action="/requests/${found.id}/items/${item.id}/restore" class="inline">
+                <button type="submit">Ask for it again</button>
+              </form></li>`)}</ul>
+            <p class="note">Withdrawn rather than deleted: the client's page stops asking, and the
+            record keeps saying it was once asked for.</p>`
+        : ''}
       <h2>What has happened</h2>
       <ul>
         ${events.map((event) => html`<li><code>${event.kind}</code> <span class="note">${event.at}${event.detail ? ` — ${event.detail}` : ''}</span></li>`)}
@@ -753,7 +815,11 @@ async function revokeLink({ db, request, response, practitioner, params }) {
 
 const outstandingOf = (db, requestId) => {
   const arrived = new Set(uploadsOf(db, requestId).map((upload) => upload.request_item_id));
-  return itemsOf(db, requestId).filter((item) => !arrived.has(item.id));
+  // An item the practice has flagged stays on the list even though a file came in: what arrived is not
+  // usable, so the next reminder has to ask again. A withdrawn item leaves the list entirely.
+  return itemsOf(db, requestId).filter(
+    (item) => !item.withdrawn && (!arrived.has(item.id) || item.needsAttention),
+  );
 };
 
 /**
@@ -803,7 +869,10 @@ async function draftReminder({ db, request, response, practitioner, params }) {
     clientName: found.client_name,
     title: found.title,
     dueAt: found.due_at,
-    outstanding: outstanding.map((item) => item.label),
+    outstanding: outstanding.filter((item) => !item.needsAttention).map((item) => item.label),
+    again: outstanding
+      .filter((item) => item.needsAttention)
+      .map((item) => ({ label: item.label, note: item.attentionNote })),
     link: `${originOf(request)}/r/${token}`,
   });
 
@@ -838,6 +907,81 @@ async function reopenRequestPage({ db, response, practitioner, params }) {
 }
 
 /**
+ * Add documents to a request that is already out with a client.
+ *
+ * A practice only knows the whole list once it starts looking, and a list fixed at creation is a list
+ * they work around by sending a second email — which defeats the point of the request being the thing
+ * that answers "did we get it?".
+ *
+ * A closed request is refused rather than quietly accepting. Reopening is a deliberate act and it
+ * should stay one.
+ */
+async function addItemsPage({ db, request, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practitioner.id, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+  if (found.closed_at) {
+    return fail(response, 400, `"${found.title}" is closed. Reopen it before adding to it.`, practitioner);
+  }
+
+  const fields = formFields(await readBody(request));
+  const labels = parseItems(typeof fields.items === 'string' ? fields.items : '');
+  if (labels.length === 0) {
+    return fail(response, 400, 'There was nothing to add — give one document per line.', practitioner);
+  }
+
+  const added = addItems(db, { requestId: found.id, labels });
+  if (added.length === 0) {
+    // Said rather than silently ignored: a practice that adds something and sees no change would
+    // reasonably conclude the button is broken.
+    return fail(response, 400, 'Everything on that list is already on this request.', practitioner);
+  }
+  return redirect(response, `/requests/${found.id}`);
+}
+
+/**
+ * The four things a practice can say about a single document.
+ *
+ * A table rather than a chain of `if`s, so that the set of things a practice can say is one place a
+ * reader can check — and so that an unknown action is a refusal rather than a silent no-op.
+ */
+const ITEM_ACTIONS = {
+  withdraw: ({ db, practitioner, requestId, itemId }) =>
+    setItemWithdrawn(db, practitioner.id, requestId, itemId, true),
+  restore: ({ db, practitioner, requestId, itemId }) =>
+    setItemWithdrawn(db, practitioner.id, requestId, itemId, false),
+  attention: ({ db, practitioner, requestId, itemId, note }) =>
+    setItemAttention(db, practitioner.id, requestId, itemId, { note }),
+  'clear-attention': ({ db, practitioner, requestId, itemId }) =>
+    clearItemAttention(db, practitioner.id, requestId, itemId),
+};
+
+async function changeItemPage({ db, request, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const [requestId, itemId, action] = params;
+
+  const found = requestFor(db, practitioner.id, requestId);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const change = Object.hasOwn(ITEM_ACTIONS, action) ? ITEM_ACTIONS[action] : null;
+  if (!change) {
+    return fail(response, 400, `"${action}" is not something that can be said about a document.`, practitioner);
+  }
+
+  const fields = formFields(await readBody(request));
+  const changed = change({ db, practitioner, requestId, itemId, note: field(fields, 'attention_note') });
+  if (!changed) {
+    return fail(
+      response,
+      404,
+      'That document is not part of this request, or it is already in that state.',
+      practitioner,
+    );
+  }
+  return redirect(response, `/requests/${found.id}`);
+}
+
+/**
  * The client's page. No account, no session — the token in the path is the whole of the
  * authorization, which is why it is 256 random bits and why only its digest is stored.
  */
@@ -868,7 +1012,10 @@ function clientPage({ db, response, params }) {
   }
 
   const open = found.request;
-  const items = itemsOf(db, open.id);
+  // Withdrawn items are not asked for. They stay visible to the practice — the request page shows them
+  // — but a client asked again for something the practice has stopped wanting is a client who stops
+  // trusting the list.
+  const items = itemsOf(db, open.id).filter((item) => !item.withdrawn);
   const arrived = new Set(uploadsOf(db, open.id).map((upload) => upload.request_item_id));
 
   if (!open.practice_public_key) {
@@ -882,10 +1029,15 @@ function clientPage({ db, response, params }) {
 
   const rows = items.map((item) => html`<tr>
     <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
-    <td>${arrived.has(item.id) ? html`<strong>received</strong>` : 'still needed'}</td>
+    <td>${item.needsAttention
+      ? html`<strong>please send this again</strong>${item.attentionNote ? html`<br><span class="note">${item.attentionNote}</span>` : ''}`
+      : arrived.has(item.id)
+        ? html`<strong>received</strong>`
+        : 'still needed'}</td>
     <td>
       <form class="upload" method="post" action="/r/${params[0]}/items/${item.id}">
         <input type="file" name="file" required>
+        <input type="text" name="note" placeholder="anything we should know? (optional)" maxlength="500">
         <button type="submit">Send</button>
         <div class="status note"></div>
       </form>
@@ -905,6 +1057,10 @@ function clientPage({ db, response, params }) {
         <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      ${items.length === 0
+        ? html`<p>Nothing is being asked of you at the moment. Add the practice's address to your
+            contacts, in case they ask for something later.</p>`
+        : ''}
       <p class="note">Nothing here needs an account. Come back to this page with the same
       link to send the rest — the list shows what has already arrived.</p>
       ${jsonTag('practice-key', JSON.parse(open.practice_public_key))}
@@ -930,6 +1086,11 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
 
   const item = itemInRequest(db, found.request.id, itemId);
   if (!item) return fail(response, 404, 'That document is not part of this request.');
+  if (item.withdrawn_at) {
+    // A client may be holding a page from before the practice stopped asking. Saying so is better than
+    // storing a file that nothing is waiting for, or than a "not found" that reads like their mistake.
+    return fail(response, 409, 'The practice is no longer asking for that one. Refresh the page to see the current list.');
+  }
 
   const type = String(request.headers['content-type'] ?? '');
   if (!type.startsWith('application/octet-stream')) {

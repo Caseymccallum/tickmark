@@ -70,7 +70,16 @@ CREATE TABLE IF NOT EXISTS request_item (
   label      TEXT NOT NULL,
   note       TEXT,
   position   INTEGER NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Withdrawn rather than deleted, for the same reason a request is closed rather than deleted: a
+  -- file may already point at this row, and a record that can lose a row is not a record. The item
+  -- stops being asked for; it does not stop having been asked for.
+  withdrawn_at   TEXT,
+  -- Set by the practice when what arrived is not usable: an unreadable scan, the wrong document,
+  -- half a statement. It keeps the item in the outstanding list, so reminders go on asking for it,
+  -- and the client's page says what is wrong rather than repeating the same request.
+  attention_at   TEXT,
+  attention_note TEXT
 );
 
 -- The token itself is never stored. A database that leaks must not let anyone
@@ -128,17 +137,38 @@ CREATE INDEX IF NOT EXISTS practice_key_owner ON practice_key(practitioner_id, c
 /**
  * Bring an older database up to this schema.
  *
- * There is exactly one migration so far, and it exists because the first version kept a practice's
- * key in two columns on `practitioner`. Any database created by that version has them, and a key
- * sitting in a column this code no longer reads is a key that would be silently lost.
- *
- * The columns are dropped rather than left in place: a dead column that could later be read by
- * mistake is the kind of thing this project flags. The data moves first, in the same function, and
- * there is a test that runs it against a database made with the old schema.
+ * Two kinds of step, both idempotent, because this runs on every open. `added` counts what changed,
+ * and a test asserts that running it twice changes nothing the second time.
  */
 function migrate(db) {
-  const columns = db.prepare("SELECT name FROM pragma_table_info('practitioner')").all().map((row) => row.name);
-  if (!columns.includes('public_key')) return 0;
+  let changed = singleKeyColumnsToTable(db);
+  for (const [table, column, definition] of [
+    ['request_item', 'withdrawn_at', 'TEXT'],
+    ['request_item', 'attention_at', 'TEXT'],
+    ['request_item', 'attention_note', 'TEXT'],
+  ]) {
+    changed += addColumnIfMissing(db, table, column, definition);
+  }
+  return changed;
+}
+
+function columnsOf(db, table) {
+  return db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((row) => row.name);
+}
+
+function addColumnIfMissing(db, table, column, definition) {
+  if (columnsOf(db, table).includes(column)) return 0;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return 1;
+}
+
+/**
+ * The first version kept a practice's key in two columns on `practitioner`. A key sitting in a column
+ * this code no longer reads is a key that would be silently lost, so it moves into the history and
+ * the columns are dropped rather than left in place.
+ */
+function singleKeyColumnsToTable(db) {
+  if (!columnsOf(db, 'practitioner').includes('public_key')) return 0;
 
   const carried = db
     .prepare('SELECT id, public_key, wrapped_private_key, created_at FROM practitioner WHERE public_key IS NOT NULL')

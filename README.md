@@ -14,12 +14,13 @@ read the file back off disk, require the document itself not to appear in it, an
 nothing but the passphrase. [What is encrypted, and what is not](docs/encryption.md) is the honest
 account of that, including four things it does not protect.
 
-What works today: creating a practice, making an encryption key, building a request, creating a
-link the client opens with no account, receiving encrypted uploads, seeing what is still
-outstanding, **drafting the reminder** for what has not arrived, **closing a request** when there is
-nothing left to ask for, **opening what arrived in the browser** — the passphrase is typed into the
-page, the file is decrypted there, and the server never sees it — and **rotating the key**, with the
-old one kept so that nothing already sent becomes unopenable.
+What works today: creating a practice, making an encryption key, building a request, **adding to it
+and taking things off it later**, creating a link the client opens with no account, receiving
+encrypted uploads, **seeing what is still outstanding and what needs re-sending**, **drafting the
+reminder** for what has not arrived, **closing a request** when there is nothing left to ask for,
+**opening what arrived in the browser** — the passphrase is typed into the page, the file is
+decrypted there, and the server never sees it — and **rotating the key**, with the old one kept so
+that nothing already sent becomes unopenable.
 
 What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
 let an old key be deleted. Until it exists, old keys stay, and `docs/encryption.md` says why.

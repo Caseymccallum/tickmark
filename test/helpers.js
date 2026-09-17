@@ -107,13 +107,14 @@ export async function createLink(client, requestId, days = '30') {
  * Everything about this mirrors `web/upload.js`: the same content type, the same two headers,
  * and the envelope produced by the same function.
  */
-export async function upload({ base, token, itemId, publicKey, plaintext, filename = 'upload.bin', headers = {} }) {
+export async function upload({ base, token, itemId, publicKey, plaintext, filename = 'upload.bin', note = null, headers = {} }) {
   const envelope = await encryptFile(publicKey, plaintext);
   const response = await fetch(`${base}/r/${token}/items/${itemId}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/octet-stream',
       'x-file-name': encodeURIComponent(filename),
+      ...(note === null ? {} : { 'x-note': encodeURIComponent(note) }),
       ...headers,
     },
     body: envelope,
