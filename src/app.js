@@ -44,6 +44,8 @@ import { newId, now } from './db.js';
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
 import {
+  closeRequest,
+  closedCount,
   createPractitioner,
   createRequest,
   findOrCreateClient,
@@ -53,7 +55,9 @@ import {
   itemsOf,
   practiceKeys,
   practitionerByEmail,
+  recordEvent,
   recordUpload,
+  reopenRequest,
   requestFor,
   requestsFor,
   revokeToken,
@@ -91,6 +95,9 @@ export const ROUTES = [
   ['POST', '/requests', createRequestPage],
   ['GET', /^\/requests\/([^/]+)$/, viewRequest],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
+  ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
+  ['POST', /^\/requests\/([^/]+)\/close$/, closeRequestPage],
+  ['POST', /^\/requests\/([^/]+)\/reopen$/, reopenRequestPage],
   ['POST', /^\/requests\/([^/]+)\/revoke$/, revokeLink],
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
@@ -374,12 +381,58 @@ export function parseItems(text) {
   return items;
 }
 
-function listRequests({ db, response, practitioner }) {
+/**
+ * Where this server is, as a client would reach it.
+ *
+ * The link a practice pastes into an email has to be absolute, and the only place that knows the
+ * address is the request that produced the page. `x-forwarded-proto` is honoured because the
+ * documented deployment puts a reverse proxy in front of this, which terminates TLS and would
+ * otherwise yield `http://` links in emails.
+ */
+const originOf = (request) =>
+  `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
+
+/**
+ * The message a practice sends when something has not arrived.
+ *
+ * A pure function of the facts, exported so the wording has one home and can be tested directly.
+ * It is a *draft*: the page puts it in a textarea the practice edits before sending, because the
+ * tool does not know this client and the practice does.
+ *
+ * The escape hatch near the end is not politeness. A reminder that lists a document the client
+ * cannot supply — because it does not apply to them, or they have already explained why — is a
+ * reminder that gets ignored, and the cheapest way to prevent that is to invite the reply.
+ */
+export function reminderDraft({ clientName, title, dueAt, outstanding, link }) {
+  const documents = outstanding.length === 1 ? 'one document' : `${outstanding.length} documents`;
+  const lines = [
+    `Hello ${clientName},`,
+    '',
+    `We are still waiting on ${documents} for ${title}:`,
+    '',
+    ...outstanding.map((label) => `  - ${label}`),
+    '',
+    'You can send them at this link — no account or password needed:',
+    link,
+  ];
+  if (dueAt) lines.push('', `We had these marked as needed by ${dueAt}.`);
+  lines.push(
+    '',
+    'If something on the list does not apply to you, reply and tell us — it is easier than sending the wrong thing.',
+    '',
+    'Thanks,',
+  );
+  return { subject: `Still needed for ${title}`, body: lines.join('\n') };
+}
+
+function listRequests({ db, response, practitioner, url }) {
   if (!requireSignIn({ practitioner, response })) return;
-  const rows = requestsFor(db, practitioner.id);
+  const showingClosed = url.searchParams.get('closed') === '1';
+  const rows = requestsFor(db, practitioner.id, { includeClosed: showingClosed });
+  const closed = closedCount(db, practitioner.id);
 
   const table = rows.length === 0
-    ? html`<p>No requests yet. <a href="/requests/new">Start one</a>.</p>`
+    ? html`<p>${showingClosed ? 'Nothing has been closed yet.' : html`No requests yet. <a href="/requests/new">Start one</a>.`}</p>`
     : html`<table>
         <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Items</th><th align="left">Outstanding</th></tr></thead>
         <tbody>
@@ -393,10 +446,15 @@ function listRequests({ db, response, practitioner }) {
       </table>`;
 
   return sendPage(response, 200, page({
-    title: 'Requests',
+    title: showingClosed ? 'Closed requests' : 'Requests',
     practitioner,
     body: html`
-      <h1>Requests</h1>
+      <h1>${showingClosed ? 'Closed requests' : 'Requests'}</h1>
+      <p>
+        ${showingClosed
+          ? html`<a href="/requests">Open requests</a>`
+          : html`Open &middot; <a href="/requests?closed=1">closed (${closed})</a>`}
+      </p>
       ${table}
       <p><a href="/requests/new">New request</a></p>`,
   }));
@@ -478,6 +536,7 @@ function viewRequest({ db, response, practitioner, params }) {
     filesFor.set(upload.request_item_id, list);
   }
   const received = items.filter((item) => (filesFor.get(item.id) ?? []).length > 0).length;
+  const outstanding = items.filter((item) => (filesFor.get(item.id) ?? []).length === 0);
   const events = history(db, found.id);
 
   const rows = items.map((item) => {
@@ -496,6 +555,7 @@ function viewRequest({ db, response, practitioner, params }) {
     practitioner,
     body: html`
       <h1>${found.title} <span class="note">for ${found.client_name}</span></h1>
+      ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
       <p>${received} of ${items.length} received${found.due_at ? html`, due ${found.due_at}` : ''}.</p>
       <table>
         <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Files</th></tr></thead>
@@ -528,9 +588,32 @@ function viewRequest({ db, response, practitioner, params }) {
         </select>
         <button type="submit">Create a link</button>
       </form>
-      <p class="warning">Files uploaded through a link are stored <strong>as they
-      are</strong>: the browser-side encryption that is meant to make the server unable to
-      read them is not built yet. Until it is, do not send a link to a real client.</p>`,
+      <h2>Chase this client</h2>
+      ${outstanding.length > 0
+        ? html`<p>${outstanding.length} still outstanding:
+              ${outstanding.map((item) => item.label).join(', ')}.</p>
+            <form method="post" action="/requests/${found.id}/remind">
+              <label for="remind-days">The reminder's link, valid for</label>
+              <select id="remind-days" name="days">
+                <option value="7">7 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="90">90 days</option>
+              </select>
+              <button type="submit">Draft a reminder</button>
+            </form>`
+        : html`<p><strong>Everything asked for has arrived.</strong></p>`}
+      <h2>The file itself</h2>
+      ${found.closed_at
+        ? html`<p>Closed ${found.closed_at}. It stays on the list of closed requests, and
+              nothing has been deleted.</p>
+            <form method="post" action="/requests/${found.id}/reopen">
+              <button type="submit">Reopen it</button>
+            </form>`
+        : html`<p class="note">Closing is a status, not a deletion: the record, the files and the
+              client's link all stay exactly as they are.</p>
+            <form method="post" action="/requests/${found.id}/close">
+              <button type="submit">Close this request</button>
+            </form>`}`,
   }));
 }
 
@@ -569,10 +652,10 @@ async function issueLink({ db, request, response, practitioner, params }) {
   return sendPage(response, 200, page({
     title: found.title,
     practitioner,
-    banner: html`<p class="warning"><strong>This is the link — copy it now. It will not be
-      shown again.</strong> Only a digest of it is stored, so nobody can recover it later,
-      including whoever runs this server.<br>
-      <code>/r/${token}</code></p>`,
+    banner: html`<p class="warning"><strong>This is the link — copy it now. It will not be shown
+      again.</strong> Only a digest of it is stored, so nobody can recover it later, including
+      whoever runs this server.<br>
+      <code>${originOf(request)}/r/${token}</code></p>`,
     body: html`<h1>${found.title}</h1>
       <p>Send that link to ${found.client_name}. It stops working after ${days} days, and
       you can revoke it from the <a href="/requests/${found.id}">request page</a>.</p>`,
@@ -591,6 +674,92 @@ async function revokeLink({ db, request, response, practitioner, params }) {
     return fail(response, 400, 'That link is not one of yours, or it was already revoked.', practitioner);
   }
   return redirect(response, `/requests/${found.id}`);
+}
+
+const outstandingOf = (db, requestId) => {
+  const arrived = new Set(uploadsOf(db, requestId).map((upload) => upload.request_item_id));
+  return itemsOf(db, requestId).filter((item) => !arrived.has(item.id));
+};
+
+/**
+ * A block of text the practice is meant to copy.
+ *
+ * `onclick` selecting the contents is the whole interaction: a practice with a mouse clicks once
+ * and types Ctrl-C, which is one more step than a copy button and one fewer than a broken
+ * clipboard API in a page served over plain HTTP.
+ */
+const copyableField = (name, text, rows) => html`
+  <label for="${name}">${name}</label>
+  <textarea id="${name}" rows="${rows}" readonly onclick="this.focus(); this.select();">${text}</textarea>`;
+
+/**
+ * Draft the reminder, and make the link it needs.
+ *
+ * A reminder without a link is much weaker — the client has to find the original email — and the
+ * link cannot be recovered from the server, by design: only its digest is stored. So asking for a
+ * reminder makes a fresh one, and says so. That is the visible cost of that design decision, and
+ * it belongs on the screen rather than in a footnote.
+ */
+async function draftReminder({ db, request, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practitioner.id, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+  if (!practitioner.hasKey) return redirect(response, '/setup');
+
+  const outstanding = outstandingOf(db, found.id);
+  if (outstanding.length === 0) return redirect(response, `/requests/${found.id}`);
+
+  const fields = formFields(await readBody(request));
+  const days = Math.min(Math.max(Number(field(fields, 'days', '30')) || 30, 1), 365);
+
+  const token = newToken();
+  issueToken(db, {
+    requestId: found.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  recordEvent(db, {
+    requestId: found.id,
+    kind: 'reminder.drafted',
+    detail: `${outstanding.length} still outstanding`,
+  });
+
+  const draft = reminderDraft({
+    clientName: found.client_name,
+    title: found.title,
+    dueAt: found.due_at,
+    outstanding: outstanding.map((item) => item.label),
+    link: `${originOf(request)}/r/${token}`,
+  });
+
+  return sendPage(response, 200, page({
+    title: `A reminder for ${found.client_name}`,
+    practitioner,
+    banner: html`<p class="warning">Tickmark does not send this. Copy it into whatever you send
+      mail with, to <strong>${found.client_email ?? 'the client'}</strong>.</p>`,
+    body: html`
+      <h1>A reminder for ${found.client_name}</h1>
+      <p>${outstanding.length} of ${itemsOf(db, found.id).length} still outstanding. The link in the
+      message is new, it works for ${days} days, and <strong>it is not recoverable</strong> — if you
+      lose it, draft the reminder again.</p>
+      ${copyableField('subject', draft.subject, 2)}
+      ${copyableField('message', draft.body, 16)}
+      <p><a href="/requests/${found.id}">Back to the request</a></p>`,
+  }));
+}
+
+async function closeRequestPage({ db, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const closed = closeRequest(db, practitioner.id, params[0]);
+  if (!closed) return fail(response, 404, 'There is no open request at that address.', practitioner);
+  return redirect(response, `/requests/${params[0]}`);
+}
+
+async function reopenRequestPage({ db, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const reopened = reopenRequest(db, practitioner.id, params[0]);
+  if (!reopened) return fail(response, 404, 'There is no closed request at that address.', practitioner);
+  return redirect(response, `/requests/${params[0]}`);
 }
 
 /**

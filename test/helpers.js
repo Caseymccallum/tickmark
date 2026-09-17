@@ -85,6 +85,20 @@ export async function setUpKey(client, passphrase = PASSPHRASE) {
 }
 
 /**
+ * Create a link through the practice's own page, and take the token out of the page that shows it
+ * once.
+ *
+ * The token is scraped from the rendered page rather than read from the database, because there is
+ * nothing in the database to read: only its digest is stored, and a helper that could produce it
+ * another way would be testing a flow the product does not have.
+ */
+export async function createLink(client, requestId, days = '30') {
+  const response = await client.post(`/requests/${requestId}/link`, { days });
+  const token = /\/r\/([A-Za-z0-9_-]{20,})/.exec(await response.text())?.[1];
+  return { response, token };
+}
+
+/**
  * Encrypt a file to the practice's public key and send it the way the client's page does.
  *
  * Everything about this mirrors `web/upload.js`: the same content type, the same two headers,

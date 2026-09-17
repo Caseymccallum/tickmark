@@ -13,15 +13,17 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { decryptEnvelope } from '../web/tickmark-crypto.js';
-import { practiceWithRequest, signUp, upload, withServer } from './helpers.js';
+import { createLink as createLinkPage, practiceWithRequest, signUp, upload, withServer } from './helpers.js';
 
 const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
 
-/** Create a link and return the token from the page that shows it once. */
+/**
+ * The shared helper returns both the response and the token; these tests almost always want only
+ * the token, so this wraps it once rather than unwrapping at a dozen call sites.
+ */
 async function createLink(client, requestId, days = '30') {
-  const response = await client.post(`/requests/${requestId}/link`, { days });
+  const { response, token } = await createLinkPage(client, requestId, days);
   assert.equal(response.status, 200, 'creating a link renders the page that shows it');
-  const token = /\/r\/([A-Za-z0-9_-]{20,})/.exec(await response.text())?.[1];
   assert.ok(token, 'the link is shown to the practice');
   return token;
 }

@@ -191,9 +191,11 @@ export function clientsOf(db, practitionerId) {
  * The practice's dashboard: every request, who it is for, and how much of it has arrived.
  *
  * One query rather than a loop, because the shape of the screen is known and the
- * alternative is a query per row.
+ * alternative is a query per row. `includeClosed` exists because a practice's list grows all
+ * season and a list that never empties stops being read — so closed requests are a second view
+ * rather than a deletion.
  */
-export function requestsFor(db, practitionerId) {
+export function requestsFor(db, practitionerId, { includeClosed = false } = {}) {
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
@@ -204,10 +206,44 @@ export function requestsFor(db, practitionerId) {
                 WHERE i2.request_id = r.id) AS received_count
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.practitioner_id = ?
+          ${includeClosed ? '' : 'AND r.closed_at IS NULL'}
         ORDER BY r.created_at DESC`,
     )
     .all(practitionerId)
     .map((row) => ({ ...row, outstanding_count: row.item_count - row.received_count }));
+}
+
+export function closedCount(db, practitionerId) {
+  return db
+    .prepare('SELECT COUNT(*) AS n FROM request WHERE practitioner_id = ? AND closed_at IS NOT NULL')
+    .get(practitionerId).n;
+}
+
+/**
+ * Close a request: everything has arrived, or the practice has given up on the rest.
+ *
+ * Closing is a *status*, not a record: it can be reversed, and both acts go in the event log. The
+ * client's link is untouched — revoking is a separate act, and closing a file is not the same as
+ * telling a client to stop sending.
+ */
+export function closeRequest(db, practitionerId, requestId, at = now()) {
+  const row = db
+    .prepare('SELECT id, closed_at FROM request WHERE id = ? AND practitioner_id = ?')
+    .get(requestId, practitionerId);
+  if (!row || row.closed_at) return false;
+  db.prepare('UPDATE request SET closed_at = ? WHERE id = ?').run(at, requestId);
+  recordEvent(db, { requestId, kind: 'request.closed', at });
+  return true;
+}
+
+export function reopenRequest(db, practitionerId, requestId, at = now()) {
+  const row = db
+    .prepare('SELECT id, closed_at FROM request WHERE id = ? AND practitioner_id = ?')
+    .get(requestId, practitionerId);
+  if (!row || !row.closed_at) return false;
+  db.prepare('UPDATE request SET closed_at = NULL WHERE id = ?').run(requestId);
+  recordEvent(db, { requestId, kind: 'request.reopened', at });
+  return true;
 }
 
 /**

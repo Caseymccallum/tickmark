@@ -15,12 +15,12 @@ nothing but the passphrase. [What is encrypted, and what is not](docs/encryption
 account of that, including four things it does not protect.
 
 What works today: creating a practice, making an encryption key, building a request, creating a
-link the client opens with no account, receiving encrypted uploads, and seeing what is still
-outstanding.
+link the client opens with no account, receiving encrypted uploads, seeing what is still
+outstanding, **drafting the reminder** for what has not arrived, and **closing a request** when
+there is nothing left to ask for.
 
-What does not exist yet: **the reminder text, and decryption in the browser.** Until the second
-lands, the operator opens files from the command line with `node tools/decrypt.mjs` — see the same
-document.
+What does not exist yet: **decryption in the browser, and key rotation.** Until the first lands, the
+operator opens files from the command line with `node tools/decrypt.mjs` — see the same document.
 
 ## Running it
 
