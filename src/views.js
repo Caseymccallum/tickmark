@@ -50,6 +50,12 @@ const STYLE = `
   input, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem .6rem; }
   button { font: inherit; padding: .5rem 1rem; margin-top: 1.25rem; cursor: pointer; }
   .note { color: #666; }
+  .file { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .file .name { font-weight: 600; }
+  .unlock { border: 1px solid #8884; padding: .75rem 1rem; margin: 1rem 0; border-radius: .25rem; }
+  .unlock input { display: inline-block; width: auto; min-width: 16rem; }
+  .unlock button { margin-top: 0; }
+  button[disabled] { opacity: .5; cursor: default; }
   .error { border-left: 3px solid #b91c1c; background: #fef2f2; color: #7f1d1d; padding: .6rem .9rem; }
   .warning { border-left: 3px solid #b45309; background: #fffbeb; color: #713f12; padding: .6rem .9rem; }
   code { background: #8882; padding: .1rem .3rem; border-radius: .2rem; }

@@ -16,11 +16,13 @@ account of that, including four things it does not protect.
 
 What works today: creating a practice, making an encryption key, building a request, creating a
 link the client opens with no account, receiving encrypted uploads, seeing what is still
-outstanding, **drafting the reminder** for what has not arrived, and **closing a request** when
-there is nothing left to ask for.
+outstanding, **drafting the reminder** for what has not arrived, **closing a request** when there is
+nothing left to ask for, and **opening what arrived in the browser** — the passphrase is typed into
+the page, the file is decrypted there, and the server never sees it.
 
-What does not exist yet: **decryption in the browser, and key rotation.** Until the first lands, the
-operator opens files from the command line with `node tools/decrypt.mjs` — see the same document.
+What does not exist yet: **key rotation**, and nothing else from the first version's scope. There is
+a command line tool (`node tools/decrypt.mjs`) for scripting and for a server with no browser in
+front of it.
 
 ## Running it
 

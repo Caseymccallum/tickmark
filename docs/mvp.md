@@ -11,8 +11,8 @@ Written down so that this document is never mistaken for a description of the so
 with the private half wrapped under a passphrase the server never sees; requests, clients and
 items; the client link with an expiry and a revoke; **encrypted uploads** the server cannot read;
 the append-only record of what arrived; the practice's view of what is outstanding; **the reminder
-draft**; **closing and reopening a request**; and a command line tool that opens a stored file, so
-that a practice is not locked out while the browser-side download is missing.
+draft**; **closing and reopening a request**; **opening what arrived, in the browser**; and a command
+line tool that does the same thing for scripting.
 
 **Two things here were not in the plan, and both for the same reason.** *Closing a request* was
 missing, and without it a practice's list grows all season and never empties — a list that never
@@ -21,7 +21,9 @@ empties stops being read, which makes the tool useless in its second season rath
 drafting a reminder makes a fresh one. That is the visible cost of a deliberate decision, and it is
 on the screen where the practice can see it rather than in a footnote.
 
-**Not built:** decryption in the browser; rotation of a practice's key.
+**Not built:** rotation of a practice's key. That is the last thing from the first version's scope,
+and it is not urgent — a key made today works, and a practice that wants a new one has no way to ask
+for it yet.
 
 **Two of the three claims in the wedge below are now true of the software** — it runs on the
 operator's own hardware with no dependencies, and files are encrypted to a key the server does not

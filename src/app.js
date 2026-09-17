@@ -78,6 +78,7 @@ const ASSETS = new Map([
   ['tickmark-crypto.js', 'application/javascript; charset=utf-8'],
   ['upload.js', 'application/javascript; charset=utf-8'],
   ['setup.js', 'application/javascript; charset=utf-8'],
+  ['download.js', 'application/javascript; charset=utf-8'],
 ]);
 
 export const ROUTES = [
@@ -94,6 +95,7 @@ export const ROUTES = [
   ['GET', '/requests/new', newRequestForm],
   ['POST', '/requests', createRequestPage],
   ['GET', /^\/requests\/([^/]+)$/, viewRequest],
+  ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
   ['POST', /^\/requests\/([^/]+)\/close$/, closeRequestPage],
@@ -546,9 +548,22 @@ function viewRequest({ db, response, practitioner, params }) {
       <td>${files.length > 0 ? html`<strong>received</strong>` : 'outstanding'}</td>
       <td>${files.length === 0
         ? html`<span class="note">—</span>`
-        : files.map((file) => html`<div>${file.filename} <span class="note">${file.uploaded_at}</span></div>`)}</td>
+        : files.map((file) => html`<div class="file">
+            <span class="name">${file.filename}</span>
+            <span class="note">${file.uploaded_at}</span>
+            <button type="button" class="save" disabled
+                    data-url="/requests/${found.id}/files/${file.id}"
+                    data-name="${file.filename}">Save</button>
+            <span class="status note"></span>
+          </div>`)}</td>
     </tr>`;
   });
+
+  // The wrapped key travels in the page because the decryption happens here. It leaks nothing — the
+  // server already stores it, and it is useless without the passphrase — and it has to be here, or
+  // the plaintext would have to be produced by the server, which is the one thing that must not
+  // happen.
+  const keys = practitioner.hasKey ? practiceKeys(db, practitioner.id) : null;
 
   return sendPage(response, 200, page({
     title: found.title,
@@ -557,6 +572,15 @@ function viewRequest({ db, response, practitioner, params }) {
       <h1>${found.title} <span class="note">for ${found.client_name}</span></h1>
       ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
       <p>${received} of ${items.length} received${found.due_at ? html`, due ${found.due_at}` : ''}.</p>
+      ${keys && received > 0
+        ? html`<div class="unlock">
+            <label for="passphrase">Your passphrase, to open what has arrived</label>
+            <input id="passphrase" type="password" autocomplete="current-password">
+            <button type="button" id="unlock">Unlock</button>
+            <p id="unlock-status" class="note">It is used in this browser and sent nowhere. Unlocking
+            keeps the key in this tab so that saving several files does not mean typing it again.</p>
+          </div>`
+        : ''}
       <table>
         <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Files</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -613,7 +637,9 @@ function viewRequest({ db, response, practitioner, params }) {
               client's link all stay exactly as they are.</p>
             <form method="post" action="/requests/${found.id}/close">
               <button type="submit">Close this request</button>
-            </form>`}`,
+            </form>`}
+      ${keys ? jsonTag('wrapped-key', { wrapped: keys.wrappedPrivateKey }) : ''}
+      ${received > 0 ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
   }));
 }
 
@@ -625,6 +651,50 @@ function viewRequest({ db, response, practitioner, params }) {
  * practice that loses it creates another, which is the correct answer and also the honest
  * one.
  */
+/**
+ * Serve one stored envelope to the practice that owns it.
+ *
+ * What goes over the wire is ciphertext, so this is not a document being handed out — it is a
+ * blob the practice's browser is about to decrypt. That distinction is why this route can be
+ * simple: there is nothing here to redact, and no content type to guess.
+ *
+ * Authorization is the scoping of the query, as everywhere else: an upload belonging to another
+ * practice is not found, and a request belonging to another practice cannot be reached to begin
+ * with.
+ */
+async function serveEnvelope({ db, response, practitioner, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practitioner.id, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const row = db
+    .prepare(
+      `SELECT u.* FROM upload u JOIN request_item i ON i.id = u.request_item_id
+        WHERE u.id = ? AND i.request_id = ?`,
+    )
+    .get(params[1], found.id);
+  if (!row) return fail(response, 404, 'There is no file with that id in this request.', practitioner);
+
+  let bytes;
+  try {
+    bytes = await readFile(row.storage_path);
+  } catch {
+    // The row exists and the file does not: the disk has been changed underneath the record, which
+    // is worth saying plainly rather than reporting as a missing upload.
+    return fail(response, 500, 'The record of that file is here but the file itself is not. Check the blob directory.', practitioner);
+  }
+
+  response.writeHead(200, {
+    'content-type': 'application/octet-stream',
+    'content-length': bytes.length,
+    // The original filename, so the browser can offer it once the bytes are decrypted. It travels
+    // in a header rather than in the path because it is a label the client chose.
+    'x-file-name': encodeURIComponent(row.filename),
+    'cache-control': 'no-store',
+  });
+  return response.end(bytes);
+}
+
 async function issueLink({ db, request, response, practitioner, params }) {
   if (!requireSignIn({ practitioner, response })) return;
 

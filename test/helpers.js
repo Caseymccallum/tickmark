@@ -81,6 +81,9 @@ export async function setUpKey(client, passphrase = PASSPHRASE) {
     public_key: JSON.stringify(keys.publicKey),
     wrapped_private_key: keys.wrappedPrivateKey,
   });
+  if (response.status !== 303) {
+    throw new Error(`the test helper could not store a key: /setup answered ${response.status}`);
+  }
   return { ...keys, response, passphrase };
 }
 
@@ -127,7 +130,17 @@ export async function upload({ base, token, itemId, publicKey, plaintext, filena
  */
 export async function practiceWithRequest({ agent, db }, email = 'sam@practice.example', passphrase = PASSPHRASE) {
   const client = agent();
-  await signUp(client, email);
+
+  // Both steps check their outcome. A helper that carries on after a refused sign-up produces a
+  // test that passes while exercising nothing — which is exactly what happened the first time this
+  // was written, and it cost more time to find than the check would have.
+  const signup = await signUp(client, email);
+  if (signup.status !== 303) {
+    throw new Error(
+      `the test helper could not create ${email}: /signup answered ${signup.status}. Use a different address — emails are unique per practice.`,
+    );
+  }
+
   const keys = await setUpKey(client, passphrase);
   const created = await client.post('/requests', {
     client: 'Northwind Ltd',
@@ -135,7 +148,13 @@ export async function practiceWithRequest({ agent, db }, email = 'sam@practice.e
     title: '2025 return',
     items: 'Bank statements\nSigned engagement letter\nPhoto ID',
   });
-  const requestId = created.headers.get('location').split('/').pop();
+  const location = created.headers.get('location') ?? '';
+  if (created.status !== 303 || !/^\/requests\/[0-9a-f-]{36}$/.test(location)) {
+    throw new Error(
+      `the test helper could not create a request for ${email}: /requests answered ${created.status} -> ${location}`,
+    );
+  }
+  const requestId = location.split('/').pop();
   const itemIds = db
     .prepare('SELECT id FROM request_item WHERE request_id = ? ORDER BY position')
     .all(requestId)

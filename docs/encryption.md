@@ -87,8 +87,8 @@ encrypted.
   files stay on disk, unreadable, forever. That is the same property as the guarantee, seen from
   the other side.
 - **A compromised browser.** Malicious script on the page — from the operator, an extension, or a
-  hijacked dependency — can read the file before it is encrypted. The claim is about the *server*,
-  not about the client's machine.
+  hijacked dependency — can read the file before it is encrypted, and can read it again when the
+  practice opens it. The claim is about the *server*, not about either machine's browser.
 - **The identity of the uploader.** Anyone holding the link can send a file. Encryption says
   nothing about who is holding the other end of it.
 - **Envelopes addressed to the wrong key.** The server cannot tell which practice an envelope was
@@ -106,9 +106,27 @@ be wrong, running in the environment least able to afford it. 600,000 rounds of 
 the strongest thing the platform provides, and the count travels with each key so that a browser
 which later offers something better can be used without a migration.
 
-## How a practice opens a file today
+## How a practice opens a file
 
-There is no browser-side download yet. Until there is, the operator's tool does it:
+**In the browser, on the request page.** The page carries the practice's *wrapped* private key, which
+leaks nothing — the server already stores it, and it is useless without the passphrase. The practice
+types the passphrase into a field on that page, the key is unwrapped there, and it is kept in a
+variable in that tab so that saving three files does not mean paying for 600,000 rounds of PBKDF2
+three times. Saving a file fetches the envelope, opens it in the tab, and hands the plaintext to the
+browser as a download.
+
+Three consequences worth stating rather than leaving to be discovered:
+
+- The passphrase is cleared from the field as soon as it has been used, and is never sent anywhere.
+  It cannot be: nothing in that page transmits it.
+- The plaintext exists in the tab's memory for as long as it takes to start the download, and is
+  **not rendered on the page**. A client's bank statement as DOM, in a tab that also runs whatever
+  else the practice has open, would be a worse idea than it sounds.
+- Reloading the page locks the key again. That is deliberate: the alternative is a passphrase or a
+  key surviving a reload in storage, which is a thing to steal.
+
+There is also a command line tool, which imports the *same* cryptography module — so an envelope one
+of them cannot open is one bug rather than a disagreement between two implementations:
 
 ```
 node tools/decrypt.mjs <data-directory> --list
@@ -116,8 +134,5 @@ node tools/decrypt.mjs <data-directory> <upload-id> -o statement.pdf
 ```
 
 The passphrase comes from `TICKMARK_PASSPHRASE` or `--passphrase-file`, and never from the command
-line, where the shell would keep it in history. The tool imports the *same* cryptography module the
-browser loads, so an envelope it cannot open is one bug rather than a disagreement between two
-implementations.
-
-That tool is a bridge and is labelled as one. The next piece of work is decryption in the page.
+line, where the shell would keep it in history. The tool is for scripting, and for a server with no
+browser in front of it.
