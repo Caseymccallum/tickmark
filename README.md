@@ -8,18 +8,19 @@ bank statements, an ID scan, a signed engagement letter — send them a link, an
 the list get ticked off. Nobody needs an account to send you a file. The reminders, the
 tracking and the record of what arrived and when are yours, on your own server.
 
-**Status: early, and honest about it.** What works today: creating a practice, signing in
-and out, building a request, creating a link the client opens with no account, and
-receiving uploads — a file that arrives is stored byte-for-byte and ticked off on the
-practice's page, with the arrival recorded.
+**Status: early, and the central claim now holds.** A client's document is encrypted in their
+browser before it leaves it, and the server stores bytes it cannot read — checked by tests that
+read the file back off disk, require the document itself not to appear in it, and then open it with
+nothing but the passphrase. [What is encrypted, and what is not](docs/encryption.md) is the honest
+account of that, including four things it does not protect.
 
-What does not exist yet: **the encryption and the reminders.**
+What works today: creating a practice, making an encryption key, building a request, creating a
+link the client opens with no account, receiving encrypted uploads, and seeing what is still
+outstanding.
 
-The encryption is the one that matters, and the pages say so where a user would otherwise
-assume otherwise: **a client's file currently reaches the server exactly as they sent it,
-so whoever runs the server can read it.** The link page says this to the client in as many
-words, and the request page says it to the practice. Until it changes, do not send a link
-to a real client.
+What does not exist yet: **the reminder text, and decryption in the browser.** Until the second
+lands, the operator opens files from the command line with `node tools/decrypt.mjs` — see the same
+document.
 
 ## Running it
 
@@ -29,6 +30,10 @@ node src/server.js
 
 Then open <http://localhost:3000>. It needs Node 24 or later and nothing else — no
 `npm install`, because there are no dependencies to install. Data goes in `data/`.
+
+You will be asked for a passphrase the first time you try to send a client a link. It protects the
+key your clients' documents are encrypted to, it is never sent to the server, and nothing can
+recover it. Read [the encryption document](docs/encryption.md) before choosing it.
 
 `docker compose up` is written and is the intended install, but it has not been built on
 a machine with Docker yet, and this file will not claim it works until it has been.
@@ -50,7 +55,7 @@ exactly, is our client data, and who can read it?*
 
 Tickmark's answer is: **on your server, and nobody else.**
 
-## What it will do
+## What it does
 
 - a **request** for a client: a titled checklist, with a due date, and one item per
   document you need
@@ -123,7 +128,9 @@ before the code.
 | --- | --- |
 | `NAMING.md` | Why it is called Tickmark, and every name that was rejected with a reason |
 | `docs/mvp.md` | The scope of the first version, the stack, the data model, and what is cut |
+| `docs/encryption.md` | What is encrypted, what is not, and why — the document the central claim rests on |
 | `docs/verify-demand.md` | The pre-build check: who is asked, what is asked, and what the answers decide |
+| `docs/demand-posts.md` | The posts for that check, ready to send |
 
 ## Licence
 

@@ -7,18 +7,20 @@ what would make the whole thing not worth building.
 
 Written down so that this document is never mistaken for a description of the software.
 
-**Built:** accounts and sessions; requests, clients and items; the client link with an
-expiry and a revoke; uploads, stored byte-for-byte with a digest and an append-only
-record of the arrival; the practice's view of what is outstanding.
+**Built:** accounts and sessions; the practice's ECDH P-256 key, made in the browser and stored
+with the private half wrapped under a passphrase the server never sees; requests, clients and
+items; the client link with an expiry and a revoke; **encrypted uploads** the server cannot read;
+the append-only record of what arrived; the practice's view of what is outstanding; and a command
+line tool that opens a stored file, so that a practice is not locked out while the browser-side
+download is missing.
 
-**Not built, and this is the list that matters:** the browser-side encryption (so an
-uploaded file is currently readable by whoever runs the server), the reminder text, and
-the download of a stored file through the browser.
+**Not built:** the reminder text; decryption in the browser; and rotation of a practice's key.
 
-**Nothing in the wedge section below is true of the software as it stands.** It describes
-what the finished first version is for. The two claims that are already true are that it
-runs on the operator's own hardware and reads its own source: there are still no
-dependencies, and the database and the uploads are files in one directory.
+**Two of the three claims in the wedge below are now true of the software** — it runs on the
+operator's own hardware with no dependencies, and files are encrypted to a key the server does not
+hold. The third, one-command installation, is written but unverified: Docker is installed on the
+author's machine and its daemon was not running, so `docker compose up` has never been run. That is
+recorded rather than assumed away.
 
 ## The market, as measured
 

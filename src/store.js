@@ -160,6 +160,27 @@ export function practitionerByEmail(db, email) {
     .get(email);
 }
 
+/**
+ * Store a practice's public key, and the private half already wrapped under a passphrase the
+ * server has never seen.
+ *
+ * The wrapping happens in the browser. If the server wrapped it, the server could unwrap it,
+ * and the claim that a self-hosted Tickmark cannot read a client's documents would be false
+ * in exactly the situation where it matters: when the host is compromised.
+ */
+export function savePracticeKeys(db, practitionerId, { publicKey, wrappedPrivateKey }) {
+  db.prepare('UPDATE practitioner SET public_key = ?, wrapped_private_key = ? WHERE id = ?')
+    .run(JSON.stringify(publicKey), wrappedPrivateKey, practitionerId);
+}
+
+export function practiceKeys(db, practitionerId) {
+  const row = db
+    .prepare('SELECT public_key, wrapped_private_key FROM practitioner WHERE id = ?')
+    .get(practitionerId);
+  if (!row || !row.public_key) return null;
+  return { publicKey: JSON.parse(row.public_key), wrappedPrivateKey: row.wrapped_private_key };
+}
+
 export function clientsOf(db, practitionerId) {
   return db
     .prepare('SELECT id, name, email FROM client WHERE practitioner_id = ? ORDER BY name')
@@ -238,11 +259,13 @@ export function tokenLookup(db, token, at = new Date()) {
   const row = db
     .prepare(
       `SELECT t.id AS token_id, t.expires_at, t.revoked_at,
-              r.id, r.title, r.due_at,
-              c.name AS client_name
+              r.id, r.title, r.due_at, r.practitioner_id,
+              c.name AS client_name,
+              p.public_key AS practice_public_key
          FROM access_token t
          JOIN request r ON r.id = t.request_id
          JOIN client c ON c.id = r.client_id
+         JOIN practitioner p ON p.id = r.practitioner_id
         WHERE t.token_hash = ?`,
     )
     .get(hashToken(token));

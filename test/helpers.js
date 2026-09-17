@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 import { openDatabase } from '../src/db.js';
 import { createApp } from '../src/app.js';
+import { encryptFile, generatePracticeKey, unwrapPracticeKey } from '../web/tickmark-crypto.js';
 
 /** A browser-like client that keeps its own cookie jar. */
 export function agent(base) {
@@ -63,7 +64,45 @@ export async function withServer(run, { maxUploadBytes } = {}) {
 }
 
 export const PASSWORD = 'a long enough password';
+export const PASSPHRASE = 'a passphrase long enough';
 export const signUp = (client, email, password = PASSWORD) => client.post('/signup', { email, password });
+
+/**
+ * Give a signed-in practice an encryption key, which is what sending a link requires.
+ *
+ * This runs the real browser flow's server half: the key pair is generated here with the same
+ * module the browser uses, and the passphrase-wrapped private half is posted as the page posts
+ * it. Nothing is faked, so a change to the wrapping format breaks these tests rather than
+ * passing them.
+ */
+export async function setUpKey(client, passphrase = PASSPHRASE) {
+  const keys = await generatePracticeKey(passphrase);
+  const response = await client.post('/setup', {
+    public_key: JSON.stringify(keys.publicKey),
+    wrapped_private_key: keys.wrappedPrivateKey,
+  });
+  return { ...keys, response, passphrase };
+}
+
+/**
+ * Encrypt a file to the practice's public key and send it the way the client's page does.
+ *
+ * Everything about this mirrors `web/upload.js`: the same content type, the same two headers,
+ * and the envelope produced by the same function.
+ */
+export async function upload({ base, token, itemId, publicKey, plaintext, filename = 'upload.bin', headers = {} }) {
+  const envelope = await encryptFile(publicKey, plaintext);
+  const response = await fetch(`${base}/r/${token}/items/${itemId}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-file-name': encodeURIComponent(filename),
+      ...headers,
+    },
+    body: envelope,
+  });
+  return { response, envelope };
+}
 
 /**
  * Sign a practice up, create one request with three items, and return what a test needs.
@@ -72,9 +111,10 @@ export const signUp = (client, email, password = PASSWORD) => client.post('/sign
  * is the *client's*, which needs a link first, and a test helper that quietly depended on a
  * page's markup would break every time the page changed.
  */
-export async function practiceWithRequest({ agent, db }, email = 'sam@practice.example') {
+export async function practiceWithRequest({ agent, db }, email = 'sam@practice.example', passphrase = PASSPHRASE) {
   const client = agent();
   await signUp(client, email);
+  const keys = await setUpKey(client, passphrase);
   const created = await client.post('/requests', {
     client: 'Northwind Ltd',
     client_email: 'accounts@northwind.example',
@@ -86,5 +126,11 @@ export async function practiceWithRequest({ agent, db }, email = 'sam@practice.e
     .prepare('SELECT id FROM request_item WHERE request_id = ? ORDER BY position')
     .all(requestId)
     .map((row) => row.id);
-  return { client, requestId, itemIds };
+  return {
+    client,
+    requestId,
+    itemIds,
+    keys,
+    privateKey: await unwrapPracticeKey(keys.wrappedPrivateKey, passphrase),
+  };
 }

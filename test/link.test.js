@@ -12,7 +12,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { practiceWithRequest, signUp, withServer } from './helpers.js';
+import { decryptEnvelope } from '../web/tickmark-crypto.js';
+import { practiceWithRequest, signUp, upload, withServer } from './helpers.js';
 
 const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
 
@@ -46,9 +47,9 @@ test('a link is shown once, and the token itself is never stored', async () => {
   });
 });
 
-test('the client page opens with the token, lists the documents, and says it is not private yet', async () => {
+test('the client page lists the documents, carries the key to encrypt to, and says what is still visible', async () => {
   await withServer(async ({ agent, base, db }) => {
-    const { client, requestId } = await practiceWithRequest({ agent, db });
+    const { client, requestId, keys } = await practiceWithRequest({ agent, db });
     const token = await createLink(client, requestId);
 
     const page = await fetch(`${base}/r/${token}`, { redirect: 'manual' });
@@ -60,9 +61,16 @@ test('the client page opens with the token, lists the documents, and says it is 
     assert.match(body, /Photo ID/);
     assert.match(body, /Northwind Ltd/);
     assert.match(body, /still needed/, 'nothing has arrived yet');
-    assert.match(body, /This is not private yet/, 'the page must not imply encryption that does not exist');
-    assert.match(body, /form class="upload"/, 'each item has somewhere to put a file');
+    assert.match(body, /class="upload"/, 'each item has somewhere to put a file');
     assert.ok(!body.includes('tickmark_session'), 'a client page carries no session');
+
+    // The key the browser encrypts to, and the honest statement of what the server sees anyway.
+    const keyTag = /<script type="application\/json" id="practice-key">([\s\S]*?)<\/script>/.exec(body)?.[1];
+    assert.ok(keyTag, 'the page carries the public key the browser needs');
+    assert.deepEqual(JSON.parse(keyTag), keys.publicKey);
+    assert.match(body, /encrypted in this browser/, 'the page states the claim, now that it can keep it');
+    assert.match(body, /name of the file/, 'and states what the server can still see: names, items, times');
+    assert.match(body, /src="\/assets\/upload\.js"/, 'and loads the script that does the encrypting');
   });
 });
 
@@ -92,55 +100,110 @@ test('an unknown, an expired and a revoked link get three different answers', as
   });
 });
 
-/** What the client's own script sends: raw bytes with the name in a header. */
-const rawUpload = (base, token, itemId, bytes, headers = {}) =>
+/** Post bytes with no encryption at all, which is what the server must refuse. */
+const postUnencrypted = (base, token, itemId, bytes) =>
   fetch(`${base}/r/${token}/items/${itemId}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/octet-stream', ...headers },
+    headers: { 'content-type': 'application/octet-stream', 'x-file-name': 'readable.pdf' },
     body: bytes,
   });
 
-test('a client uploads a file, and the server stores exactly the bytes it was given', async () => {
+test('what the client sends is encrypted, stored as sent, and opens with the passphrase alone', async () => {
   await withServer(async ({ agent, base, db, blobDir }) => {
-    const { client, requestId, itemIds } = await practiceWithRequest({ agent, db });
+    const { client, requestId, itemIds, keys, privateKey } = await practiceWithRequest({ agent, db });
     const token = await createLink(client, requestId);
-    const bytes = randomBytes(4096);
+    const secret = Buffer.from('Bank statement, Q1 2025. Closing balance: 12,345.67');
 
-    const response = await rawUpload(base, token, itemIds[0], bytes, {
-      'x-file-name': encodeURIComponent('bank statements.pdf'),
-      'x-file-type': 'application/pdf',
+    const { response, envelope } = await upload({
+      base,
+      token,
+      itemId: itemIds[0],
+      publicKey: keys.publicKey,
+      plaintext: secret,
+      filename: 'bank statements.pdf',
     });
     assert.equal(response.status, 201);
-    assert.deepEqual(await response.json(), { ok: true, received: 'Bank statements', bytes: 4096 });
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      received: 'Bank statements',
+      bytes: envelope.length,
+      envelope: 1,
+    });
 
     const row = db.prepare('SELECT * FROM upload').get();
     assert.equal(row.filename, 'bank statements.pdf', 'the name is kept as a label');
-    assert.equal(row.mime, 'application/pdf');
-    assert.equal(row.size_bytes, bytes.length);
-    assert.equal(row.sha256, sha256(bytes), 'the digest is over the bytes as they arrived');
+    assert.equal(row.size_bytes, envelope.length, 'the size recorded is the size of the envelope');
+    assert.equal(row.sha256, sha256(envelope), 'the digest is over the envelope as it arrived');
     assert.ok(row.storage_path.startsWith(blobDir), 'the bytes live under the blob directory');
+
+    const stored = readFileSync(row.storage_path);
+    assert.ok(stored.equals(Buffer.from(envelope)), 'the file on disk is the envelope, exactly');
     assert.ok(
-      readFileSync(row.storage_path).equals(bytes),
-      'and they are byte-for-byte what the client sent — this is the claim the whole product rests on',
+      !stored.toString('latin1').includes('12,345.67'),
+      'and the document is not in it — this is the claim the whole product exists to make',
+    );
+    assert.deepEqual(
+      Buffer.from(await decryptEnvelope(privateKey, stored)),
+      secret,
+      'the practice, and only the practice, can open what arrived',
     );
 
     const practiceView = await (await client.get(`/requests/${requestId}`)).text();
     assert.match(practiceView, /1 of 3 received/, 'the practice sees the tick');
-    assert.match(practiceView, /bank statements\.pdf/);
-
     const clientView = await (await fetch(`${base}/r/${token}`)).text();
     assert.match(clientView, /received/, 'and so does the client');
   });
 });
 
-test('a filename that looks like a path stays a label and never becomes a path', async () => {
+test('a file that was never encrypted is refused, and nothing is stored', async () => {
   await withServer(async ({ agent, base, db, blobDir }) => {
     const { client, requestId, itemIds } = await practiceWithRequest({ agent, db });
     const token = await createLink(client, requestId);
+
+    const response = await postUnencrypted(base, token, itemIds[0], Buffer.from('a readable bank statement'));
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /Only encrypted uploads are accepted/);
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload').get()).n, 0, 'nothing was recorded');
+    assert.ok(!existsSync(join(blobDir, requestId)), 'and nothing was written');
+  });
+});
+
+test('an envelope of a version this server does not know is refused', async () => {
+  await withServer(async ({ agent, base, db }) => {
+    const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
+    const token = await createLink(client, requestId);
+
+    const { envelope } = await upload({
+      base, token, itemId: itemIds[0], publicKey: keys.publicKey, plaintext: Buffer.from('x'),
+    });
+    const future = Uint8Array.from(envelope);
+    future[4] = 99;
+
+    const response = await fetch(`${base}/r/${token}/items/${itemIds[0]}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: future,
+    });
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /version 99 is not supported/);
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload').get()).n, 1, 'only the first one is there');
+  });
+});
+
+test('a filename that looks like a path stays a label and never becomes a path', async () => {
+  await withServer(async ({ agent, base, db, blobDir }) => {
+    const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
+    const token = await createLink(client, requestId);
     const nasty = '../../../../etc/passwd';
 
-    const response = await rawUpload(base, token, itemIds[0], Buffer.from('not a passwd file'), {
-      'x-file-name': encodeURIComponent(nasty),
+    const { response } = await upload({
+      base,
+      token,
+      itemId: itemIds[0],
+      publicKey: keys.publicKey,
+      plaintext: Buffer.from('not a passwd file'),
+      filename: nasty,
     });
     assert.equal(response.status, 201);
 
@@ -158,7 +221,13 @@ test('an item belonging to another request cannot be uploaded to, even with a va
     const second = await practiceWithRequest({ agent, db }, 'two@practice.example');
     const token = await createLink(first.client, first.requestId);
 
-    const response = await rawUpload(base, token, second.itemIds[0], Buffer.from('crossing requests'));
+    const { response } = await upload({
+      base,
+      token,
+      itemId: second.itemIds[0],
+      publicKey: first.keys.publicKey,
+      plaintext: Buffer.from('crossing requests'),
+    });
     assert.equal(response.status, 404, 'a valid link is not a licence over every request');
     assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload').get()).n, 0, 'and nothing was stored');
   });
@@ -166,14 +235,20 @@ test('an item belonging to another request cannot be uploaded to, even with a va
 
 test('a revoked link refuses the upload, and leaves nothing behind', async () => {
   await withServer(async ({ agent, base, db, blobDir }) => {
-    const { client, requestId, itemIds } = await practiceWithRequest({ agent, db });
+    const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
     const token = await createLink(client, requestId);
     const tokenId = db.prepare('SELECT id FROM access_token').get().id;
 
     const revoked = await client.post(`/requests/${requestId}/revoke`, { token_id: tokenId });
     assert.equal(revoked.status, 303);
 
-    const response = await rawUpload(base, token, itemIds[0], Buffer.from('too late'));
+    const { response } = await upload({
+      base,
+      token,
+      itemId: itemIds[0],
+      publicKey: keys.publicKey,
+      plaintext: Buffer.from('too late'),
+    });
     assert.equal(response.status, 410);
     assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload').get()).n, 0, 'nothing was recorded');
     assert.ok(!existsSync(join(blobDir, requestId)), 'and no directory was created');
@@ -217,10 +292,16 @@ test('an upload that is not raw bytes is refused rather than stored as framing',
 test('an upload larger than the limit is refused, and nothing is stored', async () => {
   await withServer(
     async ({ agent, base, db, blobDir }) => {
-      const { client, requestId, itemIds } = await practiceWithRequest({ agent, db });
+      const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
       const token = await createLink(client, requestId);
 
-      const response = await rawUpload(base, token, itemIds[0], randomBytes(64 * 1024));
+      const { response } = await upload({
+        base,
+        token,
+        itemId: itemIds[0],
+        publicKey: keys.publicKey,
+        plaintext: randomBytes(64 * 1024),
+      });
       assert.equal(response.status, 413);
       assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload').get()).n, 0);
       assert.ok(!existsSync(join(blobDir, requestId)));
@@ -232,9 +313,15 @@ test('an upload larger than the limit is refused, and nothing is stored', async 
 
 test('the history records the link being made and the file arriving, in order', async () => {
   await withServer(async ({ agent, base, db }) => {
-    const { client, requestId, itemIds } = await practiceWithRequest({ agent, db });
+    const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
     const token = await createLink(client, requestId);
-    await rawUpload(base, token, itemIds[2], Buffer.from('a photograph of a passport'));
+    await upload({
+      base,
+      token,
+      itemId: itemIds[2],
+      publicKey: keys.publicKey,
+      plaintext: Buffer.from('a photograph of a passport'),
+    });
 
     const kinds = db
       .prepare('SELECT kind FROM event WHERE request_id = ? ORDER BY at, rowid')

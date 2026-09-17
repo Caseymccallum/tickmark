@@ -20,14 +20,29 @@
  */
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { hashPassword, hashToken, newToken, verifyPassword } from './crypto.js';
 import { clearSessionCookie, createSession, endSession, practitionerFor, sessionCookie } from './auth.js';
 import { RequestError, field, formFields, readBody } from './http.js';
 import { html, page, raw, redirect, sendPage } from './views.js';
+
+/**
+ * Data for the browser to read, inside a script element.
+ *
+ * The one sequence that can end a script element early is escaped, which is the whole of the
+ * rule for putting JSON in HTML. Everything else is left alone so that the JSON is still valid
+ * JSON — and a JSON parser does not care whether `<` arrived as an escape.
+ */
+const jsonTag = (id, value) =>
+  html`<script type="application/json" id="${id}">${raw(JSON.stringify(value).replace(/</g, '\\u003c'))}</script>`;
 import { newId, now } from './db.js';
+// The server imports the envelope format so that it can tell an encrypted upload from a
+// plaintext one. It cannot use the rest of that module: the key needed to open an envelope
+// is wrapped under a passphrase this process has never seen.
+import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
 import {
   createPractitioner,
   createRequest,
@@ -36,19 +51,30 @@ import {
   issueToken,
   itemInRequest,
   itemsOf,
+  practiceKeys,
   practitionerByEmail,
   recordUpload,
   requestFor,
   requestsFor,
   revokeToken,
+  savePracticeKeys,
   tokenLookup,
   tokensFor,
   uploadsOf,
 } from './store.js';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
+
 const MIN_PASSWORD = 12;
 const MAX_ITEMS = 50;
 const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
+
+/** The browser-side scripts, served by name. An allowlist, so no request can name a path. */
+const ASSETS = new Map([
+  ['tickmark-crypto.js', 'application/javascript; charset=utf-8'],
+  ['upload.js', 'application/javascript; charset=utf-8'],
+  ['setup.js', 'application/javascript; charset=utf-8'],
+]);
 
 export const ROUTES = [
   ['GET', '/', home],
@@ -57,6 +83,9 @@ export const ROUTES = [
   ['GET', '/signin', signInForm],
   ['POST', '/signin', signIn],
   ['POST', '/signout', signOut],
+  ['GET', '/setup', setupForm],
+  ['POST', '/setup', saveKeys],
+  ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
   ['GET', '/requests/new', newRequestForm],
   ['POST', '/requests', createRequestPage],
@@ -101,7 +130,38 @@ function requireSignIn({ practitioner, response }) {
   return false;
 }
 
-export function createApp(db, { blobDir = 'data/blobs', maxUploadBytes = DEFAULT_MAX_UPLOAD } = {}) {
+/**
+ * The browser-side scripts.
+ *
+ * `params[0]` is constrained twice over — once by the route's pattern and once by the
+ * allowlist — so a request cannot name a path that does not exist as a key in this map. There
+ * is no path joining of anything the caller sent, which is why there is no traversal to test
+ * for.
+ */
+async function asset({ response, params, webDir }) {
+  const type = ASSETS.get(params[0]);
+  if (!type) return fail(response, 404, 'There is no such file here.');
+  let body;
+  try {
+    body = await readFile(join(webDir, params[0]));
+  } catch {
+    return fail(response, 404, 'There is no such file here.');
+  }
+  response.writeHead(200, {
+    'content-type': type,
+    'content-length': body.length,
+    // Not cached: a stale copy of the encryption script is a class of bug this product cannot
+    // afford, and the file is a few kilobytes.
+    'cache-control': 'no-store',
+  });
+  return response.end(body);
+}
+
+export function createApp(db, {
+  blobDir = 'data/blobs',
+  maxUploadBytes = DEFAULT_MAX_UPLOAD,
+  webDir = join(HERE, '..', 'web'),
+} = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
 
@@ -128,7 +188,7 @@ export function createApp(db, { blobDir = 'data/blobs', maxUploadBytes = DEFAULT
         if (!params) continue;
 
         const context = await contextFor(db, request, response, url, params.slice(1));
-        await handler({ ...context, blobDir, maxUploadBytes });
+        await handler({ ...context, blobDir, maxUploadBytes, webDir });
         return;
       }
       return fail(response, 404, 'There is no page at that address.');
@@ -484,8 +544,17 @@ function viewRequest({ db, response, practitioner, params }) {
  */
 async function issueLink({ db, request, response, practitioner, params }) {
   if (!requireSignIn({ practitioner, response })) return;
+
+  // Ownership first, key second. A request belonging to somebody else must be *not found*
+  // whatever state this practice is in — a refusal that depends on my own setup would leak
+  // whether the request exists.
   const found = requestFor(db, practitioner.id, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  // No key, no link. This is where the encryption requirement bites, and it bites before a
+  // client is involved rather than after: a link that cannot receive an encrypted file is a
+  // promise the product cannot keep.
+  if (!practitioner.hasKey) return redirect(response, '/setup');
 
   const fields = formFields(await readBody(request));
   const days = Math.min(Math.max(Number(field(fields, 'days', '30')) || 30, 1), 365);
@@ -558,6 +627,15 @@ function clientPage({ db, response, params }) {
   const items = itemsOf(db, open.id);
   const arrived = new Set(uploadsOf(db, open.id).map((upload) => upload.request_item_id));
 
+  if (!open.practice_public_key) {
+    return sendPage(response, 503, page({
+      title: 'This link is not ready',
+      body: html`<h1>This link is not ready</h1>
+        <p>The practice has not finished setting up its encryption key, so there is nothing to
+        encrypt your documents to yet. Ask them to send the link again once it is done.</p>`,
+    }));
+  }
+
   const rows = items.map((item) => html`<tr>
     <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
     <td>${arrived.has(item.id) ? html`<strong>received</strong>` : 'still needed'}</td>
@@ -572,9 +650,10 @@ function clientPage({ db, response, params }) {
 
   return sendPage(response, 200, page({
     title: open.title,
-    banner: html`<p class="warning"><strong>This is not private yet.</strong> Anything you
-      send goes to the practice's server and is stored there as it is. The encryption that
-      will make it unreadable to whoever runs the server is not built yet.</p>`,
+    banner: html`<p class="note"><strong>What you send is encrypted in this browser before it
+      leaves it.</strong> Only the practice can open it. What the server can still see is the
+      name of the file, which document it answers, and when it arrived — so name files the way
+      you would name an envelope, not the way you would name a letter.</p>`,
     body: html`
       <h1>${open.title}</h1>
       <p>${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
@@ -584,7 +663,8 @@ function clientPage({ db, response, params }) {
       </table>
       <p class="note">Nothing here needs an account. Come back to this page with the same
       link to send the rest — the list shows what has already arrived.</p>
-      ${raw(UPLOAD_SCRIPT)}`,
+      ${jsonTag('practice-key', JSON.parse(open.practice_public_key))}
+      ${raw('<script type="module" src="/assets/upload.js"></script>')}`,
   }));
 }
 
@@ -615,6 +695,17 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
   const body = await readBody(request, maxUploadBytes);
   if (body.length === 0) return fail(response, 400, 'That file was empty.');
 
+  // The server refuses a file it could read. Storing one and calling it encrypted would make
+  // the product's central claim false in a way nobody would notice until it mattered.
+  const envelope = readEnvelope(body);
+  if (!envelope.ok) {
+    return fail(
+      response,
+      400,
+      `Only encrypted uploads are accepted, and that one is not one (${envelope.reason}). Nothing was stored.`,
+    );
+  }
+
   const uploadId = newId();
   const directory = join(blobDir, found.request.id);
   await mkdir(directory, { recursive: true });
@@ -637,41 +728,89 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     at: now(),
   });
 
-  return sendJson(response, 201, { ok: true, received: item.label, bytes: body.length });
+  return sendJson(response, 201, { ok: true, received: item.label, bytes: body.length, envelope: ENVELOPE_VERSION });
 }
 
+// ---------------------------------------------------------------------------------
+// The practice's key
+// ---------------------------------------------------------------------------------
+
+const BASE64URL_32 = /^[A-Za-z0-9_-]{43}$/;
+const MIN_ITERATIONS = 100000;
+
 /**
- * The only JavaScript the product ships, and it is inline rather than a file because it is
- * a dozen lines and a build step would be a heavier thing than the feature.
+ * Everything about a submitted key that the server can check without being able to use it.
  *
- * It exists because the encryption that comes next happens in the browser with Web Crypto,
- * so the upload has to be a fetch rather than a form post. When that lands, this script
- * encrypts the file before sending it and nothing on the server changes — which is the
- * whole point of the server treating an upload as bytes it does not interpret.
+ * The server cannot verify that a key is *good* — it cannot open it, and that is the point.
+ * What it can do is refuse something that is not a key at all, and refuse a record that would
+ * protect the practice's own private half so weakly that the promise is nominal. A hostile
+ * client could still store nonsense for its own account, which harms nobody but itself.
  */
-const UPLOAD_SCRIPT = `<script>
-for (const form of document.querySelectorAll('form.upload')) {
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const file = form.querySelector('input[type=file]').files[0];
-    const status = form.querySelector('.status');
-    if (!file) return;
-    status.textContent = 'Sending ' + file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
-    try {
-      const response = await fetch(form.action, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/octet-stream',
-          'x-file-name': encodeURIComponent(file.name),
-          'x-file-type': file.type || 'application/octet-stream'
-        },
-        body: file
-      });
-      if (response.ok) { location.reload(); return; }
-      status.textContent = (await response.text()).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 200);
-    } catch (error) {
-      status.textContent = 'That did not work: ' + error.message;
-    }
-  });
+function keyProblem(publicKeyJson, wrapped) {
+  let publicKey;
+  try {
+    publicKey = JSON.parse(publicKeyJson);
+  } catch {
+    return 'That public key could not be read.';
+  }
+  if (!publicKey || publicKey.kty !== 'EC' || publicKey.crv !== 'P-256') {
+    return 'That is not a P-256 public key.';
+  }
+  if (!BASE64URL_32.test(String(publicKey.x ?? '')) || !BASE64URL_32.test(String(publicKey.y ?? ''))) {
+    return 'That public key is not the shape a P-256 point has.';
+  }
+
+  const parts = String(wrapped).split('$');
+  if (parts.length !== 6 || parts[0] !== 'pbkdf2' || parts[1] !== 'sha-256') {
+    return 'That key record is not in the form Tickmark writes.';
+  }
+  const iterations = Number(parts[2]);
+  if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS || iterations > KDF_MAX_ITERATIONS) {
+    return `That key record asks for an amount of work outside what this version accepts (${MIN_ITERATIONS} to ${KDF_MAX_ITERATIONS} rounds).`;
+  }
+  return null;
 }
-</script>`;
+
+function setupForm({ response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  if (practitioner.hasKey) return redirect(response, '/requests');
+  return sendPage(response, 200, page({
+    title: 'Set up encryption',
+    practitioner,
+    body: html`
+      <h1>One passphrase, and then clients can send you files</h1>
+      <p>Tickmark makes a key pair in this browser. The public half is kept here; the private
+      half never leaves your browser except wrapped under a passphrase, which is never sent
+      either. That is what makes the promise real rather than polite: whoever runs this server
+      — including you — can hold a client's documents without being able to read them.</p>
+      <form id="setup" method="post" action="/setup">
+        <label for="passphrase">Passphrase</label>
+        <input id="passphrase" name="passphrase" type="password" required autocomplete="new-password">
+        <label for="again">The same passphrase again</label>
+        <input id="again" name="again" type="password" required autocomplete="new-password">
+        <button type="submit">Make the key</button>
+        <div class="status note"></div>
+      </form>
+      <p class="warning"><strong>Nothing can recover this passphrase and nothing can reset it.</strong>
+      If you lose it, the files clients send you become unreadable — by you, by anyone. Write it
+      down somewhere that is not this server.</p>
+      ${raw('<script type="module" src="/assets/setup.js"></script>')}`,
+  }));
+}
+
+async function saveKeys({ db, request, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  if (practitioner.hasKey) return fail(response, 400, 'This practice already has a key.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const publicKeyJson = field(fields, 'public_key');
+  const wrapped = field(fields, 'wrapped_private_key');
+  const problem = keyProblem(publicKeyJson, wrapped);
+  if (problem) return fail(response, 400, problem, practitioner);
+
+  savePracticeKeys(db, practitioner.id, {
+    publicKey: JSON.parse(publicKeyJson),
+    wrappedPrivateKey: wrapped,
+  });
+  return redirect(response, '/requests');
+}
