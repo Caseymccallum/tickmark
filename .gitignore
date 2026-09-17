@@ -1,0 +1,16 @@
+# The runtime data directory: the database, the blobs, the wrapped key.
+# None of it belongs in a repository, and every part of it is a client's business.
+data/
+
+node_modules/
+
+# Local configuration. `.env.example` is committed; nothing else is.
+.env
+.env.*
+!.env.example
+
+# Test and editor leftovers
+coverage/
+*.log
+.DS_Store
+Thumbs.db

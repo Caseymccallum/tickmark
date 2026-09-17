@@ -1,0 +1,16 @@
+# The source of this repository is text, and it is pinned to LF so that
+# a contributed change is a change and not a line-ending rewrite.
+* text=auto eol=lf
+
+# Real binary. Declared so that nothing tries to normalise it.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.bin binary
+*.sqlite binary
+*.db binary
+*.woff2 binary

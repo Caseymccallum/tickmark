@@ -1,0 +1,22 @@
+# The intended install: one command, one container, one volume.
+#
+#   docker compose up
+#
+# Client links must be HTTPS in anything but a local trial. The documented path is a
+# reverse proxy (Caddy, nginx, Traefik) in front of this, rather than a certificate
+# story invented here.
+services:
+  tickmark:
+    build: .
+    image: tickmark:dev
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      TICKMARK_DATA: /data/tickmark.db
+    volumes:
+      - tickmark-data:/data
+    restart: unless-stopped
+
+volumes:
+  tickmark-data:
