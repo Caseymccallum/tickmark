@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { openDatabase } from '../src/db.js';
 import {
+  addKeyWrapping,
   addPracticeKey,
   createClient,
   createPractice,
@@ -26,9 +27,19 @@ import {
   createRequest,
   membersOf,
   practiceFor,
+  practiceKeys,
+  replaceWrappedKey,
   requestFor,
 } from '../src/store.js';
 import { createSession, sessionFor } from '../src/auth.js';
+import {
+  decryptEnvelope,
+  encryptFile,
+  generatePracticeKey,
+  privateKeyBytesForTransfer,
+  sealPrivateKey,
+  unwrapPracticeKey,
+} from '../web/tickmark-crypto.js';
 import { signUp, withServer } from './helpers.js';
 
 const OLD_SCHEMA = `
@@ -101,6 +112,17 @@ test('every practitioner gets a practice of their own, and their work is moved i
     8,
     'two practices created and six rows adopted: three tables, two rows each',
   );
+
+  // Each key's wrapped copy became a wrapping belonging to the member who made it, so a database that
+  // predates two-member practices arrives with one copy per key and nothing to reconcile.
+  assert.equal(db.migratedWrappings, 2, 'one wrapping per key, owned by its creator');
+  const wrappings = db
+    .prepare('SELECT w.practitioner_id, k.practitioner_id AS created_by FROM key_wrapping w JOIN practice_key k ON k.id = w.key_id')
+    .all();
+  assert.equal(wrappings.length, 2);
+  for (const wrapping of wrappings) {
+    assert.equal(wrapping.practitioner_id, wrapping.created_by, 'the copy belongs to the person who made the key');
+  }
 
   const practices = db.prepare('SELECT id, name FROM practice').all();
   assert.equal(practices.length, 2, 'one practice per practitioner, and no more');
@@ -394,3 +416,132 @@ test('stage B removes the session column stage A added, because nothing read it'
   assert.equal(again.migratedSession, 0, 'a second open has nothing left to do');
   again.close();
 });
+ 
+test("a member with no copy of a key sees none, rather than a colleague's", async () => {
+  const db = openDatabase();
+  try {
+    const practiceId = createPractice(db, { name: 'Two partners' });
+    const ada = createPractitioner(db, { practiceId, email: 'ada@firm.example', passwordHash: 'x' });
+    const sam = createPractitioner(db, { practiceId, email: 'sam@firm.example', passwordHash: 'x' });
+
+    const key = await generatePracticeKey('ada passphrase long enough');
+    addPracticeKey(db, practiceId, {
+      publicKey: key.publicKey,
+      wrappedPrivateKey: key.wrappedPrivateKey,
+      createdBy: ada,
+    });
+
+    const forSam = practiceKeys(db, practiceId, sam);
+    assert.equal(forSam.length, 1, 'Sam can see that the practice has a key');
+    assert.equal(forSam[0].wrappedPrivateKey, null, 'and is told he has no copy of it');
+    assert.equal(forSam[0].publicKey.kty, 'EC', 'so the public half is still there, which is the part that is published');
+  } finally {
+    db.close();
+  }
+});
+
+test("one member changing their passphrase leaves the other member's copy alone", async () => {
+  const db = openDatabase();
+  try {
+    const practiceId = createPractice(db, { name: 'Two partners' });
+    const ada = createPractitioner(db, { practiceId, email: 'ada@firm.example', passwordHash: 'x' });
+    const sam = createPractitioner(db, { practiceId, email: 'sam@firm.example', passwordHash: 'x' });
+
+    const key = await generatePracticeKey('ada passphrase long enough');
+    const keyId = addPracticeKey(db, practiceId, {
+      publicKey: key.publicKey,
+      wrappedPrivateKey: key.wrappedPrivateKey,
+      createdBy: ada,
+    });
+    const samCopy = 'pbkdf2$sha-256$600000$c2Ft$c2Ft$c2Ft';
+    addKeyWrapping(db, { keyId, practitionerId: sam, wrappedPrivateKey: samCopy });
+
+    const adaNew = 'ada new passphrase here';
+    assert.equal(replaceWrappedKey(db, practiceId, ada, keyId, adaNew), true);
+
+    // Sam's copy is untouched.
+    assert.equal(
+      practiceKeys(db, practiceId, sam)[0].wrappedPrivateKey,
+      samCopy,
+      "a colleague's copy is not disturbed",
+    );
+
+    // And the older column — kept for the previous release to read — was updated, because it is Ada's
+    // own copy, and leaving it stale would mean her old passphrase still opened the key there.
+    assert.equal(
+      db.prepare('SELECT wrapped_private_key FROM practice_key WHERE id = ?').get(keyId).wrapped_private_key,
+      adaNew,
+      'the column the previous release reads does not go stale',
+    );
+
+    // A member cannot re-wrap a key their practice does not own, or one they have no copy of.
+    const other = createPractice(db, { name: 'Somebody else' });
+    assert.equal(replaceWrappedKey(db, other, ada, keyId, adaNew), false);
+    assert.equal(replaceWrappedKey(db, practiceId, 'no-such-person', keyId, adaNew), false);
+  } finally {
+    db.close();
+  }
+});
+
+/**
+ * Per-member key wrappings, which is what makes two people in one practice possible at all.
+ *
+ * The claim in the middle of this block is the one a firm cares about: **the same document opens with
+ * either partner's own passphrase.** Not that two rows exist — that both people can read the client's
+ * file, without sharing a passphrase and without either being able to derive the other's.
+ */
+test('one key, two members, two copies — and either passphrase opens the same file', async () => {
+  const db = openDatabase();
+  try {
+    const practiceId = createPractice(db, { name: 'Two partners' });
+    const ada = createPractitioner(db, { practiceId, email: 'ada@firm.example', passwordHash: 'x' });
+    const sam = createPractitioner(db, { practiceId, email: 'sam@firm.example', passwordHash: 'x' });
+
+    // Ada makes the practice's key, under her own passphrase.
+    const adaPassphrase = 'ada passphrase long enough';
+    const key = await generatePracticeKey(adaPassphrase);
+    const keyId = addPracticeKey(db, practiceId, {
+      publicKey: key.publicKey,
+      wrappedPrivateKey: key.wrappedPrivateKey,
+      createdBy: ada,
+    });
+
+    // A client sends a document to the practice's public key, before Sam has anything.
+    const envelope = await encryptFile(key.publicKey, new TextEncoder().encode('Northwind bank statement'));
+
+    // The invitation produces Sam's copy from the same key material, sealed under his own passphrase.
+    // These are the two crypto calls the invitation flow makes.
+    const samPassphrase = 'sam passphrase long enough';
+    const samCopy = await sealPrivateKey(
+      await privateKeyBytesForTransfer(key.wrappedPrivateKey, adaPassphrase),
+      samPassphrase,
+    );
+    addKeyWrapping(db, { keyId, practitionerId: sam, wrappedPrivateKey: samCopy });
+
+    // Both copies exist, and they are different records of the same key.
+    const wrappings = db.prepare('SELECT wrapped_private_key FROM key_wrapping').all();
+    assert.equal(wrappings.length, 2, 'one copy per member');
+    assert.notEqual(wrappings[0].wrapped_private_key, wrappings[1].wrapped_private_key, 'and they are different records');
+
+    // Each member is shown their own copy, and only theirs.
+    assert.equal(practiceKeys(db, practiceId, ada)[0].wrappedPrivateKey, key.wrappedPrivateKey);
+    assert.equal(practiceKeys(db, practiceId, sam)[0].wrappedPrivateKey, samCopy);
+    assert.notEqual(
+      practiceKeys(db, practiceId, sam)[0].wrappedPrivateKey,
+      practiceKeys(db, practiceId, ada)[0].wrappedPrivateKey,
+      "a member is never handed a colleague's copy",
+    );
+
+    // The file that predates Sam opens with Sam's passphrase — and with Ada's.
+    const samKey = await unwrapPracticeKey(samCopy, samPassphrase);
+    assert.equal(new TextDecoder().decode(await decryptEnvelope(samKey, envelope)), 'Northwind bank statement');
+    const adaKey = await unwrapPracticeKey(key.wrappedPrivateKey, adaPassphrase);
+    assert.equal(new TextDecoder().decode(await decryptEnvelope(adaKey, envelope)), 'Northwind bank statement');
+
+    // Sam cannot open his copy with Ada's passphrase, so the two are genuinely separate secrets.
+    await assert.rejects(() => unwrapPracticeKey(samCopy, adaPassphrase));
+  } finally {
+    db.close();
+  }
+});
+

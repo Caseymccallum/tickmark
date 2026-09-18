@@ -14,7 +14,7 @@ Phase 0   Verify the demand            NOT RUN — and it decides whether Phase 
 Phase 1   Version one                  COMPLETE
 Phase 2   Make it usable in the field
           2a email sending             COMPLETE
-          2b several people per practice  A and B done; C NOT STARTED
+          2b several people per practice  A and B done; C-i done; C-ii NEXT
           2c re-encrypting old files      NOT STARTED
           2d other install paths          NOT PLANNED
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
@@ -207,9 +207,46 @@ fails 49 tests — and the reason is worth stating: a practice id and a person i
 so confusing them is **loud, never silent**. Removing `membersOf`'s ordering fails exactly the assertion
 about ordering.
 
-**Left for stage C:** the invitation flow designed in `docs/members.md`, where the private key travels in
-a link fragment so the server never sees it; a members page; and a practice name that is not the
-placeholder `My practice`.
+**Stage C is under way: the key can now be shared and stored per member.** What is left of it is the
+pages — an invitation flow that a practice can actually use, a members page, removing a member, and a
+practice name that is not the placeholder `My practice`.
+
+**C-i (done, this pass): the key can move, and a practice can hold one sealed copy per member.**
+
+Two pieces, both of which had to exist before an invitation could mean anything:
+
+1. **The invitation crypto**, in `web/tickmark-crypto.js`. The practice's private key is sealed under a
+   random 32-byte **secret** with HKDF and AES-GCM, and the secret is meant to travel in the part of a
+   link a browser never sends to a server — the fragment. The functions work with PKCS#8 *bytes*, not a
+   `CryptoKey`, deliberately: the passphrase-unwrapped key is imported as **not extractable**, and that
+   is a property worth keeping, so rather than making every unwrapped key exportable, one narrowly-named
+   function hands out the bytes for the one operation that has to move a key.
+2. **`key_wrapping`**, one row per member per key. Before this, a key carried a single wrapped copy and a
+   practice had a single login, so "whose passphrase" was not a question. It is now.
+
+The test that matters is not that two rows exist. It is that **a member invited after a document was sent
+can open that document** — proved by sealing a file to the practice's public key, running the invitation
+steps, and decrypting with the new member's own passphrase. Both that and its mirror (the original
+passphrase still opens the original record, so inviting nobody rotated anything) are in
+`test/crypto.test.js` and `test/tenancy.test.js`.
+
+One bug found while writing it, and it was a security one: `replaceWrappedKey` wrote only to the new
+table, which would have left the **older column** holding a stale copy that still opened under the old
+passphrase. A passphrase change is supposed to make the old passphrase useless. The column is kept as a
+mirror of the *creator's* copy and updated when the creator re-wraps, and a test asserts it does not go
+stale.
+
+Two mutations proved the new tests bite:
+
+| Mutation | What failed |
+| --- | --- |
+| every member shown the key creator's copy instead of their own | 3 tests, including *"and is told he has no copy of it"* — a member was handed a colleague's sealed private key |
+| the wrapping backfill never runs | exactly the assertion that counts the wrappings |
+
+**C-ii (next):** the invitation pages. The owner's browser seals the key under a secret it generates and
+keeps; the server stores the sealed blob and a digest of a token; the link is
+`/invite/<token>#<secret>`; the new member's browser opens the blob with the fragment secret, re-seals it
+under their own passphrase, and posts only that.
 
 ### 2c. Re-encrypting old files, so a key can be deleted
 

@@ -198,27 +198,33 @@ export function membersOf(db, practiceId) {
 }
 
 /**
- * A practice's keys, newest first. The newest is the one a client's browser encrypts to; the older
- * ones exist because files already stored are encrypted to them and cannot be moved.
+ * A practice's keys, newest first, each with **the asking member's** wrapped copy.
+ *
+ * The key belongs to the practice; the wrapped copy belongs to a person. A member who has just been
+ * invited has a copy of a key they did not create, and a member who has never been sent a copy of the
+ * newest key sees the key without one — which is a state worth being able to see rather than hiding,
+ * because it means they cannot open anything encrypted to it.
  */
-export function practiceKeys(db, practiceId) {
+export function practiceKeys(db, practiceId, practitionerId) {
   return db
     .prepare(
-      `SELECT id, public_key, wrapped_private_key, created_at
-         FROM practice_key WHERE practice_id = ?
-        ORDER BY created_at DESC, rowid DESC`,
+      `SELECT k.id, k.public_key, k.created_at, w.wrapped_private_key
+         FROM practice_key k
+         LEFT JOIN key_wrapping w ON w.key_id = k.id AND w.practitioner_id = ?
+        WHERE k.practice_id = ?
+        ORDER BY k.created_at DESC, k.rowid DESC`,
     )
-    .all(practiceId)
+    .all(practitionerId, practiceId)
     .map((row) => ({
       id: row.id,
       publicKey: JSON.parse(row.public_key),
-      wrappedPrivateKey: row.wrapped_private_key,
+      wrappedPrivateKey: row.wrapped_private_key ?? null,
       createdAt: row.created_at,
     }));
 }
 
-export function currentPracticeKey(db, practiceId) {
-  return practiceKeys(db, practiceId)[0] ?? null;
+export function currentPracticeKey(db, practiceId, practitionerId) {
+  return practiceKeys(db, practiceId, practitionerId)[0] ?? null;
 }
 
 /**
@@ -229,30 +235,70 @@ export function currentPracticeKey(db, practiceId) {
  * could unwrap it, and the claim that a self-hosted Tickmark cannot read a client's documents would
  * be false in exactly the situation where it matters: when the host is compromised.
  *
- * `createdBy` records which member added it. The key belongs to the practice; the person is
- * provenance, and in a firm with two partners "who rotated this, and when" is a question someone
- * will ask.
+ * Two records are written, and the duplication is deliberate: `practice_key.wrapped_private_key` keeps
+ * the copy the previous release reads, and `key_wrapping` gets the copy that belongs to this member.
+ * The column is the older idea of "the practice's copy"; the table is the true one, and it is what every
+ * read goes through. `createdBy` records which member added the key — in a firm with two partners, "who
+ * rotated this, and when" is a question someone will ask.
  */
 export function addPracticeKey(db, practiceId, { publicKey, wrappedPrivateKey, createdBy, at = now() }) {
   const id = newId();
+  return inTransaction(db, () => {
+    db.prepare(
+      `INSERT INTO practice_key (id, practice_id, practitioner_id, public_key, wrapped_private_key, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(id, practiceId, createdBy, JSON.stringify(publicKey), wrappedPrivateKey, at);
+    addKeyWrapping(db, { keyId: id, practitionerId: createdBy, wrappedPrivateKey, at });
+    return id;
+  });
+}
+
+/** Give one member a sealed copy of a key. What an invitation produces. */
+export function addKeyWrapping(db, { keyId, practitionerId, wrappedPrivateKey, at = now() }) {
+  const existing = db
+    .prepare('SELECT id FROM key_wrapping WHERE key_id = ? AND practitioner_id = ?')
+    .get(keyId, practitionerId);
+  if (existing) {
+    db.prepare('UPDATE key_wrapping SET wrapped_private_key = ? WHERE id = ?').run(wrappedPrivateKey, existing.id);
+    return existing.id;
+  }
+  const id = newId();
   db.prepare(
-    `INSERT INTO practice_key (id, practice_id, practitioner_id, public_key, wrapped_private_key, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, practiceId, createdBy, JSON.stringify(publicKey), wrappedPrivateKey, at);
+    'INSERT INTO key_wrapping (id, key_id, practitioner_id, wrapped_private_key, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, keyId, practitionerId, wrappedPrivateKey, at);
   return id;
 }
 
 /**
- * Re-wrap one key under a new passphrase.
+ * Re-wrap one key under a new passphrase, **for one member**.
  *
- * Changing a passphrase does not rotate anything: the same key comes back, sealed differently. That
- * is why it is cheap, and why it is worth having as a separate act from rotation.
+ * Changing a passphrase does not rotate anything: the same key comes back, sealed differently. That is
+ * why it is cheap, and why it is worth having as a separate act from rotation. It is also why the change
+ * is per person: a member changing their passphrase leaves their colleague's copy exactly as it was,
+ * which is the point of holding one copy each.
  */
-export function replaceWrappedKey(db, practiceId, keyId, wrappedPrivateKey) {
-  const row = db.prepare('SELECT id FROM practice_key WHERE id = ? AND practice_id = ?').get(keyId, practiceId);
+export function replaceWrappedKey(db, practiceId, practitionerId, keyId, wrappedPrivateKey) {
+  const row = db
+    .prepare(
+      `SELECT w.id, k.practitioner_id AS created_by
+         FROM key_wrapping w JOIN practice_key k ON k.id = w.key_id
+        WHERE w.key_id = ? AND w.practitioner_id = ? AND k.practice_id = ?`,
+    )
+    .get(keyId, practitionerId, practiceId);
   if (!row) return false;
-  db.prepare('UPDATE practice_key SET wrapped_private_key = ? WHERE id = ?').run(wrappedPrivateKey, keyId);
-  return true;
+
+  return inTransaction(db, () => {
+    db.prepare('UPDATE key_wrapping SET wrapped_private_key = ? WHERE id = ?').run(wrappedPrivateKey, row.id);
+
+    // The older column is kept for the previous release to read, and it must not go stale. It is the
+    // *creator's* copy, so it is updated when the creator re-wraps and left alone when a colleague does:
+    // a stale copy there would mean the old passphrase still opened the key for anyone reading that
+    // column, which is exactly what changing a passphrase is supposed to prevent.
+    if (row.created_by === practitionerId) {
+      db.prepare('UPDATE practice_key SET wrapped_private_key = ? WHERE id = ?').run(wrappedPrivateKey, keyId);
+    }
+    return true;
+  });
 }
 
 export function clientsOf(db, practiceId) {

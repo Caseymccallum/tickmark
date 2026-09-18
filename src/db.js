@@ -1,5 +1,5 @@
 /**
- * The database: one file, ten tables, no dependencies.
+ * The database: one file, eleven tables, no dependencies.
  *
  * `node:sqlite` ships in the runtime, so a practice that self-hosts this inherits no
  * driver, no ORM and no native module to compile. That matters more here than it would
@@ -17,7 +17,8 @@
  * that needs server-side state — a signed cookie could be told to stop being valid, but
  * only by keeping a list of secrets the process would lose on restart. `practice` made it
  * ten, because a firm with two partners cannot be represented by one login; see
- * `docs/members.md`.
+ * `docs/members.md`. `key_wrapping` made it eleven, because two partners cannot share one
+ * passphrase either — the same key needs one sealed copy per member.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -56,6 +57,12 @@ CREATE TABLE IF NOT EXISTS practitioner (
 --
 -- What that means for a compromise is stated in docs/encryption.md rather than glossed: rotation
 -- protects what arrives afterwards. It cannot un-disclose what has already been taken.
+--
+-- wrapped_private_key here is the copy belonging to the member who created the key. It is kept
+-- because the previous release reads it, so a database that has been migrated stays readable by the
+-- software that wrote it. THE COPIES THAT MATTER ARE IN key_wrapping, one per member: two people in one
+-- practice each hold the same key sealed under their own passphrase, which is the whole point of
+-- docs/members.md and is not expressible in a single column.
 CREATE TABLE IF NOT EXISTS practice_key (
   id                  TEXT PRIMARY KEY,
   practitioner_id     TEXT NOT NULL REFERENCES practitioner(id),
@@ -64,6 +71,17 @@ CREATE TABLE IF NOT EXISTS practice_key (
   created_at          TEXT NOT NULL,
   practice_id         TEXT REFERENCES practice(id)
 );
+
+CREATE TABLE IF NOT EXISTS key_wrapping (
+  id                  TEXT PRIMARY KEY,
+  key_id              TEXT NOT NULL REFERENCES practice_key(id),
+  practitioner_id     TEXT NOT NULL REFERENCES practitioner(id),
+  wrapped_private_key TEXT NOT NULL,
+  created_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS wrap_key    ON key_wrapping(key_id);
+CREATE INDEX IF NOT EXISTS wrap_member ON key_wrapping(practitioner_id);
 
 CREATE TABLE IF NOT EXISTS client (
   id              TEXT PRIMARY KEY,
@@ -189,6 +207,50 @@ function sessionPracticeColumnGoes(db) {
 }
 
 /**
+ * Every key's wrapped copy becomes a wrapping belonging to the member who made it.
+ *
+ * Before this, a key carried one wrapped copy and a practice had one login, so "whose passphrase" was
+ * not a question. It is now: the copy belongs to a person, and the same key has one per member.
+ *
+ * The copy is not moved so much as **copied**: the column keeps its value so the previous release can
+ * still read the database, and the new table gets the same value for the same person. Nothing is
+ * rewritten, and a database that has been through this twice is unchanged — the insert is conditional on
+ * no wrapping existing for that pair.
+ */
+function keyWrappingsFromKeyColumn(db) {
+  if (!columnsOf(db, 'key_wrapping').includes('key_id')) return 0;
+
+  const carried = db
+    .prepare(
+      `SELECT k.id AS key_id, k.practitioner_id, k.wrapped_private_key, k.created_at
+         FROM practice_key k
+        WHERE k.wrapped_private_key IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM key_wrapping w WHERE w.key_id = k.id AND w.practitioner_id = k.practitioner_id
+          )`,
+    )
+    .all();
+  if (carried.length === 0) return 0;
+
+  const insert = db.prepare(
+    'INSERT INTO key_wrapping (id, key_id, practitioner_id, wrapped_private_key, created_at) VALUES (?, ?, ?, ?, ?)',
+  );
+  let changed = 0;
+  db.exec('BEGIN');
+  try {
+    for (const row of carried) {
+      insert.run(randomUUID(), row.key_id, row.practitioner_id, row.wrapped_private_key, row.created_at);
+      changed += 1;
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return changed;
+}
+
+/**
  * Bring an older database up to this schema.
  *
  * Two kinds of step, both idempotent, because this runs on every open. `added` counts what changed,
@@ -199,7 +261,7 @@ function migrate(db) {
   // and adding the practice migration silently made `migratedKeys` mean something else — which a test
   // caught, and which would have been a lie in the one place an operator looks to see what happened to
   // their database.
-  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0 };
+  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0, wrappings: 0 };
   for (const [table, column, definition] of [
     ['request_item', 'withdrawn_at', 'TEXT'],
     ['request_item', 'attention_at', 'TEXT'],
@@ -213,6 +275,9 @@ function migrate(db) {
   }
   changes.tenancy = practitionerGetsAPractice(db);
   changes.session = sessionPracticeColumnGoes(db);
+  // After tenancy, because a wrapping needs the practitioner's practice to make sense of — and the
+  // person who made the key is exactly the person the copy belongs to.
+  changes.wrappings = keyWrappingsFromKeyColumn(db);
   // After the columns, not before: see the note on PRACTICE_INDEXES.
   db.exec(PRACTICE_INDEXES);
   return changes;
@@ -324,6 +389,7 @@ export function openDatabase(file = ':memory:') {
   db.migratedColumns = changes.columns;
   db.migratedTenancy = changes.tenancy;
   db.migratedSession = changes.session;
+  db.migratedWrappings = changes.wrappings;
   return db;
 }
 

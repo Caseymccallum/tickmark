@@ -644,7 +644,7 @@ function viewRequest({ db, request, response, practitioner, params , practiceId}
   // here, or the plaintext would have to be produced by the server, which is the one thing that must
   // not happen. All of them, because a file sent before the last rotation is encrypted to an older
   // key.
-  const keys = practiceKeys(db, practiceId);
+  const keys = practiceKeys(db, practiceId, practitioner.id);
 
   return sendPage(response, 200, page({
     title: found.title,
@@ -1340,7 +1340,7 @@ function keyProblem(publicKeyJson, wrapped) {
 
 function setupForm({ db, response, practitioner }) {
   if (!requireSignIn({ practitioner, response })) return;
-  const existing = practiceKeys(db, practiceId);
+  const existing = practiceKeys(db, practiceId, practitioner.id);
   const first = existing.length === 0;
   return sendPage(response, 200, page({
     title: first ? 'Set up encryption' : 'Add a new key',
@@ -1399,7 +1399,7 @@ async function saveKeys({ db, request, response, practitioner , practiceId}) {
  */
 function keysPage({ db, response, practitioner , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const keys = practiceKeys(db, practiceId);
+  const keys = practiceKeys(db, practiceId, practitioner.id);
 
   const rows = keys.map((key, index) => html`<tr>
     <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
@@ -1457,7 +1457,7 @@ async function changePassphrase({ db, request, response, practitioner, params , 
   const problem = wrappedKeyProblem(wrapped);
   if (problem) return fail(response, 400, problem, practitioner);
 
-  const changed = replaceWrappedKey(db, practiceId, params[0], wrapped);
+  const changed = replaceWrappedKey(db, practiceId, practitioner.id, params[0], wrapped);
   if (!changed) return fail(response, 404, 'There is no key of yours with that id.', practitioner);
   return redirect(response, '/keys');
 }

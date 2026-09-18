@@ -149,6 +149,97 @@ export async function rewrapPrivateKey(wrappedPrivateKey, oldPassphrase, newPass
   return wrapPkcs8(await unwrapToPkcs8(wrappedPrivateKey, oldPassphrase), newPassphrase);
 }
 
+// --- inviting someone into a practice ----------------------------------------------------
+//
+// The problem this solves: a new member needs the practice's private key, and the server must never
+// hold it. So the key travels wrapped under a **secret**, and the secret travels in the part of a link
+// a browser never sends to a server — the fragment. See docs/members.md.
+//
+// Two things about the shape of this, both deliberate:
+//
+// - **The bytes, not a `CryptoKey`.** The passphrase-unwrapped key is imported as *not* extractable,
+//   which is a property worth keeping: a key the page cannot export is a key no injected script can
+//   post somewhere. So these functions work with PKCS#8 bytes and are named for the one operation that
+//   genuinely needs them, rather than making every unwrapped key exportable on the chance that one page
+//   wants to move one.
+// - **Not the passphrase machinery.** A passphrase is a low-entropy thing a person chose, so it gets
+//   600,000 rounds of PBKDF2. An invite secret is 32 random bytes produced by the browser, so stretching
+//   it would buy nothing; HKDF is the right tool and is already what the file envelopes use.
+
+export const INVITE_PREFIX = 'invite';
+export const INVITE_SECRET_BYTES = 32;
+export const INVITE_HKDF_INFO = 'tickmark/v1/invite';
+
+/** A fresh invite secret: 43 base64url characters, produced by the browser and sent nowhere. */
+export function newInviteSecret() {
+  return toBase64Url(random(INVITE_SECRET_BYTES));
+}
+
+/**
+ * The PKCS#8 bytes of the practice's private key, for wrapping under an invite secret.
+ *
+ * This is the one function that hands private key material to a caller, and it exists because inviting
+ * someone is the one operation that has to move the key. It takes a passphrase for the same reason
+ * `unwrapToPkcs8` does: the key only comes out of the record that holds it.
+ */
+export async function privateKeyBytesForTransfer(wrappedPrivateKey, passphrase) {
+  return unwrapToPkcs8(wrappedPrivateKey, passphrase);
+}
+
+/** Seal PKCS#8 bytes under a passphrase, as the record a practice stores per member. */
+export async function sealPrivateKey(pkcs8, passphrase) {
+  return wrapPkcs8(pkcs8, passphrase);
+}
+
+/** Seal PKCS#8 bytes under an invite secret, as the blob an invitation carries. */
+export async function wrapBytesForInvite(pkcs8, secret) {
+  const salt = random(KDF.saltBytes);
+  const iv = random(IV_BYTES);
+  const wrappingKey = await deriveInviteKey(secret, salt);
+  const wrapped = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, pkcs8));
+
+  return [INVITE_PREFIX, 'sha-256', toBase64Url(salt), toBase64Url(iv), toBase64Url(wrapped)].join('$');
+}
+
+/**
+ * Open an invitation with the secret from the link's fragment.
+ *
+ * A wrong secret throws, for the same reason a wrong passphrase does: AES-GCM's tag is the only thing
+ * that decides, and nothing stored can answer "is this the secret?" — a question the server must not be
+ * able to answer, since it holds the blob.
+ */
+export async function openInviteBytes(blob, secret) {
+  const parts = String(blob).split('$');
+  if (parts.length !== 5 || parts[0] !== INVITE_PREFIX || parts[1] !== 'sha-256') {
+    throw new Error('that is not a Tickmark invitation');
+  }
+  const salt = fromBase64Url(parts[2]);
+  const iv = fromBase64Url(parts[3]);
+  const ciphertext = fromBase64Url(parts[4]);
+
+  const key = await deriveInviteKey(secret, salt);
+  try {
+    return new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext));
+  } catch {
+    // Deliberately the same sentence whatever went wrong. A message that told a wrong secret apart from
+    // a corrupted blob would be a small oracle, and there is nothing useful to tell the person in the
+    // second case either: the link is the link.
+    throw new Error('that link does not open — it may have been copied incompletely, or it may have expired');
+  }
+}
+
+/** The key an invitation is sealed under: HKDF over the secret, salted per invitation. */
+async function deriveInviteKey(secret, salt) {
+  const material = await subtle.importKey('raw', utf8(String(secret).normalize('NFC')), 'HKDF', false, ['deriveKey']);
+  return subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: utf8(INVITE_HKDF_INFO) },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
 /** The unwrapped PKCS#8 bytes, which only the two functions above should ever see. */
 async function unwrapToPkcs8(wrappedPrivateKey, passphrase) {
   const parts = String(wrappedPrivateKey).split('$');

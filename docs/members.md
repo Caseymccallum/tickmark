@@ -55,31 +55,30 @@ trivially true — and it is wrong for this product, for three reasons that are 
 
 ## The invitation, and why it looks the way it does
 
-The constraint: the new member's wrapped copy must be produced by someone who has the key, and must
-never pass through the server in a form the server can read.
+**Built in two parts: the crypto and the storage (done), then the pages (next).** The constraint: the new
+member's sealed copy must be produced by someone who has the key, and the server must never hold the key
+or the secret that opens the invitation.
 
-**The owner invites from a page where their own key is already unlocked.** Their browser:
+**The owner's browser** (this is C-ii, not yet built):
 
-1. generates a random **invite secret**;
-2. wraps the practice's private key under that secret;
-3. puts the wrapped key and the secret in a link — the wrapped key in the path, the secret in the
-   **fragment** (`#…`), which a browser never sends to a server;
-4. the server stores only a digest of the invitation, exactly as it does for a client link.
+1. generates a random **invite secret** — 32 bytes, produced by the browser and sent nowhere;
+2. unwraps the practice's private key with the owner's passphrase, getting PKCS#8 bytes;
+3. seals those bytes under the secret, and posts **only the sealed blob**;
+4. the server stores the blob and a digest of a fresh token, and the link is
+   `/invite/<token>#<secret>`. The server never sees the fragment, because browsers do not send it —
+   the same trick a client link uses, for a second purpose.
 
-**The new member opens the link.** Their browser:
+**The new member's browser:**
 
-1. reads the secret from the fragment (the server never sees it);
-2. unwraps the practice's private key with it;
-3. asks them for a password and their **own** passphrase;
-4. wraps the practice's private key under *their* passphrase and posts only that.
+1. reads the secret from the fragment;
+2. fetches the sealed blob for that token;
+3. opens it with the secret, then re-seals the same key under **their own** passphrase;
+4. posts only the re-sealed record, which is stored as their `key_wrapping` row.
 
-So the server ends up holding one more wrapped copy and no more knowledge than before. This is the same
-shape as the client link — a secret in a fragment, a digest on the server — which is why it is not a
-new mechanism so much as the existing one used for a second purpose.
-
-**What the owner must understand before inviting:** anyone who opens that link before the intended
-person does gets the key. It expires like any link, it is single-use, and the page says so plainly
-rather than in a footnote.
+So the server ends up holding one more sealed copy and no more knowledge than before. What the owner must
+understand before inviting, and what the page will say plainly: **anyone who opens that link before the
+intended person does gets the key.** It expires like any link, it is single-use, and there is no way to
+make it selective beyond keeping it private.
 
 ## The order this happens in, and what each stage leaves true
 
@@ -87,7 +86,7 @@ rather than in a footnote.
 | --- | --- | --- |
 | **A** (done) | `practice` exists; `practice_id` on every tenant-owned row; a migration that gives every existing practitioner their own practice and backfills | The database is ready. **Behaviour is unchanged**, and every existing test still passes — one practitioner, one practice |
 | **B** (done) | The code reads and writes `practice_id`; `createdBy` records the person; sign-up creates a practice; sessions carry the practice | Two people in one practice see the same client's records — a capability the old shape could not express |
-| **C** (next) | Invitations; a members page; removing a member; a real practice name | The feature is usable by a practitioner rather than by a developer |
+| **C** (under way) | C-i: the invitation crypto and one sealed copy of the key per member. C-ii: invitations, a members page, removing a member, a real practice name | When C-ii lands, a two-partner firm can use this |
 
 **Why stage A was separate.** It changed an existing operator's database, which is the one thing here that
 can lose data. It got its own pass, its own migration test, and its own commit. The old `practitioner_id`

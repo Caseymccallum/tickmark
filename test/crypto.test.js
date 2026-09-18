@@ -25,8 +25,13 @@ import {
   decryptEnvelope,
   encryptFile,
   generatePracticeKey,
+  newInviteSecret,
+  openInviteBytes,
+  privateKeyBytesForTransfer,
   readEnvelope,
+  sealPrivateKey,
   unwrapPracticeKey,
+  wrapBytesForInvite,
 } from '../web/tickmark-crypto.js';
 
 const PASSPHRASE = 'a passphrase long enough';
@@ -178,5 +183,80 @@ test('a passphrase differing only in Unicode normalisation is the same passphras
   assert.deepEqual(
     Array.from(await decryptEnvelope(privateKey, await encryptFile(publicKey, original))),
     Array.from(original),
+  );
+});
+
+/**
+ * The invitation, which is the one operation that has to move the practice's private key.
+ *
+ * The claim being tested is in the last test here: **a new member can open a document that was sent
+ * before they joined.** Everything else about the flow is plumbing; that is the thing a two-partner firm
+ * actually needs, and it is the reason the key belongs to the practice rather than to a person.
+ */
+test('an invitation carries the practice key, and only the secret opens it', async () => {
+  const { wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
+  const secret = newInviteSecret();
+
+  const blob = await wrapBytesForInvite(await privateKeyBytesForTransfer(wrappedPrivateKey, PASSPHRASE), secret);
+  assert.match(blob, /^invite\$sha-256\$/, 'and it says what it is, so it cannot be mistaken for a passphrase record');
+
+  // The right secret opens it and gives back a usable record under a new passphrase.
+  const opened = await openInviteBytes(blob, secret);
+  assert.ok(opened.length > 0, 'the PKCS#8 bytes come back');
+  const resealed = await sealPrivateKey(opened, 'the new member passphrase');
+  assert.match(resealed, /^pbkdf2\$sha-256\$600000\$/, 'and they seal into the ordinary record shape');
+  assert.ok(resealed !== wrappedPrivateKey, 'which is a different record from the one the practice holds');
+
+  // A wrong secret is refused, and says the same thing whatever is wrong with the link.
+  await assert.rejects(() => openInviteBytes(blob, newInviteSecret()), /does not open/);
+  await assert.rejects(() => openInviteBytes(blob, `${secret}x`), /does not open/);
+  await assert.rejects(() => openInviteBytes('pbkdf2$sha-256$600000$AA$AA$AA', secret), /not a Tickmark invitation/);
+  await assert.rejects(() => openInviteBytes(blob, ''), /does not open/);
+
+  // The blob is opaque: nothing about it reveals the key, and the secret is not recoverable from it.
+  assert.ok(!blob.includes(secret), 'the secret is not in the blob');
+  assert.ok(!blob.includes(wrappedPrivateKey), 'nor is the record the practice stored');
+});
+
+test('a member invited after a file was sent can still open that file', async () => {
+  // The practice, with a file already sealed to its public key. This is the state a firm is in on the
+  // day it hires someone: there is history, and the new member has to be able to read it.
+  const { publicKey, wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
+  const envelope = await encryptFile(publicKey, bytes(SECRET));
+
+  // The invitation: the owner's browser unwraps the key with their passphrase and seals it under a
+  // secret the server never sees.
+  const secret = newInviteSecret();
+  const blob = await wrapBytesForInvite(await privateKeyBytesForTransfer(wrappedPrivateKey, PASSPHRASE), secret);
+
+  // The new member's browser: opens the blob with the secret from the fragment, then seals the same key
+  // under their own passphrase. The server holds the blob and the result, and neither is readable to it.
+  const theirRecord = await sealPrivateKey(await openInviteBytes(blob, secret), 'their own passphrase');
+
+  // And the file that predates them opens.
+  const theirKey = await unwrapPracticeKey(theirRecord, 'their own passphrase');
+  assert.equal(new TextDecoder().decode(await decryptEnvelope(theirKey, envelope)), SECRET);
+
+  // It is the same key, not a copy that happens to work: the practice's own passphrase still opens the
+  // record it started with, so nothing was rotated by inviting someone.
+  const original = await unwrapPracticeKey(wrappedPrivateKey, PASSPHRASE);
+  assert.equal(new TextDecoder().decode(await decryptEnvelope(original, envelope)), SECRET);
+});
+
+test('the new member cannot open the practice key with the invitation secret alone', async () => {
+  // Worth stating because it is the boundary: the secret opens the *invitation*, not the practice. Once
+  // the new member has re-sealed the key under their own passphrase, the secret is spent.
+  const { wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
+  const secret = newInviteSecret();
+  const blob = await wrapBytesForInvite(await privateKeyBytesForTransfer(wrappedPrivateKey, PASSPHRASE), secret);
+
+  const theirRecord = await sealPrivateKey(await openInviteBytes(blob, secret), 'their own passphrase');
+  await assert.rejects(
+    () => unwrapPracticeKey(theirRecord, secret),
+    'their record does not open with the invitation secret',
+  );
+  await assert.rejects(
+    () => unwrapPracticeKey(theirRecord, PASSPHRASE),
+    'nor with the original passphrase — the records are separate',
   );
 });
