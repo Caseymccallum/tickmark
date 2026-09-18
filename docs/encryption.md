@@ -93,12 +93,14 @@ files. No design can fix that, and a product that implied otherwise would be lyi
 The page says all of this where the practice will read it, including the sentence that matters most:
 a new key does not re-encrypt anything.
 
-**Not built:** re-encrypting old files to a new key, which is the only thing that would make an old
-key safe to delete. It needs the old passphrase, a pass through every stored envelope, and a way to
-resume if the browser is closed halfway through — so it is a project rather than a patch, and until
-it exists the honest answer is that old keys stay. What does exist is the count above, which is the
-part of this that could be built without opening anything: a practice can now see that a key holds
-nothing but a file whose key was never recorded, and neither is a fact anyone could look up before.
+- **A key can be retired, because its files can be moved.** The pass runs in the browser — the private key
+  only ever exists there — and it fetches each file sealed to the old key, opens it, re-seals it to the
+  current key, checks the round trip, and replaces the stored envelope. A file that has been moved is no
+  longer sealed to the old key, so the count on the keys page *is* the progress and closing the page
+  halfway through loses nothing. Retiring then destroys the wrapped copies and keeps the row as a record.
+- **Retiring a key reaches further than this server.** Any copy of a file still on the old key that a
+  practice kept or backed up becomes unopenable once the key is gone, which is why the page says so and why
+  the word has to be typed rather than a button pressed. Move everything first, then retire.
 
 ## Changing a passphrase
 

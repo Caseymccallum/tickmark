@@ -29,6 +29,10 @@ browser** — the passphrase is typed into the page, the file is decrypted there
 sees it — **rotating the key**, with the old one kept so that nothing already sent becomes unopenable, and
 **a keys page that says how many files each key is holding** — which is the question that decides whether
 an old key can ever be thrown away, and had no answer before this;
+**moving those files onto the current key, so an old key can be retired** — the browser opens each file with
+the old key's passphrase, seals it to the current one, checks the round trip before anything is replaced, and
+carries on from where it stopped if the page is closed. Retiring destroys the key's copies and keeps the
+record that it existed;
 **inviting a second person into the practice**: each member gets their own login and their own
 passphrase, holds their own sealed copy of the practice's key, and can open documents that arrived
 before they did. The invitation carries the key sealed under a secret that travels in the part of a
@@ -39,14 +43,14 @@ practices actually lose time to. The short version is that the chase is not a co
 every portal collects — it is that "received" and "ready" are different things and most tools conflate
 them.
 
-What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
-let an old key be deleted; **removing a member**, which is the state you can see on the members page
+What does not exist yet: **removing a member**, which is the state you can see on the members page
 but not yet an act — `docs/members.md` says what it would take and why the honest version has to come with
 a sentence about what it cannot do; **a reminder cadence**, because the run that chases everybody has no
 memory of who it has already written to and pressing it twice writes twice — the chase list shows when
 each client was last reminded so that the decision is yours rather than a surprise, and
-`docs/product-needs.md` says why the threshold is a decision and not a default. Until old files can be
-re-encrypted, old keys stay, and `docs/encryption.md` says why.
+`docs/product-needs.md` says why the threshold is a decision and not a default; and **files that arrived
+before their key was recorded**, which no move can touch because the move works from the record — the keys
+page says how many there are.
 
 `docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,
 and the records survive a restart. That sentence is here because it was tested, not because it was

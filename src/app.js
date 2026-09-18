@@ -20,7 +20,7 @@
  */
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,6 +52,7 @@ import {
   closedCount,
   createPractitioner,
   createPractice,
+  allPracticeKeys,
   createInvite,
   createRequest,
   findOrCreateClient,
@@ -85,6 +86,9 @@ import {
   tokenLookup,
   tokensFor,
   uploadsOf,
+  uploadsSealedTo,
+  replaceUpload,
+  retirePracticeKey,
 } from './store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -152,6 +156,7 @@ const ASSETS = new Map([
   ['keys.js', 'application/javascript; charset=utf-8'],
   ['members.js', 'application/javascript; charset=utf-8'],
   ['invite.js', 'application/javascript; charset=utf-8'],
+  ['reencrypt.js', 'application/javascript; charset=utf-8'],
 ]);
 
 export const ROUTES = [
@@ -185,6 +190,11 @@ export const ROUTES = [
   // The run that writes to everyone at once. A GET to look before pressing, a POST to press.
   ['GET', '/chase', chasePage],
   ['POST', '/chase', sendAllReminders],
+  // Re-sealing a stored document to a newer key, and retiring a key that no longer opens anything.
+  ['GET', /^\/keys\/([^/]+)\/pending$/, pendingFor],
+  ['POST', /^\/keys\/([^/]+)\/move$/, moveWithoutScript],
+  ['POST', /^\/files\/([^/]+)\/reencrypt$/, reencryptFile],
+  ['POST', /^\/keys\/([^/]+)\/retire$/, retireKey],
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)\/says$/, clientSays],
@@ -1543,6 +1553,167 @@ function chaseReportPage({ practitioner, results, skipped, elapsedMs }) {
   });
 }
 
+/**
+ * The files still sealed to a key, for a re-encryption pass to work through.
+ *
+ * **This endpoint is the whole of the resume logic.** A file that has been moved is no longer sealed to
+ * the old key, so it stops appearing here — which means closing the browser halfway through a pass loses
+ * nothing but the time already spent, and reopening the page starts from wherever the data got to. No
+ * progress table, no session, no cursor to get out of step with the files themselves.
+ */
+function pendingFor({ db, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+
+  const key = db
+    .prepare('SELECT id, deleted_at FROM practice_key WHERE id = ? AND practice_id = ?')
+    .get(params[0], practiceId);
+  if (!key) return fail(response, 404, 'There is no key with that id in this practice.', practitioner);
+  if (key.deleted_at) return sendJson(response, 200, { files: [], retired: true, keyId: key.id });
+
+  const files = uploadsSealedTo(db, key.id, practiceId).map((row) => ({
+    id: row.id,
+    filename: row.filename,
+    // Where the browser fetches the envelope, and where it will post the new one. The download is the
+    // ordinary file route, so the pass needs no separate way of reading a document.
+    url: `/requests/${row.request_id}/files/${row.id}`,
+  }));
+
+  return sendJson(response, 200, { files, retired: false, keyId: key.id });
+}
+
+/**
+ * Replace one stored envelope with the same document sealed to a newer key.
+ *
+ * The practice's private key never comes near this: the browser decrypts, re-encrypts, and posts bytes the
+ * server cannot read — the same property as an upload. What the server does is what it can honestly do:
+ * check the bytes are a well-formed envelope, check the named key belongs to this practice and is live,
+ * write them somewhere new, and move the row.
+ *
+ * **It cannot check the plaintext is the same document**, because that would need the private key. What
+ * stands in place of that check is on the browser side, which verifies the round trip before posting; this
+ * route's job is to refuse anything that is not an envelope, so a broken re-encryption cannot overwrite a
+ * good file with rubbish.
+ */
+async function reencryptFile({ db, request, response, practitioner, practiceId, params, maxUploadBytes }) {
+  if (!requireSignIn({ practitioner, response })) return;
+
+  const type = String(request.headers['content-type'] ?? '');
+  if (!type.startsWith('application/octet-stream')) {
+    return fail(response, 415, "This route takes the new envelope as raw bytes, which needs the page's own script.");
+  }
+
+  const body = await readBody(request, maxUploadBytes);
+  if (body.length === 0) return fail(response, 400, 'That upload was empty. Nothing was replaced.');
+
+  const envelope = readEnvelope(body);
+  if (!envelope.ok) {
+    return fail(
+      response,
+      400,
+      `Only an encrypted file can replace an encrypted file, and that one is not one (${envelope.reason}). Nothing was replaced.`,
+    );
+  }
+
+  const keyId = String(request.headers['x-key-id'] ?? '');
+  if (!keyId) return fail(response, 400, 'The new key has to be named, or there is no record of what opens the file now.');
+
+  const existing = db
+    .prepare(
+      `SELECT u.id, u.storage_path FROM upload u
+         JOIN request_item i ON i.id = u.request_item_id
+         JOIN request r ON r.id = i.request_id
+        WHERE u.id = ? AND r.practice_id = ?`,
+    )
+    .get(params[0], practiceId);
+  if (!existing) return fail(response, 404, 'There is no file with that id.', practitioner);
+
+  // Written under a name of its own, so the file the row currently points at is untouched until the row
+  // moves. See the note on `replaceUpload` for why that order is the one that cannot lose a document.
+  const storagePath = join(dirname(existing.storage_path), `${newId()}.bin`);
+  await writeFile(storagePath, body);
+
+  const replaced = replaceUpload(db, practiceId, {
+    uploadId: existing.id,
+    keyId,
+    storagePath,
+    sizeBytes: body.length,
+    sha256: createHash('sha256').update(body).digest('hex'),
+  });
+
+  if (!replaced.ok) {
+    // The new bytes are referenced by nothing, so they go rather than becoming an orphan. A failure to
+    // remove them is not worth reporting: the document is intact either way.
+    await unlink(storagePath).catch(() => {});
+    const why = {
+      'not-found': 'There is no file with that id.',
+      'no-such-key': "That key is not one of this practice's, or it has been retired.",
+      already: 'That file is already sealed to that key, so there was nothing to do.',
+    }[replaced.why] ?? 'That file could not be re-encrypted.';
+    return fail(response, 400, why, practitioner);
+  }
+
+  // The old bytes go last: the row has moved, so nothing reads them now. A failure here leaves an orphan,
+  // which is untidy and harmless — removing them before the row moved would not be.
+  await unlink(replaced.previousPath).catch(() => {});
+
+  return sendJson(response, 200, { ok: true, id: existing.id, filename: replaced.filename, keyId });
+}
+
+/**
+ * Retire a key: its wrapped copies are destroyed and the row stays as a record.
+ *
+ * The page asks for a typed word rather than offering a button, because the consequence is not obvious and
+ * is not reversible: a retired key cannot open the files it once opened, **including any copy of those
+ * files the practice has kept elsewhere**. A backup of the data directory taken before the pass is a set of
+ * envelopes nothing can open afterwards. That sentence belongs on the page, and the typing is what makes a
+ * person read it.
+ */
+async function retireKey({ db, request, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+
+  const fields = formFields(await readBody(request));
+  if (field(fields, 'confirm') !== 'retire') {
+    return fail(
+      response,
+      400,
+      'That key was not retired. The word has to be typed, because retiring it cannot be undone.',
+      practitioner,
+    );
+  }
+
+  const result = retirePracticeKey(db, practiceId, params[0]);
+  if (!result.ok) {
+    const why = {
+      'not-found': 'There is no such key in this practice.',
+      current: 'That is the current key — new files are sealed to it, so it cannot be retired.',
+      already: 'That key has already been retired.',
+      'holds-files': `That key still opens ${result.held} ${result.held === 1 ? 'file' : 'files'}. Move ${
+        result.held === 1 ? 'it' : 'them'
+      } to a newer key first, or the file cannot be read again.`,
+    }[result.why] ?? 'That key could not be retired.';
+    return fail(response, 400, why, practitioner);
+  }
+
+  return redirect(response, `/keys?retired=${encodeURIComponent(params[0])}`);
+}
+
+/**
+ * The no-JavaScript answer to the move button.
+ *
+ * Re-sealing a stored document needs the private key, and the private key only ever exists in the browser.
+ * There is no server-side version of this to fall back to, so a browser without the script gets a sentence
+ * saying that rather than a 404 — or, worse, a button that looks like it worked.
+ */
+function moveWithoutScript({ response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  return fail(
+    response,
+    415,
+    "Moving files needs the page's own script, because the key never leaves the browser. Nothing was changed.",
+    practitioner,
+  );
+}
+
 async function closeRequestPage({ db, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const closed = closeRequest(db, practiceId, params[0]);
@@ -2216,39 +2387,78 @@ async function renamePracticePage({ db, request, response, practitioner, practic
   return redirect(response, '/members');
 }
 
-function keysPage({ db, response, practitioner, practiceId }) {
+function keysPage({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
-  const keys = practiceKeys(db, practiceId, practitioner.id);
+  const every = allPracticeKeys(db, practiceId, practitioner.id);
+  const live = every.filter((key) => key.deletedAt === null);
+  const retired = every.filter((key) => key.deletedAt !== null);
   const counts = filesPerKey(db, practiceId);
   const unaccounted = counts.get(null) ?? 0;
+  const current = live[0] ?? null;
+  const justRetired = url.searchParams.get('retired');
 
-  const rows = keys.map((key, index) => html`<tr>
+  /**
+   * A key that has been retired is history, not a control.
+   *
+   * Its wrapped copies are gone, so there is no passphrase form, nothing to move and nothing to do — and
+   * showing a control that cannot work is the same mistake as a Send button with no mail server. What it
+   * keeps is the date it was made and the date it stopped opening anything, which is the record deleting
+   * the row would have thrown away.
+   */
+  const retiredRows = retired.map((key) => html`<tr>
     <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
-    <td>${index === 0
-      ? html`<strong>current</strong> — new files are encrypted to this one`
-      : 'older — opens the files sent while it was current'}</td>
-    <td>${counts.get(key.id) ?? 0}</td>
-    <td>
-      <form class="passphrase" data-key-id="${key.id}" method="post" action="/keys/${key.id}/passphrase">
-        <input type="password" name="old" placeholder="current passphrase" required autocomplete="current-password">
-        <input type="password" name="fresh" placeholder="new passphrase" required autocomplete="new-password">
-        <input type="password" name="again" placeholder="the new one again" required autocomplete="new-password">
-        <button type="submit">Change the passphrase</button>
-        <span class="status note"></span>
-      </form>
-    </td>
+    <td>retired ${(key.deletedAt ?? '').slice(0, 10)} — its copies were destroyed, so it opens nothing</td>
   </tr>`);
+
+  const rows = live.map((key) => {
+    const holds = counts.get(key.id) ?? 0;
+    return html`<tr>
+      <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
+      <td>${key === current
+        ? html`<strong>current</strong> — new files are encrypted to this one`
+        : 'older — opens the files sent while it was current'}</td>
+      <td>${holds}</td>
+      <td>
+        <form class="passphrase" data-key-id="${key.id}" method="post" action="/keys/${key.id}/passphrase">
+          <input type="password" name="old" placeholder="current passphrase" required autocomplete="current-password">
+          <input type="password" name="fresh" placeholder="new passphrase" required autocomplete="new-password">
+          <input type="password" name="again" placeholder="the new one again" required autocomplete="new-password">
+          <button type="submit">Change the passphrase</button>
+          <span class="status note"></span>
+        </form>
+        ${key === current || holds === 0
+          ? ''
+          : html`<form class="reencrypt" data-key-id="${key.id}" method="post" action="/keys/${key.id}/move">
+              <input type="password" name="passphrase" placeholder="this key's passphrase" required autocomplete="current-password">
+              <input type="password" name="current_passphrase" placeholder="the current key's passphrase, if it differs" autocomplete="current-password">
+              <button type="submit">Move ${holds} ${holds === 1 ? 'file' : 'files'} to the current key</button>
+              <span class="status note"></span>
+              <progress value="0" max="${holds}"></progress>
+            </form>`}
+        ${key === current || holds > 0
+          ? ''
+          : html`<form method="post" action="/keys/${key.id}/retire">
+              <input type="text" name="confirm" placeholder="type: retire" required autocomplete="off">
+              <button type="submit">Retire this key</button>
+            </form>`}
+      </td>
+    </tr>`;
+  });
 
   return sendPage(response, 200, page({
     title: 'Keys',
     practitioner,
-    banner: keys.length === 0
+    banner: live.length === 0
       ? html`<p class="warning">This practice has no key yet, so it cannot be sent files.
           <a href="/setup">Make one</a>.</p>`
-      : null,
+      : justRetired
+        ? html`<p class="success"><strong>Retired.</strong> Its wrapped copies have been destroyed, so it
+            cannot open anything. The record of it stays below — and any copy of a file sealed to it that
+            you kept or backed up cannot be opened any more.</p>`
+        : null,
     body: html`
       <h1>Keys</h1>
-      ${keys.length === 0
+      ${live.length === 0
         ? ''
         : html`<table>
             <thead><tr><th align="left">Made</th><th align="left">What it is for</th><th align="left">Files</th><th align="left">Passphrase</th></tr></thead>
@@ -2258,20 +2468,42 @@ function keysPage({ db, response, practitioner, practiceId }) {
         ? html`<p class="note">${unaccounted} file${unaccounted === 1 ? '' : 's'} arrived before Tickmark
             recorded which key was used, so which key opens ${unaccounted === 1 ? 'it' : 'them'} is not written
             down anywhere. Nothing is lost — the key that opens a file is whichever one decrypts it — but it
-            means those files are not counted in the column above, and a pass that moved files to a new key
-            would have to try each key against them rather than trust a number.</p>`
+            means those files are not counted in the column above, and <strong>moving files to a new key
+            cannot touch them</strong>, because the pass works from that count.</p>`
         : ''}
-      <p class="note"><strong>A key cannot be deleted, and this is why.</strong> An old key exists to open
-      the files that were sent while it was current, and there is no way to move a file to a new key without
-      the old one — so the column above is what a practice would have to empty first. Moving files to a new
-      key is not built, and <code>docs/encryption.md</code> records it as the last thing missing here.</p>
+      <p class="note"><strong>Moving files to a new key is what makes an old key retirable.</strong> This
+      browser fetches each file, opens it with the old key's passphrase, seals it to the current key, and
+      checks the round trip before anything is replaced — the server only ever handles bytes it cannot read.
+      If you close this page halfway through, nothing is lost: a file that has been moved is no longer sealed
+      to the old key, so the count above <em>is</em> the progress, and pressing the button again carries on
+      from where it stopped.</p>
+      <p class="note"><strong>Retiring a key cannot be undone, and it reaches further than this server.</strong>
+      It destroys the practice's copies, so the files here are fine once they have been moved — but
+      <em>any copy of a file still on the old key that you have kept or backed up</em> becomes unopenable,
+      because the key that opened it will not exist. Move everything first, then retire.</p>
       <p><a href="/setup">Make a new key</a> — for files that arrive from now on. The ones you have
       keep working.</p>
       <p class="note">Changing a passphrase does not change the key, so nothing has to be
       re-encrypted and no file becomes unopenable. Store the new one somewhere that is not this
       server: a copy of a key without its passphrase is a file nobody can open.</p>
-      ${keys.length > 0 ? jsonTag('key-records', { keys: keys.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey })) }) : ''}
-      ${keys.length > 0 ? raw('<script type="module" src="/assets/keys.js"></script>') : ''}`,
+      ${retired.length > 0
+        ? html`<h2>Retired keys</h2>
+            <table><thead><tr><th align="left">Made</th><th align="left">What became of it</th></tr></thead>
+            <tbody>${retiredRows}</tbody></table>
+            <p class="note">Kept as a record rather than deleted: a key that vanished would take with it the
+            only evidence of what it opened.</p>`
+        : ''}
+      ${live.length > 0
+        ? jsonTag('key-records', {
+            currentKeyId: current?.id ?? null,
+            currentPublicKey: current?.publicKey ?? null,
+            keys: live.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey, publicKey: key.publicKey })),
+          })
+        : ''}
+      ${live.length > 0 ? raw('<script type="module" src="/assets/keys.js"></script>') : ''}
+      ${live.length > 1 && (counts.get(live[1].id) ?? 0) > 0
+        ? raw('<script type="module" src="/assets/reencrypt.js"></script>')
+        : ''}`,
   }));
 }
 

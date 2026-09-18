@@ -284,21 +284,128 @@ export function filesPerKey(db, practiceId) {
 }
 
 /**
+ * Retire a key: destroy its wrapped copies, and keep the record that it existed.
+ *
+ * "Delete" would be the wrong word and a worse operation. This project's rule is that a record must not
+ * lose a row — a withdrawn item still says it was once asked for, a closed request still exists — and a
+ * key that vanishes takes with it the only evidence of what it opened. So the wrapped copies go, which is
+ * what actually matters, and the row stays as a tombstone: the public key, the date it was made, the date
+ * it was retired. The keys page then reads as a history rather than as a snapshot.
+ *
+ * Three refusals, all of them load-bearing:
+ *
+ * - **The current key cannot be retired.** New files are sealed to it, so a practice without it cannot
+ *   receive anything.
+ * - **A key holding files cannot be retired.** That is the whole reason re-encryption exists; refusing
+ *   here is what stops the promise "no file becomes unopenable" from depending on the practice's memory.
+ * - **A key already retired cannot be retired again**, so the date means what it says.
+ *
+ * Returns `{ ok: false, why }` rather than throwing: the caller is a page that has to say which of those
+ * three applies, and the sentence differs each time.
+ */
+export function retirePracticeKey(db, practiceId, keyId, at = now()) {
+  return inTransaction(db, () => {
+    const key = db
+      .prepare('SELECT id, deleted_at FROM practice_key WHERE id = ? AND practice_id = ?')
+      .get(keyId, practiceId);
+    if (!key) return { ok: false, why: 'not-found' };
+    if (key.deleted_at) return { ok: false, why: 'already' };
+
+    const current = db
+      .prepare(`SELECT id FROM practice_key WHERE practice_id = ? AND deleted_at IS NULL
+                 ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+      .get(practiceId);
+    if (!current || current.id === keyId) return { ok: false, why: 'current' };
+
+    const held = db.prepare('SELECT COUNT(*) AS n FROM upload WHERE key_id = ?').get(keyId).n;
+    if (held > 0) return { ok: false, why: 'holds-files', held };
+
+    // The material goes first. If this succeeded and the row update failed, the key would be unusable but
+    // not marked retired, which is the safe direction to be wrong in — the opposite order could leave a
+    // wrapped private key in the database under a row that says the key was destroyed.
+    const copies = db.prepare('DELETE FROM key_wrapping WHERE key_id = ?').run(keyId).changes;
+    db.prepare('UPDATE practice_key SET deleted_at = ? WHERE id = ?').run(at, keyId);
+    return { ok: true, copies, at };
+  });
+}
+
+/**
  * Every envelope sealed to a key, for a re-encryption pass to work through.
  *
  * `key_id IS NULL` is not included: those files are not known to be sealed to this key, and a pass that
  * guessed would be a pass that silently re-sealed something twice from the wrong key. The pass tries
  * each key against them separately, because only the AES-GCM tag can say which key opens a file.
  */
-export function uploadsSealedTo(db, keyId) {
+export function uploadsSealedTo(db, keyId, practiceId = null) {
   return db
     .prepare(
-      `SELECT u.id, u.storage_path, u.filename, u.request_item_id
+      `SELECT u.id, u.storage_path, u.filename, u.request_item_id, r.id AS request_id
          FROM upload u
-        WHERE u.key_id = ?
+         JOIN request_item i ON i.id = u.request_item_id
+         JOIN request r ON r.id = i.request_id
+        WHERE u.key_id = ? ${practiceId ? 'AND r.practice_id = ?' : ''}
         ORDER BY u.uploaded_at, u.id`,
     )
-    .all(keyId);
+    .all(...(practiceId ? [keyId, practiceId] : [keyId]));
+}
+
+/**
+ * Swap an upload's stored bytes for a new envelope, and record which key now opens it.
+ *
+ * This is the one operation in the product that rewrites a stored document, so the order matters more than
+ * anywhere else here:
+ *
+ * 1. **The new bytes are written to a path of their own** — never over the file the row currently points
+ *    at. Writing in place would mean a crash between the write and the row update leaves a row describing
+ *    bytes it does not have: a document nobody can open, and a record that says it is fine.
+ * 2. **The row moves in a transaction**, so the path, the size, the digest and the key it is sealed to
+ *    change together or not at all.
+ * 3. **The old file is unlinked by the caller**, once the row no longer points at it.
+ *
+ * A crash between 1 and 2 leaves an unreferenced file and a perfectly good document — the safe direction.
+ * The cost is that an interrupted pass can leave an orphan in the blob directory, which is worth knowing
+ * and is not worth a cleanup mechanism for a case this rare.
+ *
+ * The key must belong to the practice that owns the file, and must be a *different* key from the one
+ * already recorded. Re-sealing to the same key is not a change, and accepting it would let a caller mark a
+ * file as moved without moving it.
+ */
+export function replaceUpload(db, practiceId, { uploadId, keyId, storagePath, sizeBytes, sha256, at = now() }) {
+  return inTransaction(db, () => {
+    const row = db
+      .prepare(
+        `SELECT u.id, u.filename, u.storage_path, u.key_id, r.id AS request_id
+           FROM upload u
+           JOIN request_item i ON i.id = u.request_item_id
+           JOIN request r ON r.id = i.request_id
+          WHERE u.id = ? AND r.practice_id = ?`,
+      )
+      .get(uploadId, practiceId);
+    if (!row) return { ok: false, why: 'not-found' };
+
+    const key = db
+      .prepare('SELECT id FROM practice_key WHERE id = ? AND practice_id = ? AND deleted_at IS NULL')
+      .get(keyId, practiceId);
+    if (!key) return { ok: false, why: 'no-such-key' };
+    if (row.key_id === keyId) return { ok: false, why: 'already' };
+
+    db.prepare('UPDATE upload SET storage_path = ?, size_bytes = ?, sha256 = ?, key_id = ? WHERE id = ?').run(
+      storagePath,
+      sizeBytes,
+      sha256,
+      keyId,
+      uploadId,
+    );
+
+    recordEvent(db, {
+      requestId: row.request_id,
+      kind: 'upload.re-encrypted',
+      detail: `${row.filename} — moved to a newer key`,
+      at,
+    });
+
+    return { ok: true, filename: row.filename, previousPath: row.storage_path, requestId: row.request_id };
+  });
 }
 
 /**
@@ -431,11 +538,26 @@ export function membersOf(db, practiceId) {
  * invited has a copy of a key they did not create, and a member who has never been sent a copy of the
  * newest key sees the key without one — which is a state worth being able to see rather than hiding,
  * because it means they cannot open anything encrypted to it.
+ *
+ * **Retired keys are not here.** This is the list of keys a practice can use: to decrypt with, to
+ * re-seal to, to change a passphrase on. A retired key can do none of those, and including it would mean
+ * every caller filtering it out separately. The keys page asks a different question and calls
+ * `allPracticeKeys` for it.
  */
 export function practiceKeys(db, practiceId, practitionerId) {
+  return allPracticeKeys(db, practiceId, practitionerId).filter((key) => key.deletedAt === null);
+}
+
+/**
+ * Every key a practice has ever had, retired ones included, which is what the keys page needs.
+ *
+ * A retired key comes back with no wrapped copy — because there is none, there is nothing left to unwrap —
+ * and with the date it was retired. That is the whole point of keeping the row.
+ */
+export function allPracticeKeys(db, practiceId, practitionerId) {
   return db
     .prepare(
-      `SELECT k.id, k.public_key, k.created_at, w.wrapped_private_key
+      `SELECT k.id, k.public_key, k.created_at, k.deleted_at, w.wrapped_private_key
          FROM practice_key k
          LEFT JOIN key_wrapping w ON w.key_id = k.id AND w.practitioner_id = ?
         WHERE k.practice_id = ?
@@ -447,6 +569,7 @@ export function practiceKeys(db, practiceId, practitionerId) {
       publicKey: JSON.parse(row.public_key),
       wrappedPrivateKey: row.wrapped_private_key ?? null,
       createdAt: row.created_at,
+      deletedAt: row.deleted_at ?? null,
     }));
 }
 

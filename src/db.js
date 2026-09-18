@@ -70,7 +70,14 @@ CREATE TABLE IF NOT EXISTS practice_key (
   public_key          TEXT NOT NULL,
   wrapped_private_key TEXT NOT NULL,
   created_at          TEXT NOT NULL,
-  practice_id         TEXT REFERENCES practice(id)
+  practice_id         TEXT REFERENCES practice(id),
+  -- Set when the key is retired: its wrapped copies are destroyed, so it can open nothing, and the row
+  -- stays as a tombstone rather than vanishing. A key that disappeared would take with it the only
+  -- evidence of what it opened, and this project's rule is that a record does not lose a row.
+  --
+  -- Nullable, and null means "live": every key written before this column existed is live, which is the
+  -- only honest reading — those keys were in use, and no file has been moved off them.
+  deleted_at          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS key_wrapping (
@@ -322,6 +329,7 @@ function migrate(db) {
     ['request_item', 'client_says_at', 'TEXT'],
     ['practitioner', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['practice_key', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['practice_key', 'deleted_at', 'TEXT'],
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['upload', 'key_id', 'TEXT REFERENCES practice_key(id)'],

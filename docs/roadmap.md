@@ -15,7 +15,7 @@ Phase 1   Version one                  COMPLETE
 Phase 2   Make it usable in the field
           2a email sending             COMPLETE
           2b several people per practice COMPLETE — A, B and C, invitation included
-          2c re-encrypting old files      IN PROGRESS — the record is built; the move is not
+          2c re-encrypting old files      COMPLETE — and a key can now be retired
           2d other install paths          NOT PLANNED
           2e the states the trade asks for COMPLETE — see docs/product-needs.md
           2f chase everyone at once     COMPLETE — 2c is the last item open
@@ -272,7 +272,7 @@ because that is where it matters most.
 
 ### 2c. Re-encrypting old files, so a key can be deleted
 
-**Status: in progress — the record is built, the move is not.**
+**Status: complete.**
 
 The reason there is no delete button is that an old key exists to open the files that were sent while it
 was current, and a file cannot be moved to a new key without the old one. The first thing that needed to
@@ -295,11 +295,35 @@ every key forever and hope.
 - **The keys page counts them.** Each key shows how many files it holds, and any file whose key is not
   recorded is called out in a sentence rather than folded into whichever key happens to be current.
 
-**Not built, and it is the whole remaining item:** a pass that opens each envelope with an old key and
-seals it again to the current one. It needs the old passphrase, a walk over the stored files, and a way to
-resume if the browser is closed halfway through — a project rather than a patch. Two things are true until
-it exists and both are stated on the page a practice reads: **old keys stay**, and those files cannot be
-counted against a key because nothing wrote down which one sealed them.
+**The move, and what makes it safe to run.** The pass lives in the browser, because the private key only ever
+exists there: `GET /keys/<id>/pending` lists what is still sealed to a key, the page fetches each file,
+opens it with the old key, seals it to the current one, and posts the result to
+`POST /files/<id>/reencrypt`. The server checks the bytes are an envelope, checks the named key belongs to
+this practice and is live, writes them to a **path of their own**, moves the row in a transaction, and only
+then unlinks the old file. That order is the whole design: a crash between the write and the row update
+leaves an unreferenced file and a perfectly good document, which is the safe direction to be wrong in.
+
+**Resumption needs no mechanism.** A file that has been moved is no longer sealed to the old key, so it stops
+appearing in the pending list — the count on the keys page *is* the progress. Closing the tab halfway
+through loses nothing, and pressing the button again carries on from wherever the data got to. No progress
+table, no cursor to fall out of step with the files.
+
+**The round trip is checked, and that check needs two keys.** Before anything is replaced, the new envelope
+is opened again and compared with the original plaintext. That requires the *current* key's private half as
+well as the old one, which is not what the first version of this did — it opened a new-key envelope with an
+old-key private key, so the check failed on every file and the pass could never have completed. The form now
+takes the current key's passphrase as a second field, needed only when it differs, and the test that caught
+this was written before the feature was ever run.
+
+**Retiring a key destroys its copies and keeps the record.** Not a row deletion: `key_wrapping` rows go,
+which is what makes the key open nothing, and the row stays with a `deleted_at` date. A key that vanished
+would take with it the only evidence of what it opened, and this project's rule is that a record does not
+lose a row. Three refusals: the current key (new files are sealed to it), a key that still holds files (that
+is what the move is for), and a key already retired (so the date means something).
+
+**The sentence the page has to say**, because it reaches further than the server: retiring a key cannot be
+undone, and *any copy of an unmoved file held or backed up elsewhere* becomes unopenable, because the key
+that opened it no longer exists. Hence the word has to be typed rather than a button pressed.
 
 ### 2d. Packaging beyond Docker
 
