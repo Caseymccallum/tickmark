@@ -8,6 +8,9 @@
  */
 import { newId, now } from './db.js';
 import { hashToken } from './crypto.js';
+// For `endAllSessions`, which lives beside the rest of the session SQL. Removing a member ends their
+// sessions, and a session that outlives the membership is a signed-in stranger.
+import { endAllSessions } from './auth.js';
 
 /** Run `fn` in a transaction, rolling back on any throw. */
 export function inTransaction(db, fn) {
@@ -77,6 +80,13 @@ export function inviteByToken(db, token, at = new Date()) {
  * The invitation is re-checked inside the transaction. A check before it would leave a window where two
  * requests could both see an open invitation and both accept it — the same reason a used link is a
  * state and not a deletion.
+ *
+ * **A removed member of this practice comes back through here.** Their row already exists — a removal
+ * keeps it, because the history of who did what points at it — and the email column is `UNIQUE`, so
+ * without this path somebody who left could never be invited again at all. Restoring the row rather than
+ * inserting a second one keeps every request, file and key they ever touched pointing at the same
+ * person, which is the whole reason the row was kept. Their sessions do not come back, and their new
+ * key copy is the one the invitation carries.
  */
 export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey, at = now() }) {
   return inTransaction(db, () => {
@@ -84,21 +94,26 @@ export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey,
     if (found.state !== 'open') return { state: found.state };
 
     const { invite } = found;
-    const practitionerId = createPractitioner(db, {
-      practiceId: invite.practice_id,
-      email,
-      passwordHash,
-      at,
-    });
-    addKeyWrapping(db, {
-      keyId: invite.key_id,
-      practitionerId,
-      wrappedPrivateKey,
-      at,
-    });
+    const existing = practitionerByEmail(db, email);
+    if (existing && !(existing.removed_at !== null && existing.practice_id === invite.practice_id)) {
+      return { state: 'email-taken' };
+    }
+
+    const practitionerId = existing
+      ? existing.id
+      : createPractitioner(db, { practiceId: invite.practice_id, email, passwordHash, at });
+
+    if (existing) {
+      // Back, with a new password and no memory of the removal date. Losing that date is a named limit
+      // rather than an oversight: a membership history would need its own table, and docs/members.md
+      // says so rather than this half-building one.
+      db.prepare('UPDATE practitioner SET password_hash = ?, removed_at = NULL WHERE id = ?').run(passwordHash, practitionerId);
+    }
+
+    addKeyWrapping(db, { keyId: invite.key_id, practitionerId, wrappedPrivateKey, at });
     db.prepare('UPDATE invite SET used_at = ?, used_by = ? WHERE id = ?').run(at, practitionerId, invite.id);
 
-    return { state: 'joined', practitionerId, practiceId: invite.practice_id };
+    return { state: existing ? 'rejoined' : 'joined', practitionerId, practiceId: invite.practice_id };
   });
 }
 
@@ -494,7 +509,7 @@ export function history(db, requestId) {
 
 export function practitionerByEmail(db, email) {
   return db
-    .prepare('SELECT id, email, password_hash, practice_id FROM practitioner WHERE email = ?')
+    .prepare('SELECT id, email, password_hash, practice_id, removed_at FROM practitioner WHERE email = ?')
     .get(email);
 }
 
@@ -522,13 +537,81 @@ export function renamePractice(db, practiceId, name) {
 /**
  * Everyone in a practice, oldest first, so the person who created it is first.
  *
+ * **Removed members are not here.** They are still rows — the history of who did what points at them —
+ * but they are not people the firm works with, and listing them beside current members would make a
+ * table that answers two questions at once. `removedMembersOf` is the other question.
+ *
  * `password_hash` is deliberately not selected: nothing that displays a member list needs it, and a
  * function that returns secrets is a function that will one day print them.
  */
 export function membersOf(db, practiceId) {
   return db
-    .prepare('SELECT id, email, created_at FROM practitioner WHERE practice_id = ? ORDER BY created_at, id')
+    .prepare(
+      'SELECT id, email, created_at FROM practitioner WHERE practice_id = ? AND removed_at IS NULL ORDER BY created_at, id',
+    )
     .all(practiceId);
+}
+
+/** People who were removed from this practice, most recently removed first. For the members page. */
+export function removedMembersOf(db, practiceId) {
+  return db
+    .prepare(
+      `SELECT id, email, created_at, removed_at FROM practitioner
+        WHERE practice_id = ? AND removed_at IS NOT NULL
+        ORDER BY removed_at DESC, id`,
+    )
+    .all(practiceId);
+}
+
+/**
+ * One person, if they are in this practice — checked so that a removal addressed to somebody else's
+ * member is a "no such member" rather than an act.
+ */
+export function memberIn(db, practiceId, practitionerId) {
+  return (
+    db
+      .prepare('SELECT id, email, created_at, removed_at FROM practitioner WHERE id = ? AND practice_id = ?')
+      .get(practitionerId, practiceId) ?? null
+  );
+}
+
+/**
+ * Remove a member.
+ *
+ * Three writes, and the order matters less than the fact that all three happen together: their key
+ * copies go, their sessions go, and the row is marked. What that achieves is exactly this much — **it
+ * changes what happens next.** `docs/members.md` and `docs/encryption.md` both say the same thing in
+ * different places, and the page that calls this says it too, because a firm that believes this is
+ * revocation of the past has been told something false by the software.
+ *
+ * The row is **not deleted**. Every client, request, upload and key records which practitioner made it,
+ * so a deletion would leave history pointing at nobody — and an invitation restores this same row, which
+ * is how somebody who left is able to come back.
+ *
+ * Two refusals, both returned as states rather than thrown:
+ *
+ * - **Not a current member of this practice** (`not-found`, or `already-removed` for a second attempt at
+ *   the same person).
+ * - **The last member** (`last-member`). A practice with nobody in it is a firm locked out of its own
+ *   records: no one could be invited to it, and nothing could ever open its files.
+ */
+export function removeMember(db, practiceId, practitionerId, { at = now() } = {}) {
+  return inTransaction(db, () => {
+    const member = memberIn(db, practiceId, practitionerId);
+    if (!member) return { state: 'not-found' };
+    if (member.removed_at !== null) return { state: 'already-removed' };
+
+    const others = db
+      .prepare('SELECT COUNT(*) AS n FROM practitioner WHERE practice_id = ? AND removed_at IS NULL AND id <> ?')
+      .get(practiceId, practitionerId).n;
+    if (others === 0) return { state: 'last-member' };
+
+    const copies = db.prepare('DELETE FROM key_wrapping WHERE practitioner_id = ?').run(practitionerId).changes;
+    const sessions = endAllSessions(db, practitionerId);
+    db.prepare('UPDATE practitioner SET removed_at = ? WHERE id = ?').run(at, practitionerId);
+
+    return { state: 'removed', email: member.email, copies, sessions };
+  });
 }
 
 /**

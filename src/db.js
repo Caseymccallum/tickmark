@@ -46,7 +46,16 @@ CREATE TABLE IF NOT EXISTS practitioner (
   -- The practice this person belongs to. Nullable *here* and enforced in stage B: SQLite cannot add a
   -- NOT NULL column to a table that already has rows, so the migration below creates the practices
   -- first and backfills. New rows always set it.
-  practice_id         TEXT REFERENCES practice(id)
+  practice_id         TEXT REFERENCES practice(id),
+  -- Set when a member is removed: their key copies and sessions are destroyed, they can no longer sign
+  -- in, and **the row stays**. It stays for two reasons, and both are the reason there is no row
+  -- deletion anywhere in this file: every client, request and key records who made it, so deleting the
+  -- person would orphan the history that says who did what; and an invitation can restore the same row,
+  -- which is how someone who left is able to come back.
+  --
+  -- Nullable, and null means "a member". A database written before this column existed has no removals,
+  -- which is the only honest reading of it.
+  removed_at          TEXT
 );
 
 -- A practice's keys, as a history rather than a single value.
@@ -333,6 +342,7 @@ function migrate(db) {
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['upload', 'key_id', 'TEXT REFERENCES practice_key(id)'],
+    ['practitioner', 'removed_at', 'TEXT'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }

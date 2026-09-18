@@ -44,13 +44,17 @@ export function sessionFor(db, token, at = new Date()) {
   if (typeof token !== 'string' || token.length === 0) return null;
   const row = db
     .prepare(
-      `SELECT s.id, s.expires_at, p.id AS practitioner_id, p.email, p.practice_id,
+      `SELECT s.id, s.expires_at, p.id AS practitioner_id, p.email, p.practice_id, p.removed_at,
               EXISTS (SELECT 1 FROM practice_key k WHERE k.practice_id = p.practice_id) AS has_key
          FROM session s JOIN practitioner p ON p.id = s.practitioner_id
         WHERE s.token_hash = ?`,
     )
     .get(hashToken(token));
   if (!row) return null;
+  // A second lock on the same door. Removing a member deletes their sessions, so a live session for a
+  // removed member should not exist — and if one somehow did, using it must still fail. The row is not
+  // deleted here either: it is the record of when that person stopped being a member.
+  if (row.removed_at !== null) return null;
   if (row.expires_at <= at.toISOString()) {
     db.prepare('DELETE FROM session WHERE id = ?').run(row.id);
     return null;
@@ -70,12 +74,22 @@ export function endSession(db, token) {
   db.prepare('DELETE FROM session WHERE token_hash = ?').run(hashToken(token));
 }
 
-// `endAllSessions` used to live here: `DELETE FROM session WHERE practitioner_id = ?`, described as
-// "the sign out everywhere that a passphrase change needs". It was called from nowhere, and the
-// description was wrong — a session is created by signing in with a password, so changing a passphrase
-// neither needs nor justifies ending one. Found while switching the tenant in stage B of
-// `docs/members.md`, and removed rather than left with an apologetic comment. Removing a member will
-// want exactly this function, and it is three lines to bring back when something calls it.
+/**
+ * Every session belonging to one person, gone. Returns how many.
+ *
+ * `endAllSessions` used to live here described as "the sign out everywhere that a passphrase change
+ * needs". It was called from nowhere and the description was wrong — a session is created by signing in
+ * with a password, so changing a passphrase neither needs nor justifies ending one. It was removed as
+ * dead code in stage B of `docs/members.md`, with a note saying that removing a member would want
+ * exactly this and that it was three lines to bring back.
+ *
+ * It did, and this is it. `removeMember` is the caller: a member who has been removed must not keep
+ * working in a tab they already have open, and a session that outlives the membership is a signed-in
+ * stranger.
+ */
+export function endAllSessions(db, practitionerId) {
+  return db.prepare('DELETE FROM session WHERE practitioner_id = ?').run(practitionerId).changes;
+}
 
 export function parseCookies(header) {
   const jar = {};

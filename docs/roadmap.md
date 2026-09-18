@@ -18,7 +18,8 @@ Phase 2   Make it usable in the field
           2c re-encrypting old files      COMPLETE — and a key can now be retired
           2d other install paths          NOT PLANNED
           2e the states the trade asks for COMPLETE — see docs/product-needs.md
-          2f chase everyone at once     COMPLETE — every item of Phases 1 and 2 is now built
+          2f chase everyone at once     COMPLETE
+          2g removing a member          COMPLETE — every item of Phases 1 and 2 is now built
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -259,10 +260,10 @@ so the mutation had to break the handler to see the database refuse it. The same
 client's plaintext guards, and the same conclusion: defence in depth is good, and it means a single
 mutation does not always tell you whether a test bites.
 
-**What is deliberately still missing:** removing a member. It is easy to half-build and dangerous to get
-wrong — the honest version needs the "no wrapped copy of the newest key" state to be visible and acted
-on, and it needs a decision about what happens to the sealed copies of a person who leaves. The state is
-visible today (the members page has the column); the act is not built, and `docs/members.md` records why.
+**Removing a member** — the last named gap, and it shipped in 2g below. It was held back because the
+honest version needed the "no wrapped copy of the newest key" state to be visible *and* a page that says
+what removal cannot do. `docs/members.md` records the decision and the three things about it a reader
+would not guess.
 
 **The practice can be renamed** (`POST /members/name`), because until that existed every practice was
 called `My practice` — a label nobody chose, on the page a new member sees first. Anyone in the practice
@@ -403,6 +404,49 @@ The one thing to watch when reading the code: the message a reminder contains is
 function, `messageFor`, used by both the single-request page and the run. Two implementations of "what
 does a reminder say" would be two things free to disagree, and the place the disagreement would show up
 is a client's inbox.
+
+### 2g. Removing a member
+
+**Status: complete.** The last named gap, and the one `docs/members.md` had held back for three passes
+because a button that looked like revocation of the past would have been worse than no button.
+
+Two routes — `GET /members/<id>/remove` asks, `POST` acts — and the page that asks is the feature rather
+than the plumbing. It states three things before anything happens: what will be destroyed (their copies
+of the keys, counted; their sessions, counted), **what it cannot do** (a key they kept still opens under
+their passphrase, and a document they downloaded is theirs), and the one that is easy to miss: if they
+are the last person holding a copy of the newest key, removing them leaves nobody able to open those
+files.
+
+Three details worth their own sentences:
+
+- **The row is not deleted.** Every client, request, upload and key records which practitioner made it, so
+  a deletion would leave the history pointing at nobody. The members page therefore shows current members
+  and a **Removed** list with dates.
+- **An invitation is the way back in**, and it had to be: `practitioner.email` is `UNIQUE`, so without
+  that path somebody who left could never be invited again. `claimInvite` restores the existing row — new
+  password, fresh copy of the key, removal cleared, **same practitioner id** — so history keeps pointing
+  at the same person. Their old sessions do not come back.
+- **Two rules overlap, and one is unreachable from a browser.** Self-removal is refused, and the store
+  also refuses removing the last member; the last member is always the person asking, so the first rule
+  always fires first. The store's rule is kept as the invariant that no practice ends up with nobody in
+  it, and `test/removal.test.js` says where each is exercised.
+
+**Five mutations were run against it**, each alone, each restored and verified in one process: dropping
+the `key_wrapping` deletion, dropping `endAllSessions`, dropping the removed-account check at sign-in,
+moving that check *before* the password check, and refusing every existing email in `claimInvite`. Each
+produced exactly its own failure. One of them was instructive: **deleting the sessions did not fail the
+"open session stops working" assertion**, because `sessionFor` refuses a removed member independently —
+defence in depth, and the same conclusion as 2b's key-id guard, which is that a single mutation does not
+always tell you whether a test bites.
+
+**And one environment finding, from the declared floor.** The migration test originally simulated an old
+database by dropping the column, which works on Node 26's SQLite 3.53.3 and **fails on Node 24's 3.49.1**
+with `error in table practitioner after drop column: incomplete input` — the column's comment lives
+inside the stored schema text, and rewriting that text trips older SQLite. Node 24 is the declared floor,
+so the test now writes the old table by hand, which is both portable and more faithful. The failure was
+also wearing a disguise: the throw skipped `close()`, the handle stayed open, and the `EPERM` from the
+cleanup was reported instead of the real error. **A `finally` that can fail can hide the exception it is
+cleaning up after**, which is worth knowing anywhere a test closes a handle and deletes a directory.
 
 ## Phase 3 — Find out if anyone wants it
 

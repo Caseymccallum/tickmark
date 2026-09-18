@@ -115,9 +115,10 @@ follows is the original ordering, kept because the reasons are the interesting p
   queue or retry.
 - **Multiple users per practice.** *Shipped in Phase 2b* — see `docs/members.md`. Version one was one
   login for one practice, which meant a shared password and a shared passphrase. Now each member has
-  their own login and their own passphrase and holds their own sealed copy of the practice's key, and an
-  invitation moves a copy of that key to them without the server ever seeing it. What is not part of it:
-  roles, permissions, and removing a member.
+  their own login and their own passphrase and holds their own sealed copy of the practice's key, an
+  invitation moves a copy of that key to them without the server ever seeing it, and a member can be
+  removed — which destroys their copies and ends their sessions while keeping the record of what they
+  did. What is still not part of it: roles and permissions.
 - **Decryption in the browser for download.** *Shipped.* The browser viewer came before the export
   tool turned out to be needed.
 - **Docker Compose as the only install path.** *Shipped and verified by running it.* A Helm chart, a

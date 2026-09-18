@@ -36,16 +36,16 @@ record that it existed;
 **inviting a second person into the practice**: each member gets their own login and their own
 passphrase, holds their own sealed copy of the practice's key, and can open documents that arrived
 before they did. The invitation carries the key sealed under a secret that travels in the part of a
-link a browser never sends to a server.
+link a browser never sends to a server; and **removing a member**, which destroys their copies of the
+key and ends their sessions, keeps the record of who did what, and says on the page that asks that it
+cannot take back a key they already have.
 
 `docs/product-needs.md` explains where the states came from: the research, with sources, on what
 practices actually lose time to. The short version is that the chase is not a collection problem —
 every portal collects — it is that "received" and "ready" are different things and most tools conflate
 them.
 
-What does not exist yet: **removing a member**, which is the state you can see on the members page
-but not yet an act — `docs/members.md` says what it would take and why the honest version has to come with
-a sentence about what it cannot do; **a reminder cadence**, because the run that chases everybody has no
+What does not exist yet: **a reminder cadence**, because the run that chases everybody has no
 memory of who it has already written to and pressing it twice writes twice — the chase list shows when
 each client was last reminded so that the decision is yours rather than a surprise, and
 `docs/product-needs.md` says why the threshold is a decision and not a default; and **files that arrived
@@ -124,8 +124,9 @@ Tickmark's answer is: **on your server, and nobody else.**
 - **several people in one practice**, each with their own login and their own passphrase,
   each holding their own sealed copy of the practice's key — so a second partner can be
   added mid-season and open the documents that arrived before they did. An invitation
-  carries a copy of that key without the server ever seeing it. There are no roles or
-  permissions, and removing a member is not built; see [docs/members.md](docs/members.md).
+  carries a copy of that key without the server ever seeing it, and **removing a member**
+  destroys their copies and ends their sessions without deleting the record of what they
+  did. There are no roles or permissions; see [docs/members.md](docs/members.md).
 
 ## What it will not do
 

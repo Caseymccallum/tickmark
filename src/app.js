@@ -89,6 +89,9 @@ import {
   uploadsSealedTo,
   replaceUpload,
   retirePracticeKey,
+  memberIn,
+  removeMember,
+  removedMembersOf,
 } from './store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -173,6 +176,9 @@ export const ROUTES = [
   ['GET', '/members', membersPage],
   ['POST', '/members/invite', createInvitePage],
   ['POST', '/members/name', renamePracticePage],
+  // Removal is two steps on purpose: a page that says what will happen (and what will not), then the act.
+  ['GET', /^\/members\/([^/]+)\/remove$/, removeMemberPage],
+  ['POST', /^\/members\/([^/]+)\/remove$/, removeMemberAction],
   ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
   ['GET', '/requests/new', newRequestForm],
@@ -454,6 +460,23 @@ async function signIn({ db, request, response }) {
     accepted = await verifyPassword(password, record.password_hash);
   } else {
     await spendTheSameTimeAsARealCheck(password);
+  }
+
+  // A removed member who gives the right password is told the truth, and one who gives the wrong one is
+  // told nothing. The order is the point: answering "that account was removed" before checking the
+  // password would let anyone test whether somebody ever worked at a given firm, which is a fact about
+  // that firm's staff rather than about the asker.
+  if (record && accepted && record.removed_at !== null) {
+    return sendPage(response, 403, page({
+      title: 'Sign in',
+      body: credentialsForm({
+        action: '/signin',
+        title: 'Sign in',
+        submit: 'Sign in',
+        error: `That account was removed from its practice on ${record.removed_at.slice(0, 10)}, so it cannot sign in. Your password is correct; the account is no longer a member. Somebody still in the practice can invite you back.`,
+        email: email ?? '',
+      }),
+    }));
   }
 
   // One message for both failures on purpose: the browser is not told which half was
@@ -2140,20 +2163,27 @@ async function saveKeys({ db, request, response, practitioner, practiceId }) {
  * returns a token rather than by a form post that returns a page — the secret has to stay in the page
  * that generated it, and a navigation would throw it away.
  */
-function membersPage({ db, response, practitioner, practiceId }) {
+function membersPage({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const members = membersOf(db, practiceId);
+  const removed = removedMembersOf(db, practiceId);
   const invites = invitesOf(db, practiceId);
   const keys = practiceKeys(db, practiceId, practitioner.id);
   const newest = keys[0] ?? null;
   const mine = newest?.wrappedPrivateKey ?? null;
   const holders = newest ? new Set(wrappingHoldersOf(db, newest.id)) : new Set();
   const practice = practiceFor(db, practiceId);
+  const justRemoved = url.searchParams.get('removed');
 
   return sendPage(response, 200, page({
     title: 'Members',
     practitioner,
+    banner: justRemoved
+      ? html`<p class="warning"><strong>${justRemoved} was removed.</strong> Their key copies are gone and
+          their sessions have ended, so they cannot sign in again. Anything they already downloaded is
+          still theirs — removal changes what happens next, not what has already happened.</p>`
+      : null,
     body: html`
       <h1>${practice.name}</h1>
       <p class="note">${members.length === 1 ? 'One person' : `${members.length} people`} in this practice.
@@ -2164,7 +2194,7 @@ function membersPage({ db, response, practitioner, practiceId }) {
         <button type="submit">Rename</button>
       </form>
       <table>
-        <thead><tr><th>Email</th><th>Joined</th><th>Can open the newest files?</th></tr></thead>
+        <thead><tr><th>Email</th><th>Joined</th><th>Can open the newest files?</th><th></th></tr></thead>
         <tbody>
           ${members.map((person) => html`<tr>
             <td>${person.email}${person.id === practitioner.id ? html` <span class="note">(you)</span>` : ''}</td>
@@ -2174,9 +2204,31 @@ function membersPage({ db, response, practitioner, practiceId }) {
                 ? html`yes`
                 : html`<span class="warning">no — they hold no copy of the newest key</span>`
               : html`<span class="note">this practice has no key yet</span>`}</td>
+            <td>${person.id === practitioner.id
+              ? html`<span class="note">you cannot remove yourself</span>`
+              : html`<a href="/members/${person.id}/remove">Remove</a>`}</td>
           </tr>`)}
         </tbody>
       </table>
+      <p class="note">Removing somebody ends their access from then on. It does not take back a key they
+        already have, and it does not change anything they have already downloaded — the page that asks
+        says so in full before it does anything.</p>
+
+      ${removed.length === 0
+        ? ''
+        : html`<h2>Removed</h2>
+            <p class="note">No longer members. Their names stay in the records, because the requests they
+              made and the files they uploaded say who did what. Someone still here can invite them back.</p>
+            <table>
+              <thead><tr><th>Email</th><th>Joined</th><th>Removed</th></tr></thead>
+              <tbody>
+                ${removed.map((person) => html`<tr>
+                  <td>${person.email}</td>
+                  <td>${person.created_at.slice(0, 10)}</td>
+                  <td>${person.removed_at.slice(0, 10)}</td>
+                </tr>`)}
+              </tbody>
+            </table>`}
 
       ${!newest
         ? html`<p class="note">This practice has no key, so there is nothing to invite anyone to.
@@ -2345,7 +2397,13 @@ async function acceptInvite({ db, request, response, params }) {
     return refuse('That did not arrive with a sealed copy of the key. If this page is open in an old tab, reload it from the link.');
   }
 
-  if (practitionerByEmail(db, email)) {
+  // An existing account is refused the invitation — unless it is a **removed member of this same
+  // practice**, in which case the invitation is their way back in. The email column is `UNIQUE`, so
+  // without this path somebody who left could never be invited again at all, and `claimInvite` restores
+  // their existing row rather than inserting a second one.
+  const existing = practitionerByEmail(db, email);
+  const comingBack = existing && existing.removed_at !== null && existing.practice_id === found.invite.practice_id;
+  if (existing && !comingBack) {
     return refuse('There is already an account for that email address. Sign in instead — an invitation is not needed to join a practice you are already in.');
   }
 
@@ -2357,7 +2415,10 @@ async function acceptInvite({ db, request, response, params }) {
     wrappedPrivateKey: wrapped,
   });
 
-  if (claimed.state !== 'joined') return invitePage({ db, response, params });
+  if (claimed.state === 'email-taken') {
+    return refuse('There is already an account for that email address. Sign in instead — an invitation is not needed to join a practice you are already in.');
+  }
+  if (claimed.state !== 'joined' && claimed.state !== 'rejoined') return invitePage({ db, response, params });
 
   const { token } = createSession(db, claimed.practitionerId);
   return redirect(response, '/requests', [sessionCookie(token)]);
@@ -2371,6 +2432,106 @@ async function acceptInvite({ db, request, response, params }) {
  * with one rule in it and no way to see the rest. When roles exist, this becomes one of the things a
  * role decides — and until then the members page does not pretend otherwise.
  */
+/**
+ * Removing a member: the page that asks, and the act.
+ *
+ * Two steps rather than a button in a table row, because this is the only destructive thing in the
+ * product that can be aimed at a person, and the page has more to say than a row can hold. Three things
+ * it says, and the third is the reason `docs/members.md` left this unbuilt for two passes:
+ *
+ * 1. **What it does.** Their copies of the practice's keys are destroyed and their sessions end.
+ * 2. **What it does not do.** If they had the key — and they did, or they could not have worked there —
+ *    then any copy of it they kept still opens under their passphrase, and any document they downloaded
+ *    is theirs. **Removal is a statement about the future.** A button that looked like revocation of the
+ *    past would be a lie the software told on the firm's behalf.
+ * 3. **The one thing that is easy to miss**: if they are the last person holding a copy of the newest
+ *    key, removing them leaves nobody able to open the files encrypted to it. It is allowed — removal
+ *    needs no key — but it is stated before the act rather than discovered afterwards.
+ *
+ * Anyone in the practice may remove anyone else, for the same reason anyone may rename it: there are no
+ * roles, and inventing a hidden owner-only rule here would be a permission system with one rule in it.
+ * You cannot remove yourself: the act is for somebody who has left, and the person who has left is the
+ * one nobody can act for.
+ *
+ * **Two rules overlap here, and the second is consequently unreachable from a browser.** Removing the last
+ * member is refused by the store, and removing yourself is refused by this handler — but the last member
+ * is always the person asking, so the self-removal rule always fires first, and the store's "last member"
+ * sentence can never appear on a page. It is kept anyway: it is the invariant that no practice ends up
+ * with nobody in it, and anything else calling the store gets it. `test/removal.test.js` says where each
+ * one is exercised, and says that the UI cannot reach the second.
+ */
+function removeMemberPage({ db, response, practitioner, practiceId, params, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const member = memberIn(db, practiceId, params[0]);
+  if (!member || member.removed_at !== null) {
+    return fail(response, 404, 'There is nobody in this practice at that address.', practitioner);
+  }
+
+  const newest = practiceKeys(db, practiceId, practitioner.id)[0] ?? null;
+  const holders = newest ? wrappingHoldersOf(db, newest.id) : [];
+  const others = holders.filter((id) => id !== member.id);
+  const copies = db
+    .prepare('SELECT COUNT(*) AS n FROM key_wrapping WHERE practitioner_id = ?')
+    .get(member.id).n;
+  const sessions = db.prepare('SELECT COUNT(*) AS n FROM session WHERE practitioner_id = ?').get(member.id).n;
+
+  const lastHolder = holders.includes(member.id) && others.length === 0;
+
+  return sendPage(response, 200, page({
+    title: `Remove ${member.email}`,
+    practitioner,
+    body: html`
+      <h1>Remove ${member.email}?</h1>
+      <p>They joined on ${member.created_at.slice(0, 10)}. Removing them
+        ${copies === 0
+          ? html`destroys no key copies, because they hold none`
+          : html`destroys their ${copies} ${copies === 1 ? 'copy' : 'copies'} of this practice's keys`}
+        and ends their ${sessions} ${sessions === 1 ? 'session' : 'sessions'}, so they cannot sign in
+        again and cannot open anything sent from now on.</p>
+
+      ${lastHolder
+        ? html`<p class="warning"><strong>They are the last person who can open the files encrypted to the
+            newest key.</strong> Remove them and nobody — including you — will be able to open those files
+            until somebody who does hold a copy invites someone. You can still do it; this is here so it is
+            not a surprise afterwards.</p>`
+        : ''}
+
+      <p class="warning"><strong>This does not take back what they already have.</strong> If they kept a
+        copy of a key, it still opens under their passphrase. Any document they downloaded is theirs and
+        stays theirs. Nothing can undo that — it is the same fact as the one on the keys page about
+        rotation, seen from the other side.</p>
+
+      <p>Their name stays in the records — the requests they made, the files they uploaded, the keys they
+        added. An invitation is how they would come back, and it would restore this same record rather
+        than make a new one.</p>
+
+      <form method="post" action="/members/${member.id}/remove">
+        <button type="submit">Remove ${member.email}</button>
+      </form>
+      <p><a href="/members">Cancel</a></p>`,
+  }));
+}
+
+function removeMemberAction({ db, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+
+  // Yourself is a request about your own membership rather than about somebody who has left. Refusing
+  // keeps the act's meaning intact, and the members page says why.
+  if (params[0] === practitioner.id) {
+    return fail(response, 400, 'You cannot remove yourself. Removal is for somebody who has left the practice; signing out ends your own session.', practitioner);
+  }
+
+  const result = removeMember(db, practiceId, params[0]);
+  if (result.state === 'not-found' || result.state === 'already-removed') {
+    return fail(response, 404, 'There is nobody in this practice at that address.', practitioner);
+  }
+  if (result.state === 'last-member') {
+    return fail(response, 400, 'That is the only person in this practice. A practice with nobody in it could never be signed in to again, so this is refused.', practitioner);
+  }
+
+  return redirect(response, `/members?removed=${encodeURIComponent(result.email)}`);
+}
+
 async function renamePracticePage({ db, request, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));

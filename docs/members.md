@@ -53,28 +53,45 @@ trivially true — and it is wrong for this product, for three reasons that are 
 - **A shared passphrase stops being necessary but does not become impossible.** Two members may still
   choose the same passphrase. Nothing here prevents that, and nothing here can.
 
-## Removing a member, which is not built
+## Removing a member
 
-**The state is visible; the act is not.** The members page has a column saying whether each person holds a
-copy of the newest key, so a member who cannot open recent files is a fact on a screen rather than a
-mystery. There is no button that removes anyone, and that is deliberate rather than unfinished.
+**Built, last of all, and the reason it waited is the third point below.** Removing somebody is a page that
+says what will happen and what will not, then the act:
 
-What it would need, written down so it is not improvised later:
-
-1. **Their sessions end.** Straightforward: delete the session rows. `endAllSessions` was removed as dead
-   code in stage B; this is the thing that would bring it back.
-2. **Their sealed copies go.** Delete the `key_wrapping` rows for them. This is what stops them signing in
-   later and opening anything new.
-3. **And none of it un-discloses anything.** If they had the key — and they did, or they could not have
+1. **Their sealed copies go.** The `key_wrapping` rows are deleted, so they cannot unwrap the key with their
+   passphrase any more.
+2. **Their sessions end.** `endAllSessions`, removed as dead code in stage B, came back exactly as that note
+   predicted — three lines, and this is its caller. A session that outlives the membership is a signed-in
+   stranger, and `sessionFor` refuses a removed member as a second lock on the same door.
+3. **And it does not un-disclose anything.** If they had the key — and they did, or they could not have
    worked there — then any copy of the wrapped record they kept still opens under their passphrase, and any
-   document they downloaded is theirs. Removing a member is a statement about the future. `docs/encryption.md`
-   already says the same thing about rotation, and it is the same fact seen twice.
+   document they downloaded is theirs. Removing a member is a statement about the future, and the page that
+   asks says so in those words rather than leaving the firm to discover it.
 4. **The honest answer for a firm that needs more than that** is a key per client, or a trust model this
-   format deliberately does not have — and the removal page should say so rather than implying a party the
-   software cannot deliver.
+   format deliberately does not have. The page says that too.
 
-The reason it is not built yet is the third point. A button that looked like revocation and was not would
-be worse than no button, so the decision to add one should come with the sentence that goes next to it.
+**The row is not deleted.** Every client, request, upload and key records which practitioner made it, so
+deleting the person would leave the history pointing at nobody. The members page therefore has two lists:
+current members, and a **Removed** section with the date each person stopped being a member.
+
+**An invitation is the way back in** — and it had to be, because `practitioner.email` is `UNIQUE`. Without
+that path somebody who left could never be invited again at all, and a removal that was supposed to be about
+the future would quietly be about the past. So `claimInvite` restores the existing row: a new password, a
+fresh copy of the key from the invitation, `removed_at` cleared, and **the same practitioner id**, so every
+request and file they ever touched still points at the same person. Their old sessions do not come back.
+
+### Three things this has that a reader would not guess
+
+- **You cannot remove yourself.** The act is for somebody who has left, and the person who has left is the
+  one nobody can act for. The members page shows the sentence in place of the link on your own row.
+- **The store also refuses the last member, and a browser cannot reach that refusal.** The only member is
+  necessarily the person asking, so the self-removal rule always fires first. It is kept because it is the
+  invariant that no practice ends up with nobody in it, and anything else calling the store gets it —
+  `test/removal.test.js` says where each rule is exercised, and that the UI cannot reach the second.
+- **A rejoining member loses the date they were removed.** `removed_at` is cleared, so the record shows they
+  are a member and not that they ever left. A membership history would need its own table; this is a named
+  limit rather than a half-built one, and it is written here because it is the kind of thing that would
+  otherwise be discovered by somebody looking for evidence that a person once left.
 
 **Built, in the order it had to be: the crypto and the storage first, then the pages.** The constraint:
 the new member's sealed copy must be produced by someone who has the key, and the server must never hold
