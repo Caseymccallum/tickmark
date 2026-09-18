@@ -226,15 +226,61 @@ export function issueToken(db, { requestId, tokenHash, expiresAt, at = now() }) 
  * id of its own would end up with two identifiers for one file — which is exactly the kind
  * of quiet mismatch that makes an operator's backup script wrong.
  */
-export function recordUpload(db, { id = newId(), requestId, requestItemId, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, at = now() }) {
+export function recordUpload(db, { id = newId(), requestId, requestItemId, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, keyId = null, at = now() }) {
   return inTransaction(db, () => {
     db.prepare(
-      `INSERT INTO upload (id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, requestItemId, filename, mime, sizeBytes, sha256, storagePath, clientNote, at);
+      `INSERT INTO upload (id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, key_id, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, requestItemId, filename, mime, sizeBytes, sha256, storagePath, clientNote, keyId, at);
     recordEvent(db, { requestId, kind: 'upload.received', detail: filename, at });
     return id;
   });
+}
+
+/**
+ * How many envelopes are sealed to each of a practice's keys.
+ *
+ * This is what makes rotating a key an honest operation rather than a hopeful one. An old key cannot be
+ * thrown away while anything is still sealed to it, and before this column existed there was no way to
+ * know whether that was true — the answer was "keep every key forever, and hope".
+ *
+ * Returned as a map keyed by key id, with `null` for the uploads that predate the column. The nulls are
+ * not an edge case to be tidied away: they are the files a re-encryption pass will have to try every key
+ * against, and reporting them as zero would be the one kind of wrong answer this feature must not give.
+ */
+export function filesPerKey(db, practiceId) {
+  const counts = new Map();
+  const rows = db
+    .prepare(
+      `SELECT u.key_id, COUNT(*) AS n
+         FROM upload u
+         JOIN request_item i ON i.id = u.request_item_id
+         JOIN request r ON r.id = i.request_id
+        WHERE r.practice_id = ?
+        GROUP BY u.key_id`,
+    )
+    .all(practiceId);
+
+  for (const row of rows) counts.set(row.key_id ?? null, row.n);
+  return counts;
+}
+
+/**
+ * Every envelope sealed to a key, for a re-encryption pass to work through.
+ *
+ * `key_id IS NULL` is not included: those files are not known to be sealed to this key, and a pass that
+ * guessed would be a pass that silently re-sealed something twice from the wrong key. The pass tries
+ * each key against them separately, because only the AES-GCM tag can say which key opens a file.
+ */
+export function uploadsSealedTo(db, keyId) {
+  return db
+    .prepare(
+      `SELECT u.id, u.storage_path, u.filename, u.request_item_id
+         FROM upload u
+        WHERE u.key_id = ?
+        ORDER BY u.uploaded_at, u.id`,
+    )
+    .all(keyId);
 }
 
 /**
@@ -654,12 +700,17 @@ export function tokenLookup(db, token, at = new Date()) {
       `SELECT t.id AS token_id, t.expires_at, t.revoked_at,
               r.id, r.title, r.due_at, r.practice_id,
               c.name AS client_name,
-              (SELECT k.public_key FROM practice_key k
-                WHERE k.practice_id = r.practice_id
-                ORDER BY k.created_at DESC, k.rowid DESC LIMIT 1) AS practice_public_key
+              k.id AS practice_key_id, k.public_key AS practice_public_key
          FROM access_token t
          JOIN request r ON r.id = t.request_id
          JOIN client c ON c.id = r.client_id
+         -- The newest key, by a join rather than a subquery in the select list, so that "which key is
+         -- current" is written once. It was two correlated subqueries when the id was added here, and a
+         -- second copy of an ordering rule is a second thing that can be changed alone.
+         LEFT JOIN practice_key k ON k.id = (
+           SELECT k2.id FROM practice_key k2
+            WHERE k2.practice_id = r.practice_id
+            ORDER BY k2.created_at DESC, k2.rowid DESC LIMIT 1)
         WHERE t.token_hash = ?`,
     )
     .get(hashToken(token));

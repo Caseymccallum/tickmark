@@ -12,7 +12,11 @@ import { encryptFile } from './tickmark-crypto.js';
 const keyElement = document.getElementById('practice-key');
 
 if (keyElement) {
-  const publicKey = JSON.parse(keyElement.textContent);
+  // `{ keyId, publicKey }`. The id travels back with the upload so the server can record which key the
+  // envelope was sealed to — nothing about the bytes says so, because an envelope's header carries the
+  // ephemeral key rather than the recipient. That record is what decides whether a key can ever be
+  // discarded, so it is worth the extra field.
+  const { keyId, publicKey } = JSON.parse(keyElement.textContent);
   const say = (form, text) => {
     form.querySelector('.status').textContent = text;
   };
@@ -38,6 +42,8 @@ if (keyElement) {
             // The client's own words about what they sent. A header, like the filename, because the
             // body is the encrypted file and nothing else may travel in it.
             'x-note': encodeURIComponent(form.querySelector('input[name=note]')?.value ?? ''),
+            // Which key sealed it, so the practice can tell later which files a key is holding.
+            ...(keyId ? { 'x-key-id': keyId } : {}),
           },
           body: envelope,
         });

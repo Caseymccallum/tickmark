@@ -171,7 +171,17 @@ CREATE TABLE IF NOT EXISTS upload (
   sha256          TEXT NOT NULL,
   storage_path    TEXT NOT NULL,
   client_note     TEXT,
-  uploaded_at     TEXT NOT NULL
+  uploaded_at     TEXT NOT NULL,
+  -- Which practice key this envelope was sealed to.
+  --
+  -- Nothing about the bytes says so: an envelope's header carries the *ephemeral* key it was made
+  -- with, not the recipient. So the browser that made it says which key it used, and the server checks
+  -- that the key belongs to this practice before recording it.
+  --
+  -- Nullable, and null means "not known" rather than "no key": rows written before this existed have
+  -- no answer, and a re-encryption pass — the thing this column exists for — has to try each of the
+  -- practice's keys in turn rather than trust a number it invented.
+  key_id          TEXT REFERENCES practice_key(id)
 );
 
 -- Append-only: what was sent, what arrived, when. This is the table that answers
@@ -299,6 +309,7 @@ function migrate(db) {
     ['practice_key', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['upload', 'key_id', 'TEXT REFERENCES practice_key(id)'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }

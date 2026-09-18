@@ -21,6 +21,8 @@ reminder** for what has not arrived — and **sending it**, if you point Tickmar
 **closing a request** when there is nothing left to ask for, **opening what arrived in the browser** —
 the passphrase is typed into the page, the file is decrypted there, and the server never sees it —
 **rotating the key**, with the old one kept so that nothing already sent becomes unopenable, and
+**a keys page that says how many files each key is holding** — which is the question that decides whether
+an old key can ever be thrown away, and had no answer before this;
 **inviting a second person into the practice**: each member gets their own login and their own
 passphrase, holds their own sealed copy of the practice's key, and can open documents that arrived
 before they did. The invitation carries the key sealed under a secret that travels in the part of a

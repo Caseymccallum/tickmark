@@ -73,6 +73,12 @@ A practice can make a new key at any time from `Keys → Make a new key`. What t
   stored is encrypted to the key that was current when it arrived, and ECDH offers no way to move an
   envelope to a new key without the old private key. Deleting an old key would make every document
   its clients had sent unopenable, so the product does not offer a way to delete one.
+- **The keys page counts what each key is holding.** An upload records which practice key sealed it —
+  the browser says so in a header, because nothing about an envelope's bytes identifies its recipient,
+  and the server checks that the key belongs to the practice before recording it. That count is what
+  makes "can this key be discarded?" a question with an answer instead of a policy of keeping everything
+  forever. Files that arrived before this record existed are counted as **not known**, which is a
+  different thing from zero: a key shown as holding nothing would be a key somebody might delete.
 - Opening a file tries each key the practice holds, newest first. This is safe because AES-GCM's
   authentication tag means a wrong key *fails* rather than returning something plausible — and it is
   why rotation needed no change to the file format, which matters: a format change would make every
@@ -90,7 +96,9 @@ a new key does not re-encrypt anything.
 **Not built:** re-encrypting old files to a new key, which is the only thing that would make an old
 key safe to delete. It needs the old passphrase, a pass through every stored envelope, and a way to
 resume if the browser is closed halfway through — so it is a project rather than a patch, and until
-it exists the honest answer is that old keys stay.
+it exists the honest answer is that old keys stay. What does exist is the count above, which is the
+part of this that could be built without opening anything: a practice can now see that a key holds
+nothing but a file whose key was never recorded, and neither is a fact anyone could look up before.
 
 ## Changing a passphrase
 

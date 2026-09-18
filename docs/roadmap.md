@@ -14,8 +14,8 @@ Phase 0   Verify the demand            NOT RUN — and it decides whether Phase 
 Phase 1   Version one                  COMPLETE
 Phase 2   Make it usable in the field
           2a email sending             COMPLETE
-          2b several people per practice  A and B done; C-i done; C-ii NEXT
-          2c re-encrypting old files      NOT STARTED
+          2b several people per practice COMPLETE — A, B and C, invitation included
+          2c re-encrypting old files      IN PROGRESS — the record is built; the move is not
           2d other install paths          NOT PLANNED
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
@@ -270,10 +270,34 @@ because that is where it matters most.
 
 ### 2c. Re-encrypting old files, so a key can be deleted
 
-**Status: not started.** The only thing that would let an old key be removed, and the reason there is no
-delete button. It needs the old passphrase, a pass over every stored envelope, and a way to resume if
-the browser is closed halfway through — a project rather than a patch. Until it exists, old keys stay,
-which is the safe direction to be wrong in.
+**Status: in progress — the record is built, the move is not.**
+
+The reason there is no delete button is that an old key exists to open the files that were sent while it
+was current, and a file cannot be moved to a new key without the old one. The first thing that needed to
+exist was therefore not a move but a *count*: before this pass, nothing in the system knew which key had
+sealed which file, so "can we throw this key away?" had no answer at all — the only policy was to keep
+every key forever and hope.
+
+**Done, and measured rather than asserted:**
+
+- **An upload records the key it was sealed to.** Nothing about an envelope's bytes says so — its header
+  carries the *ephemeral* key, not the recipient — so the browser that encrypts says which practice key it
+  used, in a header, and the server **checks** the claim against the practice before recording it. A key
+  belonging to a different practice is a refusal with nothing written, because this column is what decides
+  whether a key can ever be discarded, and a wrong answer is worse than none.
+- **An upload that names no key still arrives, and is counted as *not known*.** That is not a
+  hypothetical: a client can be holding a page from before this existed, and refusing their file to record
+  a number would lose a document. `null` is "not known" and it is deliberately a different thing from
+  zero — treating it as zero would say a key holds nothing, and a practice that believed that would throw
+  away the key that opens the file.
+- **The keys page counts them.** Each key shows how many files it holds, and any file whose key is not
+  recorded is called out in a sentence rather than folded into whichever key happens to be current.
+
+**Not built, and it is the whole remaining item:** a pass that opens each envelope with an old key and
+seals it again to the current one. It needs the old passphrase, a walk over the stored files, and a way to
+resume if the browser is closed halfway through — a project rather than a patch. Two things are true until
+it exists and both are stated on the page a practice reads: **old keys stay**, and those files cannot be
+counted against a key because nothing wrote down which one sealed them.
 
 ### 2d. Packaging beyond Docker
 

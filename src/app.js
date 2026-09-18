@@ -68,6 +68,7 @@ import {
   itemInRequest,
   itemsOf,
   practiceKeys,
+  filesPerKey,
   practitionerByEmail,
   recordEvent,
   recordUpload,
@@ -1253,7 +1254,7 @@ function clientPage({ db, response, params }) {
         : ''}
       <p class="note">Nothing here needs an account. Come back to this page with the same
       link to send the rest — the list shows what has already arrived.</p>
-      ${jsonTag('practice-key', JSON.parse(open.practice_public_key))}
+      ${jsonTag('practice-key', { keyId: open.practice_key_id, publicKey: JSON.parse(open.practice_public_key) })}
       ${raw('<script type="module" src="/assets/upload.js"></script>')}`,
   }));
 }
@@ -1287,6 +1288,11 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     return fail(response, 415, 'This page sends files as raw bytes, which needs JavaScript to be enabled.');
   }
 
+  // Before anything is read or written: the header helper, because the key check below needs it and a
+  // rejected upload should leave nothing behind.
+  const header = (name, fallback, limit) =>
+    request.headers[name] ? decodeURIComponent(String(request.headers[name])).slice(0, limit) : fallback;
+
   const body = await readBody(request, maxUploadBytes);
   if (body.length === 0) return fail(response, 400, 'That file was empty.');
 
@@ -1301,14 +1307,30 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     );
   }
 
+  // Which key the client sealed this to. The browser says, because the bytes cannot: an envelope's
+  // header carries the *ephemeral* key it was made with, not the recipient it was made for. The claim
+  // is checked before it is recorded, and a wrong one is refused rather than stored as unknown — this
+  // column is what decides whether a key can ever be discarded, so a false answer is worse than none.
+  const claimedKey = header('x-key-id', null, 64);
+  let keyId = null;
+  if (claimedKey !== null) {
+    const key = db
+      .prepare(
+        `SELECT k.id FROM practice_key k JOIN request r ON r.practice_id = k.practice_id
+          WHERE k.id = ? AND r.id = ?`,
+      )
+      .get(claimedKey, found.request.id);
+    if (!key) {
+      return fail(response, 400, 'That upload named a key this practice does not have. Nothing was stored.');
+    }
+    keyId = key.id;
+  }
+
   const uploadId = newId();
   const directory = join(blobDir, found.request.id);
   await mkdir(directory, { recursive: true });
   const storagePath = join(directory, `${uploadId}.bin`);
   await writeFile(storagePath, body);
-
-  const header = (name, fallback, limit) =>
-    request.headers[name] ? decodeURIComponent(String(request.headers[name])).slice(0, limit) : fallback;
 
   recordUpload(db, {
     id: uploadId,
@@ -1320,6 +1342,7 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     sha256: createHash('sha256').update(body).digest('hex'),
     storagePath,
     clientNote: header('x-note', null, 500),
+    keyId,
     at: now(),
   });
 
@@ -1691,12 +1714,15 @@ async function renamePracticePage({ db, request, response, practitioner, practic
 function keysPage({ db, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const keys = practiceKeys(db, practiceId, practitioner.id);
+  const counts = filesPerKey(db, practiceId);
+  const unaccounted = counts.get(null) ?? 0;
 
   const rows = keys.map((key, index) => html`<tr>
     <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
     <td>${index === 0
       ? html`<strong>current</strong> — new files are encrypted to this one`
       : 'older — opens the files sent while it was current'}</td>
+    <td>${counts.get(key.id) ?? 0}</td>
     <td>
       <form class="passphrase" data-key-id="${key.id}" method="post" action="/keys/${key.id}/passphrase">
         <input type="password" name="old" placeholder="current passphrase" required autocomplete="current-password">
@@ -1720,9 +1746,20 @@ function keysPage({ db, response, practitioner, practiceId }) {
       ${keys.length === 0
         ? ''
         : html`<table>
-            <thead><tr><th align="left">Made</th><th align="left">What it is for</th><th align="left">Passphrase</th></tr></thead>
+            <thead><tr><th align="left">Made</th><th align="left">What it is for</th><th align="left">Files</th><th align="left">Passphrase</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>`}
+      ${unaccounted > 0
+        ? html`<p class="note">${unaccounted} file${unaccounted === 1 ? '' : 's'} arrived before Tickmark
+            recorded which key was used, so which key opens ${unaccounted === 1 ? 'it' : 'them'} is not written
+            down anywhere. Nothing is lost — the key that opens a file is whichever one decrypts it — but it
+            means those files are not counted in the column above, and a pass that moved files to a new key
+            would have to try each key against them rather than trust a number.</p>`
+        : ''}
+      <p class="note"><strong>A key cannot be deleted, and this is why.</strong> An old key exists to open
+      the files that were sent while it was current, and there is no way to move a file to a new key without
+      the old one — so the column above is what a practice would have to empty first. Moving files to a new
+      key is not built, and <code>docs/encryption.md</code> records it as the last thing missing here.</p>
       <p><a href="/setup">Make a new key</a> — for files that arrive from now on. The ones you have
       keep working.</p>
       <p class="note">Changing a passphrase does not change the key, so nothing has to be

@@ -69,7 +69,12 @@ test('the client page lists the documents, carries the key to encrypt to, and sa
     // The key the browser encrypts to, and the honest statement of what the server sees anyway.
     const keyTag = /<script type="application\/json" id="practice-key">([\s\S]*?)<\/script>/.exec(body)?.[1];
     assert.ok(keyTag, 'the page carries the public key the browser needs');
-    assert.deepEqual(JSON.parse(keyTag), keys.publicKey);
+    const handed = JSON.parse(keyTag);
+    assert.deepEqual(handed.publicKey, keys.publicKey);
+    const newestKeyId = db
+      .prepare('SELECT id FROM practice_key ORDER BY created_at DESC, rowid DESC LIMIT 1')
+      .get().id;
+    assert.equal(handed.keyId, newestKeyId, 'and names which key it is, so an upload can say what sealed it');
     assert.match(body, /encrypted in this browser/, 'the page states the claim, now that it can keep it');
     assert.match(body, /name of the file/, 'and states what the server can still see: names, items, times');
     assert.match(body, /src="\/assets\/upload\.js"/, 'and loads the script that does the encrypting');

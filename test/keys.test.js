@@ -117,15 +117,22 @@ test('after a rotation, a new upload is sealed to the new key and the old key ca
 
     // The client's page must now carry the *new* key — that is what rotation buys.
     const page = await (await fetch(`${base}/r/${token}`)).text();
-    const givenToClient = JSON.parse(/id="practice-key">([\s\S]*?)<\/script>/.exec(page)[1]);
-    assert.equal(givenToClient.x, rotated.publicKey.x, 'the client is handed the current key');
-    assert.notEqual(givenToClient.x, practice.keys.publicKey.x, 'and it is not the old one');
+    const given = JSON.parse(/id="practice-key">([\s\S]*?)<\/script>/.exec(page)[1]);
+    assert.equal(given.publicKey.x, rotated.publicKey.x, 'the client is handed the current key');
+    assert.notEqual(given.publicKey.x, practice.keys.publicKey.x, 'and it is not the old one');
+
+    // The id comes from the database rather than from the helper's return value: the id is what the
+    // upload records, so the database is the thing that has to agree.
+    const newestKeyId = db
+      .prepare('SELECT id FROM practice_key ORDER BY created_at DESC, rowid DESC LIMIT 1')
+      .get().id;
+    assert.equal(given.keyId, newestKeyId, 'along with which key it is, so the practice can tell later which files it holds');
 
     const after = await upload({
       base,
       token,
       itemId: practice.itemIds[1],
-      publicKey: givenToClient,
+      publicKey: given.publicKey,
       plaintext: Buffer.from('the new one'),
     });
 
