@@ -19,7 +19,9 @@ and taking things off it later**, creating a link the client opens with no accou
 encrypted uploads, **a check against every document that arrives — so a request says "files to check"
 and then "ready to work on", rather than pretending that received means ready** —
 **a board that sorts every client by whose turn it is, marks the overdue ones, and counts what is in
-each state**, **starting a new request from an old one** so next year's list is not built from nothing,
+each state**, **chasing everyone who owes something in one action** — with a page naming exactly who
+will be written to before anything is sent, and a report afterwards saying what went out and what did
+not — **starting a new request from an old one** so next year's list is not built from nothing,
 **the client saying "I do not have this" or "I will send it later" instead of going quiet**,
 **drafting the reminder** for what has not arrived — and **sending it**, if you point Tickmark at a mail
 relay — **closing a request** when there is nothing left to ask for, **opening what arrived in the
@@ -40,10 +42,11 @@ them.
 What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
 let an old key be deleted; **removing a member**, which is the state you can see on the members page
 but not yet an act — `docs/members.md` says what it would take and why the honest version has to come with
-a sentence about what it cannot do; and **sending reminders to several clients at once**, which is the
-single biggest time-saver left — `docs/product-needs.md` says why it is next rather than half-built.
-Until old files can be re-encrypted, old keys stay, and
-`docs/encryption.md` says why.
+a sentence about what it cannot do; **a reminder cadence**, because the run that chases everybody has no
+memory of who it has already written to and pressing it twice writes twice — the chase list shows when
+each client was last reminded so that the decision is yours rather than a surprise, and
+`docs/product-needs.md` says why the threshold is a decision and not a default. Until old files can be
+re-encrypted, old keys stay, and `docs/encryption.md` says why.
 
 `docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,
 and the records survive a restart. That sentence is here because it was tested, not because it was

@@ -125,6 +125,14 @@ const CLIENT_SAYS = {
 };
 
 /**
+ * How long a link in a bulk reminder works for.
+ *
+ * The single-request page offers a choice and defaults to thirty days. A run writing to a whole client
+ * list has no form to ask on, so it uses that same default rather than inventing a second one.
+ */
+const REMINDER_DAYS = 30;
+
+/**
  * How long a practice name may be.
  *
  * Not a database limit — `name` is TEXT and would take anything — but a display one: it appears in the
@@ -174,6 +182,9 @@ export const ROUTES = [
   ['POST', /^\/requests\/([^/]+)\/items$/, addItemsPage],
   ['POST', /^\/requests\/([^/]+)\/items\/([^/]+)\/([a-z-]+)$/, changeItemPage],
   ['POST', /^\/requests\/([^/]+)\/revoke$/, revokeLink],
+  // The run that writes to everyone at once. A GET to look before pressing, a POST to press.
+  ['GET', '/chase', chasePage],
+  ['POST', '/chase', sendAllReminders],
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)\/says$/, clientSays],
@@ -254,6 +265,10 @@ export function createApp(db, {
   maxUploadBytes = DEFAULT_MAX_UPLOAD,
   webDir = join(HERE, '..', 'web'),
   mailer = null,
+  // How long a run of reminders may take. Injected so that a test can watch the run stop halfway, which
+  // is otherwise a two-minute test — and a safety property that cannot be tested is a safety property
+  // nobody has checked.
+  chaseBudgetMs = CHASE_BUDGET_MS,
 } = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -281,7 +296,7 @@ export function createApp(db, {
         if (!params) continue;
 
         const context = await contextFor(db, request, response, url, params.slice(1));
-        await handler({ ...context, blobDir, maxUploadBytes, webDir, mailer });
+        await handler({ ...context, blobDir, maxUploadBytes, webDir, mailer, chaseBudgetMs });
         return;
       }
       return fail(response, 404, 'There is no page at that address.');
@@ -619,7 +634,9 @@ function listRequests({ db, response, practitioner, url, practiceId }) {
             <a href="/requests">all ${all.length}</a>
           </p>`}
       ${table}
-      <p><a href="/requests/new">New request</a></p>`,
+      <p><a href="/requests/new">New request</a>${showingClosed || all.length === 0
+        ? ''
+        : html` &middot; <a href="/chase">chase everyone outstanding</a>`}</p>`,
   }));
 }
 function requestForm({ error = null, values = {} } = {}) {
@@ -1046,6 +1063,53 @@ const outstandingOf = (db, requestId) => {
 };
 
 /**
+ * The reminder for one request: the words, and the list they were built from.
+ *
+ * One function, used by the single-request page and by the run that writes to everybody. Two
+ * implementations of "what does a reminder say" would be two things free to disagree — and the place
+ * the disagreement would show up is a client's inbox.
+ */
+function messageFor({ db, found, origin, token }) {
+  const items = itemsOf(db, found.id);
+  const outstanding = outstandingOf(db, found.id);
+
+  return {
+    outstanding,
+    total: items.length,
+    ...reminderDraft({
+      clientName: found.client_name,
+      title: found.title,
+      dueAt: found.due_at,
+      outstanding: outstanding.filter((item) => !item.needsAttention).map((item) => item.label),
+      again: outstanding
+        .filter((item) => item.needsAttention)
+        .map((item) => ({ label: item.label, note: item.attentionNote })),
+      // Everything the client has said, not only the items still outstanding: what they said about an
+      // item that has since arrived is part of the record, and the practice should see it in the draft
+      // rather than discover it later.
+      theySaid: items
+        .filter((item) => !item.withdrawn && item.clientSays)
+        .map((item) => ({ label: item.label, says: item.clientSays })),
+      link: `${origin}/r/${token}`,
+    }),
+  };
+}
+
+/**
+ * How long a run of reminders may take before it stops and reports where it got to.
+ *
+ * Node's own `requestTimeout` is five minutes by default, and a run that reached it would be cut off
+ * mid-sentence — with some clients written to and no record of how far it got, which is the one failure
+ * this feature must not have. So the run bounds itself, well inside that limit, leaving room for the
+ * response to be written.
+ *
+ * A count would be the wrong bound. A fast relay and a slow one deserve different answers, and elapsed
+ * time is what the limit is actually about: the same run should write to forty clients in seconds and
+ * to four if the relay is crawling.
+ */
+const CHASE_BUDGET_MS = 120000;
+
+/**
  * A block of text the practice is meant to copy.
  *
  * `onclick` selecting the contents is the whole interaction: a practice with a mouse clicks once
@@ -1088,31 +1152,16 @@ async function draftReminder({ db, request, response, practitioner, params, mail
     detail: `${outstanding.length} still outstanding`,
   });
 
-  const draft = reminderDraft({
-    clientName: found.client_name,
-    title: found.title,
-    dueAt: found.due_at,
-    outstanding: outstanding.filter((item) => !item.needsAttention).map((item) => item.label),
-    again: outstanding
-      .filter((item) => item.needsAttention)
-      .map((item) => ({ label: item.label, note: item.attentionNote })),
-    // Everything the client has said, not only the items still outstanding: what they said about an item
-    // that has since arrived is part of the record, and the practice should see it in the draft rather
-    // than discover it later.
-    theySaid: itemsOf(db, found.id)
-      .filter((item) => !item.withdrawn && item.clientSays)
-      .map((item) => ({ label: item.label, says: item.clientSays })),
-    link: `${originOf(request)}/r/${token}`,
-  });
+  const message = messageFor({ db, found, origin: originOf(request), token });
 
   return sendPage(response, 200, reminderPage({
     mailer,
     practitioner,
     found,
-    draft,
+    draft: { subject: message.subject, body: message.body },
     days,
-    outstanding: outstanding.length,
-    total: itemsOf(db, found.id).length,
+    outstanding: message.outstanding.length,
+    total: message.total,
   }));
 }
 
@@ -1238,6 +1287,260 @@ async function sendReminder({ db, request, response, practitioner, params, maile
     });
     return refuse(error.message);
   }
+}
+
+/**
+ * Everyone who owes something, in one place, in the order that matters.
+ *
+ * The research on this is blunt: manual tracking breaks down past fifty clients, and chasing is where a
+ * practice's week goes. A board that says who to chase but makes you chase them one at a time has
+ * diagnosed the problem without solving it — so this is the list the button acts on, and it is built
+ * from the same `outstandingOf` the request page uses rather than from a second definition of
+ * "outstanding".
+ *
+ * The order is urgency first: overdue and soonest-due clients, then whoever owes the most, then
+ * alphabetical so the answer is stable. If a run is cut short by the time budget, the clients it
+ * reached are the ones nearest their deadline.
+ */
+function chaseList(db, practiceId) {
+  return requestsFor(db, practiceId)
+    .map((row) => ({
+      ...row,
+      outstanding: outstandingOf(db, row.id),
+      // When this request was last reminded, so that the page can say it. The run does not refuse to
+      // remind somebody twice — chasing is what a practice does, and a second nudge a week later is
+      // normal — but it should never be a surprise, and a client written to twice in an hour by accident
+      // is exactly the kind of thing a practice would stop trusting the button over.
+      lastRemindedAt: db
+        .prepare("SELECT MAX(at) AS at FROM event WHERE request_id = ? AND kind = 'reminder.sent'")
+        .get(row.id).at,
+    }))
+    .filter((row) => row.outstanding.length > 0)
+    .sort((a, b) => {
+      if (a.due_at !== b.due_at) return (a.due_at ?? '9999').localeCompare(b.due_at ?? '9999');
+      if (a.outstanding.length !== b.outstanding.length) return b.outstanding.length - a.outstanding.length;
+      return a.client_name.localeCompare(b.client_name);
+    });
+}
+
+/** How long ago something happened, in words, for a page a person reads. */
+function agoWords(iso, nowIso) {
+  const minutes = Math.floor((Date.parse(nowIso) - Date.parse(iso)) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * The list before the button: exactly who will be written to, and who will not.
+ *
+ * This page exists because the action has no undo. A practice is about to send real email to real
+ * clients under their own name, so they get to see the list, the addresses, and how many documents each
+ * one is being chased for — before anything leaves the server. "Are you sure?" on its own would be a
+ * worse page: it asks for confidence without giving information.
+ */
+function chasePage({ db, response, practitioner, practiceId, mailer }) {
+  if (!requireSignIn({ practitioner, response })) return;
+
+  const rows = chaseList(db, practiceId);
+  const sendable = rows.filter((row) => row.client_email);
+  const withoutAddress = rows.filter((row) => !row.client_email);
+
+  const table = rows.length === 0
+    ? html`<p>Nothing is outstanding for anyone. <a href="/requests">The board</a> has the full picture.</p>`
+    : html`<table>
+        <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outstanding</th><th align="left">To send to</th><th align="left">Last</th></tr></thead>
+        <tbody>
+          ${rows.map((row) => html`<tr>
+            <td>${row.client_name}</td>
+            <td><a href="/requests/${row.id}">${row.title}</a></td>
+            <td>${row.outstanding.map((item) => item.label).join(', ')}
+              ${row.outstanding.some((item) => item.clientSays)
+                ? html`<div class="note">the client has already answered about some of these — the message
+                    repeats that back rather than asking again</div>`
+                : ''}</td>
+            <td>${row.client_email ?? html`<span class="error">no email address on this client</span>`}</td>
+            <td>${row.lastRemindedAt
+              ? html`<span class="note">reminded ${agoWords(row.lastRemindedAt, now())}</span>`
+              : html`<span class="note">never reminded</span>`}</td>
+          </tr>`)}
+        </tbody>
+      </table>`;
+
+  return sendPage(response, 200, page({
+    title: 'Chase everyone',
+    practitioner,
+    banner: mailer
+      ? html`<p class="warning">This sends <strong>${sendable.length}</strong>
+          ${sendable.length === 1 ? 'message' : 'messages'} from
+          <strong>${mailer.describe()}</strong>. It cannot be undone or recalled, and each client gets
+          their own link.${withoutAddress.length > 0
+            ? html` ${withoutAddress.length} ${withoutAddress.length === 1 ? 'client is' : 'clients are'}
+                left out for want of an email address.`
+            : ''}</p>`
+      : html`<p class="warning">Tickmark has no mail server configured, so nothing can be sent. Set
+          <code>TICKMARK_SMTP_URL</code> and <code>TICKMARK_MAIL_FROM</code> and restart it — or open a
+          request and copy its reminder by hand.</p>`,
+    body: html`
+      <h1>Chase everyone who owes you something</h1>
+      <p class="note">${rows.length} ${rows.length === 1 ? 'request has' : 'requests have'} something
+      outstanding. Each one is sent the ordinary reminder for its own list, with its own link. To change
+      the words for one client, open that request and draft it there.</p>
+      ${table}
+      ${rows.length === 0
+        ? ''
+        : html`<form method="post" action="/chase">
+            ${mailer && sendable.length > 0
+              ? html`<button type="submit">Send ${sendable.length}
+                  ${sendable.length === 1 ? 'reminder' : 'reminders'}</button>`
+              : html`<button type="submit" disabled>Send${mailer ? '' : ' (no mail server)'}</button>`}
+          </form>`}
+      <p class="note">The run stops after ${Math.round(CHASE_BUDGET_MS / 60000)} minutes and reports where
+      it got to, so that a slow relay cannot leave half the messages sent with no record of which.
+      <strong>It has no memory of who it has already written to:</strong> pressing the button twice
+      reminds everyone still outstanding twice — which is why the last column above is there, and why
+      each request keeps its own history.</p>
+      <p><a href="/requests">Back to the board</a></p>`,
+  }));
+}
+
+/**
+ * Send the ordinary reminder to everyone who owes something.
+ *
+ * Three rules, each of them a failure this feature would otherwise have:
+ *
+ * 1. **A failure never stops the run and is never hidden.** One client with a dead mailbox must not stop
+ *    the other thirty being written to, and the report says which failed and what the server said.
+ * 2. **The run bounds itself in time** — see `CHASE_BUDGET_MS` — and says where it stopped.
+ * 3. **Every send is recorded per request**, in the same events the single-send path writes, so a
+ *    client's history says what was sent to them and when, whichever way it was sent.
+ */
+async function sendAllReminders({ db, request, response, practitioner, practiceId, mailer, chaseBudgetMs = CHASE_BUDGET_MS }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  if (!mailer) {
+    return fail(response, 400, 'This installation has no mail server configured, so nothing can be sent.', practitioner);
+  }
+
+  const origin = originOf(request);
+  const rows = chaseList(db, practiceId);
+  const skipped = rows.filter((row) => !row.client_email);
+  const queued = rows.filter((row) => row.client_email);
+
+  const results = [];
+  const startedAt = Date.now();
+
+  for (const [index, row] of queued.entries()) {
+    if (Date.now() - startedAt > chaseBudgetMs) {
+      for (const rest of queued.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
+      break;
+    }
+    results.push(await sendOneReminder(db, row, origin, mailer));
+  }
+
+  return sendPage(
+    response,
+    200,
+    chaseReportPage({ practitioner, results, skipped, elapsedMs: Date.now() - startedAt }),
+  );
+}
+
+/** One request's reminder, sent. Its own function so that the loop above reads as a loop. */
+async function sendOneReminder(db, row, origin, mailer) {
+  const token = newToken();
+  issueToken(db, {
+    requestId: row.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + REMINDER_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+  });
+
+  const message = messageFor({ db, found: row, origin, token });
+  const hasLink = /\/r\/[A-Za-z0-9_-]{20,}/.test(message.body);
+
+  try {
+    const { messageId } = await sendMail(mailer, {
+      to: row.client_email,
+      subject: message.subject,
+      body: message.body,
+    });
+    recordEvent(db, {
+      requestId: row.id,
+      kind: 'reminder.sent',
+      detail: `to ${row.client_email} (${messageId})${hasLink ? '' : ' — with no link in it'}`,
+    });
+    return { row, outcome: 'sent', to: row.client_email, messageId, hasLink };
+  } catch (error) {
+    recordEvent(db, {
+      requestId: row.id,
+      kind: 'reminder.failed',
+      detail: `to ${row.client_email} — ${error.message}`,
+    });
+    return { row, outcome: 'failed', to: row.client_email, reason: error.message };
+  }
+}
+
+/**
+ * What happened, per client.
+ *
+ * This page is the whole reason the run is safe to press. It names every outcome — sent, failed, not
+ * attempted, and who was never a candidate — with the server's own words for a failure. A bulk action
+ * whose result is "done" teaches a practice to distrust it, and the first time a message quietly did not
+ * arrive they would go back to sending them by hand.
+ */
+function chaseReportPage({ practitioner, results, skipped, elapsedMs }) {
+  const sent = results.filter((entry) => entry.outcome === 'sent');
+  const failed = results.filter((entry) => entry.outcome === 'failed');
+  const later = results.filter((entry) => entry.outcome === 'not-attempted');
+  const seconds = Math.round(elapsedMs / 1000);
+
+  const outcomeOf = (entry) => (entry.outcome === 'sent'
+    ? html`<strong>sent</strong> <span class="note">${entry.messageId}${entry.hasLink ? '' : ' — with no link in it'}</span>`
+    : entry.outcome === 'failed'
+      ? html`<strong class="error">not sent</strong> <span class="note">${entry.reason}</span>`
+      : html`<span class="note">not attempted — the run was out of time</span>`);
+
+  return page({
+    title: 'What happened',
+    practitioner,
+    body: html`
+      <h1>What happened</h1>
+      <p>${sent.length} sent, ${failed.length} failed, ${later.length} not attempted${skipped.length > 0
+        ? html`, ${skipped.length} with no email address`
+        : ''} — in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.</p>
+      ${failed.length > 0
+        ? html`<p class="error"><strong>${failed.length}
+            ${failed.length === 1 ? 'message was' : 'messages were'} not sent.</strong> Nothing was lost:
+            each one is still on <a href="/chase">the chase list</a>, so pressing the button again will
+            try it again — along with everyone else still outstanding, because the run keeps no record of
+            who it has already reminded.</p>`
+        : ''}
+      ${later.length > 0
+        ? html`<p class="warning"><strong>The run stopped before it finished.</strong> It reached its time
+            budget, which is deliberate — a run cut off by the server halfway through would leave no record
+            of who had already been written to. The ${later.length} below are untouched and still on
+            <a href="/chase">the chase list</a>.</p>`
+        : ''}
+      ${results.length + skipped.length === 0
+        ? html`<p>There was nothing to send.</p>`
+        : html`<table>
+            <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr></thead>
+            <tbody>
+              ${results.map((entry) => html`<tr>
+                <td>${entry.row.client_name}</td>
+                <td><a href="/requests/${entry.row.id}">${entry.row.title}</a></td>
+                <td>${outcomeOf(entry)}</td>
+              </tr>`)}
+              ${skipped.map((row) => html`<tr>
+                <td>${row.client_name}</td>
+                <td><a href="/requests/${row.id}">${row.title}</a></td>
+                <td><span class="note">no email address on this client</span></td>
+              </tr>`)}
+            </tbody>
+          </table>`}
+      <p><a href="/requests">Back to the board</a> &middot; <a href="/chase">the chase list</a></p>`,
+  });
 }
 
 async function closeRequestPage({ db, response, practitioner, params, practiceId }) {

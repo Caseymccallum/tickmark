@@ -111,7 +111,14 @@ function attach(socket, seen, options, { overTls = false } = {}) {
       return;
     }
     if (upper.startsWith('RCPT TO')) {
-      socket.write(`${options.recipientReply}\r\n`);
+      // `recipientReply` may be a function of the address, so that a test can have one client's mailbox
+      // refuse while the rest accept. A run that writes to a list behaves differently when one address is
+      // dead, and that is the case worth testing.
+      const address = /<([^>]*)>/.exec(line)?.[1] ?? '';
+      const reply = typeof options.recipientReply === 'function'
+        ? options.recipientReply(address)
+        : options.recipientReply;
+      socket.write(`${reply}\r\n`);
       return;
     }
     if (upper === 'DATA') {
@@ -136,7 +143,10 @@ function attach(socket, seen, options, { overTls = false } = {}) {
           inData = false;
           seen.messages.push(dataLines.join('\r\n'));
           dataLines = [];
-          socket.write('250 queued\r\n');
+          // `delayMs` exists so that a test can have a send take a measurable amount of time — the only
+          // way to watch a run stop at its time budget without waiting two minutes for it.
+          if (options.delayMs) setTimeout(() => socket.write('250 queued\r\n'), options.delayMs);
+          else socket.write('250 queued\r\n');
           continue;
         }
         dataLines.push(line);

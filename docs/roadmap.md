@@ -18,6 +18,7 @@ Phase 2   Make it usable in the field
           2c re-encrypting old files      IN PROGRESS — the record is built; the move is not
           2d other install paths          NOT PLANNED
           2e the states the trade asks for COMPLETE — see docs/product-needs.md
+          2f chase everyone at once     COMPLETE — 2c is the last item open
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -327,6 +328,39 @@ about the list being honest:
 Two things were deliberately left, and named in `docs/product-needs.md` rather than half-built: **bulk
 send** (it writes N emails, and it needs a confirmation screen listing exactly who is about to be
 written to), and **recurring requests** (which depend on bulk send existing).
+
+### 2f. Chase everyone at once
+
+**Status: complete.**
+
+The research is blunt about why this is not optional: **"manual tracking breaks down past fifty
+clients"**, and chasing is where a practice's week goes — nine to twelve hours a week of follow-up, in a
+season that lasts twelve to fourteen weeks. A board that names who to chase and makes you chase them one
+at a time has diagnosed the problem without solving it.
+
+`GET /chase` is the list, `POST /chase` is the run. What makes it safe to press is the order:
+
+1. **A page listing exactly who will be written to** — with their addresses, what each one owes, and when
+   each was last reminded — before anything leaves the server. "Are you sure?" on its own would be a worse
+   page: it asks for confidence without giving information.
+2. **The run bounds its own time**, at `CHASE_BUDGET_MS` (two minutes), because Node's `requestTimeout` is
+   five minutes and a run cut off by the server would leave no record of which clients had already been
+   written to. A count would be the wrong bound — a fast relay and a slow one deserve different answers.
+3. **A failure never stops the run and is never hidden.** One dead mailbox must not prevent the other
+   thirty, and the report names each outcome: sent with its identifier, failed with the server's own
+   words, not attempted, or no address at all.
+4. **Every send is recorded per request**, in the same events the single-send path writes, so a client's
+   history says what was sent to them and when, whichever way it was sent.
+
+Two things are deliberately not here, and both are named in `docs/product-needs.md`: **recurring
+requests**, and **a cadence the run respects** — the run has no memory of who it has already written to,
+and presses twice will send twice. The chase list shows when each client was last reminded so the
+decision is the practice's, but the threshold itself is a decision and not a default I should invent.
+
+The one thing to watch when reading the code: the message a reminder contains is built by **one**
+function, `messageFor`, used by both the single-request page and the run. Two implementations of "what
+does a reminder say" would be two things free to disagree, and the place the disagreement would show up
+is a client's inbox.
 
 ## Phase 3 — Find out if anyone wants it
 

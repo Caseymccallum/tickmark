@@ -560,7 +560,7 @@ export function requestsFor(db, practiceId, { includeClosed = false } = {}) {
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
-              c.name AS client_name,
+              c.name AS client_name, c.email AS client_email,
               (SELECT MAX(e.at) FROM event e WHERE e.request_id = r.id) AS last_activity_at
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.practice_id = ?

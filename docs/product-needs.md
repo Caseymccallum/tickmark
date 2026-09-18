@@ -105,14 +105,20 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   template, and the whole of the year-two pain.
 - **The client can say why**: "I don't have this" and "I'll send it later", so the list is honest from
   their side rather than only from the practice's.
+- **Chase everyone at once** (2f, below): the ordinary reminder to every client with something
+  outstanding, with a page listing exactly who will be written to before anything is sent, a run that
+  bounds its own time, and a report naming every outcome.
 
 **Not built, and named rather than implied:**
 
-- **Bulk send.** The single biggest time-saver in the research, and the riskiest: it writes N emails
-  with no undo, and it needs a screen listing exactly who is about to be written to. It is the next
-  thing, not a half-thing.
-- **Recurring requests** on a schedule. Depends on bulk send existing, and on a decision about what
-  happens when the schedule fires while the previous request is still open.
+- **Recurring requests** on a schedule. Depends on a decision about what happens when the schedule fires
+  while the previous request is still open, and the research's cadence advice — "reminders escalate
+  politely on a schedule you control" — is not the same feature as a monthly cycle.
+- **A cadence the run respects.** The run has no memory of who it has already written to: it goes to
+  everyone still outstanding, every time. The chase list shows when each client was last reminded, so the
+  decision is the practice's rather than a surprise — but "do not remind the same client twice inside a
+  week" is a rule this does not have, and a practice that presses the button twice in an hour will send
+  two reminders. Named here because the fix is a threshold, and a threshold is a decision.
 - **Reading the documents** — extraction, reconciliation, "is this the current year". That is the
   translation problem Chronexa names and it is an OCR-and-AI product. It would also mean sending a
   client's financial records to a third party, which makes this product's central claim false. **Named
