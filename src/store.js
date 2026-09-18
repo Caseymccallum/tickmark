@@ -232,7 +232,25 @@ export function recordUpload(db, { id = newId(), requestId, requestItemId, filen
       `INSERT INTO upload (id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, key_id, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, requestItemId, filename, mime, sizeBytes, sha256, storagePath, clientNote, keyId, at);
+
+    // New material has not been looked at, so a check that was made against the old set no longer
+    // stands. Doing this here rather than in the route means no caller can forget it — and a request
+    // that kept saying "checked" after a file arrived would be exactly the lie this column exists to
+    // prevent. A client's stated reason goes the same way: they said they could not send it, and then
+    // they did.
+    const cleared = db
+      .prepare('UPDATE request_item SET reviewed_at = NULL, client_says = NULL, client_says_at = NULL WHERE id = ? AND (reviewed_at IS NOT NULL OR client_says IS NOT NULL)')
+      .run(requestItemId).changes;
+
     recordEvent(db, { requestId, kind: 'upload.received', detail: filename, at });
+    if (cleared > 0) {
+      recordEvent(db, {
+        requestId,
+        kind: 'item.check-cleared',
+        detail: 'new file arrived, so what was checked before needs looking at again',
+        at,
+      });
+    }
     return id;
   });
 }
@@ -295,6 +313,8 @@ export function uploadsSealedTo(db, keyId) {
 export function itemStatus(db, requestId) {
   return db.prepare(
     `SELECT i.id, i.label, i.note, i.position,
+            i.withdrawn_at, i.attention_at, i.attention_note, i.reviewed_at,
+            i.client_says, i.client_says_at,
             COUNT(u.id)        AS file_count,
             MAX(u.uploaded_at) AS last_upload_at
        FROM request_item i
@@ -306,10 +326,59 @@ export function itemStatus(db, requestId) {
     id: row.id,
     label: row.label,
     note: row.note,
+    position: row.position,
+    withdrawn: Boolean(row.withdrawn_at),
     received: row.file_count > 0,
     files: row.file_count,
     lastUploadAt: row.last_upload_at,
+    // The distinction this product exists to make. `received` means bytes are here; `checked` means
+    // somebody has looked at them. They are different columns because they are different facts.
+    checked: Boolean(row.reviewed_at),
+    reviewedAt: row.reviewed_at,
+    needsAttention: Boolean(row.attention_at),
+    attentionNote: row.attention_note,
+    clientSays: row.client_says,
+    clientSaysAt: row.client_says_at,
   }));
+}
+
+/**
+ * Where a request actually is, computed rather than stored.
+ *
+ * Stored state drifts: a flag set on arrival and never cleared is how a system ends up saying
+ * "ready" about a file nobody has opened. This is derived from the items every time it is asked for,
+ * so it cannot disagree with them.
+ *
+ * The order is the order of the practice's next action:
+ *
+ * - **ready** — everything asked for has arrived and been looked at. Work can start.
+ * - **to-check** — something arrived that nobody has looked at. Do this before chasing anything,
+ *   because chasing a client about a document that is already sitting there is the mistake this
+ *   state exists to prevent.
+ * - **waiting** — nothing to look at, and at least one thing still outstanding.
+ */
+export function requestProgress(db, requestId) {
+  const items = itemStatus(db, requestId).filter((item) => !item.withdrawn);
+
+  const counts = {
+    items: items.length,
+    received: items.filter((item) => item.received).length,
+    checked: items.filter((item) => item.received && item.checked).length,
+    outstanding: items.filter((item) => !item.received).length,
+    toCheck: items.filter((item) => item.received && !item.checked).length,
+    needsAttention: items.filter((item) => item.needsAttention).length,
+    clientSaid: items.filter((item) => item.clientSays).length,
+  };
+
+  const state = counts.items === 0
+    ? 'ready'
+    : counts.toCheck > 0
+      ? 'to-check'
+      : counts.received < counts.items
+        ? 'waiting'
+        : 'ready';
+
+  return { ...counts, state };
 }
 
 export function history(db, requestId) {
@@ -492,18 +561,21 @@ export function requestsFor(db, practiceId, { includeClosed = false } = {}) {
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
               c.name AS client_name,
-              (SELECT COUNT(*) FROM request_item i
-                WHERE i.request_id = r.id AND i.withdrawn_at IS NULL) AS item_count,
-              (SELECT COUNT(DISTINCT u.request_item_id) FROM upload u
-                 JOIN request_item i2 ON i2.id = u.request_item_id
-                WHERE i2.request_id = r.id AND i2.withdrawn_at IS NULL) AS received_count
+              (SELECT MAX(e.at) FROM event e WHERE e.request_id = r.id) AS last_activity_at
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.practice_id = ?
           ${includeClosed ? '' : 'AND r.closed_at IS NULL'}
         ORDER BY r.created_at DESC`,
     )
     .all(practiceId)
-    .map((row) => ({ ...row, outstanding_count: row.item_count - row.received_count }));
+    .map((row) => ({
+      ...row,
+      // The same function the request page uses, rather than a second SQL copy of the same rule. It
+      // costs one small query per row; the alternative is two implementations of "is this ready?" that
+      // can disagree, and the list and the page disagreeing about a client's state is the kind of thing
+      // that destroys trust in the whole board.
+      progress: requestProgress(db, row.id),
+    }));
 }
 
 export function closedCount(db, practiceId) {
@@ -560,20 +632,10 @@ export function requestFor(db, practiceId, requestId) {
 }
 
 export function itemsOf(db, requestId) {
-  return db
-    .prepare(
-      `SELECT id, label, note, position, withdrawn_at, attention_at, attention_note
-         FROM request_item WHERE request_id = ? ORDER BY position, created_at`,
-    )
-    .all(requestId)
-    .map((row) => ({
-      id: row.id,
-      label: row.label,
-      note: row.note,
-      withdrawn: row.withdrawn_at !== null,
-      needsAttention: row.attention_at !== null,
-      attentionNote: row.attention_note,
-    }));
+  // Delegates to `itemStatus` rather than carrying its own query and its own shape. Two functions that
+  // both describe an item are two functions that can disagree about whether something has been checked —
+  // and the request page, the reminder and the list all read items, so they must read the same thing.
+  return itemStatus(db, requestId);
 }
 
 /**
@@ -586,7 +648,8 @@ export function itemIn(db, practiceId, requestId, itemId) {
   return (
     db
       .prepare(
-        `SELECT i.id, i.label, i.withdrawn_at, i.attention_at
+        `SELECT i.id, i.label, i.withdrawn_at, i.attention_at, i.attention_note,
+                i.reviewed_at, i.client_says, i.client_says_at
            FROM request_item i JOIN request r ON r.id = i.request_id
           WHERE i.id = ? AND i.request_id = ? AND r.practice_id = ?`,
       )
@@ -675,6 +738,65 @@ export function clearItemAttention(db, practiceId, requestId, itemId, at = now()
   return true;
 }
 
+/**
+ * Mark an item as checked, or as needing another look.
+ *
+ * This is the practice saying "I have looked at what arrived". It is deliberately separate from the
+ * file arriving, because that difference is the point of the product: a packet can be complete and
+ * still not ready for a preparer, and the two states need different words.
+ *
+ * Checking an item with nothing in it is refused. There is nothing to have looked at, and allowing it
+ * would let a request report itself ready while the client had sent nothing at all.
+ */
+export function setItemReviewed(db, practiceId, requestId, itemId, reviewed, at = now()) {
+  const item = itemIn(db, practiceId, requestId, itemId);
+  if (!item) return false;
+
+  if (reviewed) {
+    const has = db.prepare('SELECT COUNT(*) AS n FROM upload WHERE request_item_id = ?').get(itemId).n > 0;
+    if (!has) return false;
+  }
+  if (Boolean(item.reviewed_at) === Boolean(reviewed)) return false;
+
+  db.prepare('UPDATE request_item SET reviewed_at = ? WHERE id = ?').run(reviewed ? at : null, itemId);
+  recordEvent(db, {
+    requestId,
+    kind: reviewed ? 'item.checked' : 'item.check-undone',
+    detail: item.label,
+    at,
+  });
+  return true;
+}
+
+/**
+ * What the client said about an item, or that they have nothing to say.
+ *
+ * "I don't have this" and "I'll send it later" are different sentences to receive and both are better
+ * than silence — which is the state a client is otherwise stuck in when they cannot produce a file.
+ * The item stays outstanding either way: whether to stop asking is the practice's decision, not the
+ * client's, and the product's job is to make sure they can see what was said rather than guess.
+ */
+export function setClientSays(db, practiceId, requestId, itemId, says, at = now()) {
+  const item = itemIn(db, practiceId, requestId, itemId);
+  if (!item) return false;
+
+  const trimmed = typeof says === 'string' && says.trim().length > 0 ? says.trim().slice(0, 500) : null;
+  if (trimmed === (item.client_says ?? null)) return false;
+
+  db.prepare('UPDATE request_item SET client_says = ?, client_says_at = ? WHERE id = ?').run(
+    trimmed,
+    trimmed ? at : null,
+    itemId,
+  );
+  recordEvent(db, {
+    requestId,
+    kind: trimmed ? 'item.client-said' : 'item.client-said-cleared',
+    detail: trimmed ? `${item.label}: ${trimmed}` : item.label,
+    at,
+  });
+  return true;
+}
+
 export function uploadsOf(db, requestId) {
   return db
     .prepare(
@@ -730,7 +852,9 @@ export function tokenLookup(db, token, at = new Date()) {
 export function itemInRequest(db, requestId, itemId) {
   return (
     db
-      .prepare('SELECT id, label, note, withdrawn_at FROM request_item WHERE id = ? AND request_id = ?')
+      .prepare(
+        'SELECT id, label, note, withdrawn_at, attention_at, reviewed_at, client_says FROM request_item WHERE id = ? AND request_id = ?',
+      )
       .get(itemId, requestId) ?? null
   );
 }

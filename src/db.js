@@ -147,7 +147,19 @@ CREATE TABLE IF NOT EXISTS request_item (
   -- half a statement. It keeps the item in the outstanding list, so reminders go on asking for it,
   -- and the client's page says what is wrong rather than repeating the same request.
   attention_at   TEXT,
-  attention_note TEXT
+  attention_note TEXT,
+  -- Set by the practice once somebody has actually looked at what arrived.
+  --
+  -- This is the column that separates "received" from "ready", which is the point of the product: a
+  -- packet can be complete and still need a preparer's eye, and hiding that difference removes the
+  -- signal that somebody had to check. Cleared automatically when a new file arrives against the
+  -- item, because new material has not been looked at.
+  reviewed_at    TEXT,
+  -- What the client said when they could not send something: "I don't have this", "I'll send it
+  -- later". Stored so that silence and a stated reason are different things in the list, and so the
+  -- practice can see it without reading back through an email thread.
+  client_says    TEXT,
+  client_says_at TEXT
 );
 
 -- The token itself is never stored. A database that leaks must not let anyone
@@ -305,6 +317,9 @@ function migrate(db) {
     ['request_item', 'withdrawn_at', 'TEXT'],
     ['request_item', 'attention_at', 'TEXT'],
     ['request_item', 'attention_note', 'TEXT'],
+    ['request_item', 'reviewed_at', 'TEXT'],
+    ['request_item', 'client_says', 'TEXT'],
+    ['request_item', 'client_says_at', 'TEXT'],
     ['practitioner', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['practice_key', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],

@@ -17,6 +17,7 @@ Phase 2   Make it usable in the field
           2b several people per practice COMPLETE — A, B and C, invitation included
           2c re-encrypting old files      IN PROGRESS — the record is built; the move is not
           2d other install paths          NOT PLANNED
+          2e the states the trade asks for COMPLETE — see docs/product-needs.md
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -303,6 +304,29 @@ counted against a key because nothing wrote down which one sealed them.
 
 **Status: not started, and probably never.** A Helm chart, a Debian package, a hosted one-click. Each is
 a promise to maintain an installation path, and none of them is why a practice would choose this.
+
+### 2e. The states the trade actually asks for
+
+**Status: complete.** `docs/product-needs.md` is the research this came from, with the sources.
+
+The finding was that the problem a practice has is not collecting documents — every portal does that —
+but knowing **whose turn it is**. Received is not ready, and a client who cannot produce a document
+currently has only two options: send something, or go quiet. This phase is five changes, all of them
+about the list being honest:
+
+- **A check per item.** `request_item.reviewed_at`. Somebody has actually looked at what arrived.
+- **A state per request** — `ready`, `to-check`, `waiting` — derived from the items on every read rather
+  than stored, so it cannot drift away from the thing it describes.
+- **The board.** The requests list is sorted by whose move it is, marks overdue dates, counts each
+  state, and filters by it.
+- **Roll-forward.** `?from=<request id>` fills the new-request form from an old one, which is the
+  smallest honest version of the year-two problem the research names as a top pain.
+- **The client can say why.** "I do not have this", "I will send this later" — stored beside the item,
+  shown to the practice, and repeated in the reminder so nobody chases something already explained.
+
+Two things were deliberately left, and named in `docs/product-needs.md` rather than half-built: **bulk
+send** (it writes N emails, and it needs a confirmation screen listing exactly who is about to be
+written to), and **recurring requests** (which depend on bulk send existing).
 
 ## Phase 3 — Find out if anyone wants it
 

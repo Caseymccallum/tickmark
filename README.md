@@ -16,11 +16,15 @@ account of that, including four things it does not protect.
 
 What works today: creating a practice, making an encryption key, building a request, **adding to it
 and taking things off it later**, creating a link the client opens with no account, receiving
-encrypted uploads, **seeing what is still outstanding and what needs re-sending**, **drafting the
-reminder** for what has not arrived — and **sending it**, if you point Tickmark at a mail relay —
-**closing a request** when there is nothing left to ask for, **opening what arrived in the browser** —
-the passphrase is typed into the page, the file is decrypted there, and the server never sees it —
-**rotating the key**, with the old one kept so that nothing already sent becomes unopenable, and
+encrypted uploads, **a check against every document that arrives — so a request says "files to check"
+and then "ready to work on", rather than pretending that received means ready** —
+**a board that sorts every client by whose turn it is, marks the overdue ones, and counts what is in
+each state**, **starting a new request from an old one** so next year's list is not built from nothing,
+**the client saying "I do not have this" or "I will send it later" instead of going quiet**,
+**drafting the reminder** for what has not arrived — and **sending it**, if you point Tickmark at a mail
+relay — **closing a request** when there is nothing left to ask for, **opening what arrived in the
+browser** — the passphrase is typed into the page, the file is decrypted there, and the server never
+sees it — **rotating the key**, with the old one kept so that nothing already sent becomes unopenable, and
 **a keys page that says how many files each key is holding** — which is the question that decides whether
 an old key can ever be thrown away, and had no answer before this;
 **inviting a second person into the practice**: each member gets their own login and their own
@@ -28,10 +32,17 @@ passphrase, holds their own sealed copy of the practice's key, and can open docu
 before they did. The invitation carries the key sealed under a secret that travels in the part of a
 link a browser never sends to a server.
 
+`docs/product-needs.md` explains where the states came from: the research, with sources, on what
+practices actually lose time to. The short version is that the chase is not a collection problem —
+every portal collects — it is that "received" and "ready" are different things and most tools conflate
+them.
+
 What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
-let an old key be deleted; and **removing a member**, which is the state you can see on the members page
+let an old key be deleted; **removing a member**, which is the state you can see on the members page
 but not yet an act — `docs/members.md` says what it would take and why the honest version has to come with
-a sentence about what it cannot do. Until old files can be re-encrypted, old keys stay, and
+a sentence about what it cannot do; and **sending reminders to several clients at once**, which is the
+single biggest time-saver left — `docs/product-needs.md` says why it is next rather than half-built.
+Until old files can be re-encrypted, old keys stay, and
 `docs/encryption.md` says why.
 
 `docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,

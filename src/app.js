@@ -75,9 +75,12 @@ import {
   reopenRequest,
   replaceWrappedKey,
   requestFor,
+  requestProgress,
   requestsFor,
   revokeToken,
+  setClientSays,
   setItemAttention,
+  setItemReviewed,
   setItemWithdrawn,
   tokenLookup,
   tokensFor,
@@ -95,6 +98,31 @@ const MIN_PASSWORD = 12;
  * in a mailbox in a year is not a key. It is one number, in one place, and the page says it out loud.
  */
 const INVITE_DAYS = 7;
+
+/**
+ * What each request state is called on a screen.
+ *
+ * "Ready to work on" is the word the research uses and the word a practice would use. The other two
+ * describe **whose turn it is**, because that is the question the list exists to answer — and "waiting
+ * on the client" is a different job from "the client has sent something and nobody has opened it".
+ */
+const REQUEST_STATE_WORDS = {
+  ready: 'ready to work on',
+  'to-check': 'files to check',
+  waiting: 'waiting on the client',
+};
+
+/**
+ * What a client can say instead of nothing.
+ *
+ * A client who cannot produce a document is otherwise stuck: they can upload a file or they can go
+ * quiet, and going quiet is indistinguishable from not having read the request. These two sentences give
+ * them a third option, and they are stored in the client's own words alongside the label.
+ */
+const CLIENT_SAYS = {
+  'send-later': 'I will send this later',
+  'do-not-have': 'I do not have this',
+};
 
 /**
  * How long a practice name may be.
@@ -148,6 +176,7 @@ export const ROUTES = [
   ['POST', /^\/requests\/([^/]+)\/revoke$/, revokeLink],
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
+  ['POST', /^\/r\/([^/]+)\/items\/([^/]+)\/says$/, clientSays],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)$/, receiveUpload],
   // Public: no session, gated by the token in the path — and by the secret in the fragment, which the
   // server never sees. Whoever holds the link can accept it; the page says so rather than implying the
@@ -472,7 +501,7 @@ const originOf = (request) =>
  * supply — because it does not apply to them, or they have already explained why — is a reminder that
  * gets ignored, and the cheapest way to prevent that is to invite the reply.
  */
-export function reminderDraft({ clientName, title, dueAt, outstanding, again = [], link }) {
+export function reminderDraft({ clientName, title, dueAt, outstanding, again = [], theySaid = [], link }) {
   const lines = [`Hello ${clientName},`, ''];
 
   if (outstanding.length > 0) {
@@ -493,6 +522,18 @@ export function reminderDraft({ clientName, title, dueAt, outstanding, again = [
     );
   }
 
+  // What the client already told us, repeated back so they can see it was read — and so the practice
+  // has to look at it before sending. Chasing somebody about a document they have already explained
+  // they cannot produce is the fastest way to make a client stop answering.
+  if (theySaid.length > 0) {
+    lines.push(
+      'You told us about these already, so this is just a note rather than a request:',
+      '',
+      ...theySaid.map((item) => `  - ${item.label} (you said: ${item.says})`),
+      '',
+    );
+  }
+
   lines.push('You can send them at this link — no account or password needed:', link);
   if (dueAt) lines.push('', `We had these marked as needed by ${dueAt}.`);
   lines.push(
@@ -508,19 +549,51 @@ export function reminderDraft({ clientName, title, dueAt, outstanding, again = [
 function listRequests({ db, response, practitioner, url, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const showingClosed = url.searchParams.get('closed') === '1';
-  const rows = requestsFor(db, practiceId, { includeClosed: showingClosed });
+  const wanted = url.searchParams.get('state');
+  const all = requestsFor(db, practiceId, { includeClosed: showingClosed });
   const closed = closedCount(db, practiceId);
+  const today = now().slice(0, 10);
+
+  const counts = {};
+  for (const row of all) counts[row.progress.state] = (counts[row.progress.state] ?? 0) + 1;
+
+  // Ordered by whose turn it is, then by the nearest deadline. The list exists to answer "what do I do
+  // now?", and a list ordered by when a request was created answers "what did I touch most recently?" —
+  // which is not the question.
+  const order = { 'to-check': 0, waiting: 1, ready: 2 };
+  const rows = all
+    .filter((row) => !wanted || row.progress.state === wanted)
+    .sort((a, b) => {
+      const rank = (order[a.progress.state] ?? 9) - (order[b.progress.state] ?? 9);
+      if (rank !== 0) return rank;
+      if (a.due_at !== b.due_at) return (a.due_at ?? '9999').localeCompare(b.due_at ?? '9999');
+      return a.client_name.localeCompare(b.client_name);
+    });
+
+  const dueCell = (row) => {
+    if (!row.due_at) return html`<span class="note">no date</span>`;
+    if (row.due_at < today && !showingClosed) {
+      return html`<strong class="error">overdue</strong> <span class="note">${row.due_at}</span>`;
+    }
+    return row.due_at;
+  };
 
   const table = rows.length === 0
-    ? html`<p>${showingClosed ? 'Nothing has been closed yet.' : html`No requests yet. <a href="/requests/new">Start one</a>.`}</p>`
+    ? html`<p>${showingClosed
+        ? 'Nothing has been closed yet.'
+        : wanted
+          ? html`Nothing is in that state. <a href="/requests">Show everything open</a>.`
+          : html`No requests yet. <a href="/requests/new">Start one</a>.`}</p>`
     : html`<table>
-        <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Items</th><th align="left">Outstanding</th></tr></thead>
+        <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">State</th><th align="left">Due</th><th align="left">Outstanding</th><th align="left">To check</th></tr></thead>
         <tbody>
           ${rows.map((row) => html`<tr>
             <td>${row.client_name}</td>
             <td><a href="/requests/${row.id}">${row.title}</a></td>
-            <td>${row.item_count}</td>
-            <td>${row.outstanding_count === 0 ? html`<strong>none — complete</strong>` : row.outstanding_count}</td>
+            <td><a href="/requests?state=${row.progress.state}">${REQUEST_STATE_WORDS[row.progress.state]}</a></td>
+            <td>${dueCell(row)}</td>
+            <td>${row.progress.outstanding === 0 ? html`<strong>none</strong>` : row.progress.outstanding}</td>
+            <td>${row.progress.toCheck === 0 ? html`<span class="note">—</span>` : row.progress.toCheck}</td>
           </tr>`)}
         </tbody>
       </table>`;
@@ -535,11 +608,20 @@ function listRequests({ db, response, practitioner, url, practiceId }) {
           ? html`<a href="/requests">Open requests</a>`
           : html`Open &middot; <a href="/requests?closed=1">closed (${closed})</a>`}
       </p>
+      ${showingClosed || all.length === 0
+        ? ''
+        : html`<p class="note">
+            ${(counts['to-check'] ?? 0) > 0
+              ? html`<a href="/requests?state=to-check"><strong>${counts['to-check']}</strong> with files to check</a> &middot; `
+              : ''}
+            <a href="/requests?state=waiting">${counts.waiting ?? 0} waiting on clients</a> &middot;
+            <a href="/requests?state=ready">${counts.ready ?? 0} ready to work on</a> &middot;
+            <a href="/requests">all ${all.length}</a>
+          </p>`}
       ${table}
       <p><a href="/requests/new">New request</a></p>`,
   }));
 }
-
 function requestForm({ error = null, values = {} } = {}) {
   return html`
     <h1>New request</h1>
@@ -559,9 +641,41 @@ function requestForm({ error = null, values = {} } = {}) {
     </form>`;
 }
 
-function newRequestForm({ response, practitioner }) {
+function newRequestForm({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
-  return sendPage(response, 200, page({ title: 'New request', practitioner, body: requestForm() }));
+
+  // `?from=<request id>` fills the form in from a request that already exists.
+  //
+  // This is the smallest honest version of a template, and it is aimed at the biggest repeat cost in
+  // the research: the same list, rebuilt from scratch every January. It *fills the form in* rather than
+  // creating the request outright, so the practice sees and adjusts the list before it goes anywhere —
+  // which is also why it needs no stored template, no schedule and no name for itself.
+  const from = url?.searchParams?.get('from');
+  const source = from ? requestFor(db, practiceId, from) : null;
+
+  const values = source
+    ? {
+        client: source.client_name,
+        client_email: source.client_email ?? '',
+        title: '',
+        due: '',
+        items: itemsOf(db, source.id)
+          .filter((item) => !item.withdrawn)
+          .map((item) => (item.note ? `${item.label} — ${item.note}` : item.label))
+          .join('\n'),
+      }
+    : {};
+
+  return sendPage(response, 200, page({
+    title: 'New request',
+    practitioner,
+    banner: source
+      ? html`<p class="note">Filled in from <a href="/requests/${source.id}">${source.title}</a> for
+          ${source.client_name}. Change anything you like — nothing is created until you press the
+          button, and the earlier request is not touched.</p>`
+      : null,
+    body: requestForm({ values }),
+  }));
 }
 
 async function createRequestPage({ db, request, response, practitioner, practiceId }) {
@@ -628,6 +742,8 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   const received = live.filter((item) => filesOf(item).length > 0).length;
   const outstanding = live.filter((item) => filesOf(item).length === 0);
   const attention = live.filter((item) => item.needsAttention);
+  // Computed from the same function the list uses, so the page and the board cannot disagree.
+  const progress = requestProgress(db, found.id);
   const events = history(db, found.id);
 
   // The confirmation line, when the practice has just arrived from a send.
@@ -642,6 +758,15 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
 
   /** What the practice can say about one item — which is what makes the list a living thing. */
   const controlsFor = (item) => html`
+    ${item.received
+      ? item.checked
+        ? html`<form method="post" action="/requests/${found.id}/items/${item.id}/uncheck" class="inline">
+            <button type="submit">Not checked after all</button>
+          </form>`
+        : html`<form method="post" action="/requests/${found.id}/items/${item.id}/check" class="inline">
+            <button type="submit">Checked it</button>
+          </form>`
+      : ''}
     ${item.needsAttention
       ? html`<form method="post" action="/requests/${found.id}/items/${item.id}/clear-attention" class="inline">
           <button type="submit">Dealt with</button>
@@ -658,9 +783,13 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
     <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
     <td>${item.needsAttention
       ? html`<strong>needs attention</strong>${item.attentionNote ? html`<br><span class="note">${item.attentionNote}</span>` : ''}`
-      : filesOf(item).length > 0
-        ? html`<strong>received</strong>`
-        : 'outstanding'}</td>
+      : !item.received && item.clientSays
+        ? html`<strong>client says:</strong> <span class="note">${item.clientSays}</span>`
+        : item.received
+          ? item.checked
+            ? html`<strong>checked</strong>`
+            : html`<strong>to check</strong> <span class="note">nobody has looked at this yet</span>`
+          : 'outstanding'}</td>
     <td>${filesOf(item).length === 0
       ? html`<span class="note">—</span>`
       : filesOf(item).map((file) => html`<div class="file">
@@ -690,11 +819,32 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
       ${sentNotice}
       ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
       <p>${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
+      ${found.closed_at || progress.items === 0
+        ? ''
+        : progress.state === 'ready'
+          ? html`<p class="success"><strong>Ready to work on.</strong>
+              Everything asked for has arrived and been checked.${progress.checked > 0
+                ? html` Last checked against ${progress.checked} document${progress.checked === 1 ? '' : 's'}.`
+                : ''}</p>`
+          : progress.state === 'to-check'
+            ? html`<p class="warning"><strong>Files to check.</strong> ${progress.toCheck}
+                ${progress.toCheck === 1 ? 'document has' : 'documents have'} arrived and nothing has looked
+                at ${progress.toCheck === 1 ? 'it' : 'them'} yet. "Received" is not "ready" — do this before
+                chasing anything else, because what is already here is the thing a client is least likely
+                to send twice.</p>`
+            : html`<p class="note">Waiting on the client for ${progress.outstanding} of
+                ${progress.items} ${progress.items === 1 ? 'document' : 'documents'}.
+                ${progress.clientSaid > 0
+                  ? html`${progress.clientSaid} ${progress.clientSaid === 1 ? 'has' : 'have'} an answer
+                      from the client — see the list below.`
+                  : ''}</p>`}
       ${attention.length > 0
         ? html`<p class="warning"><strong>${attention.length === 1 ? 'One document needs attention' : `${attention.length} documents need attention`}:</strong>
             ${attention.map((item) => item.label).join(', ')}. The client's page says what is wrong with
             each one, and the next reminder asks for them again.</p>`
         : ''}
+      <p class="note"><a href="/requests/new?from=${found.id}">Start another request like this one</a> —
+      for next year, or for another client with the same paperwork.</p>
       ${keys.length > 0 && received > 0
         ? html`<div class="unlock">
             <label for="passphrase">Your passphrase, to open what has arrived</label>
@@ -886,11 +1036,12 @@ async function revokeLink({ db, request, response, practitioner, params, practic
 }
 
 const outstandingOf = (db, requestId) => {
-  const arrived = new Set(uploadsOf(db, requestId).map((upload) => upload.request_item_id));
   // An item the practice has flagged stays on the list even though a file came in: what arrived is not
-  // usable, so the next reminder has to ask again. A withdrawn item leaves the list entirely.
+  // usable, so the next reminder has to ask again. A withdrawn item leaves the list entirely. Now read
+  // from the item's own `received` flag rather than from a separate set of uploads — one query, one
+  // answer about what counts as arrived.
   return itemsOf(db, requestId).filter(
-    (item) => !item.withdrawn && (!arrived.has(item.id) || item.needsAttention),
+    (item) => !item.withdrawn && (!item.received || item.needsAttention),
   );
 };
 
@@ -945,6 +1096,12 @@ async function draftReminder({ db, request, response, practitioner, params, mail
     again: outstanding
       .filter((item) => item.needsAttention)
       .map((item) => ({ label: item.label, note: item.attentionNote })),
+    // Everything the client has said, not only the items still outstanding: what they said about an item
+    // that has since arrived is part of the record, and the practice should see it in the draft rather
+    // than discover it later.
+    theySaid: itemsOf(db, found.id)
+      .filter((item) => !item.withdrawn && item.clientSays)
+      .map((item) => ({ label: item.label, says: item.clientSays })),
     link: `${originOf(request)}/r/${token}`,
   });
 
@@ -1145,6 +1302,12 @@ const ITEM_ACTIONS = {
     setItemAttention(db, practiceId, requestId, itemId, { note }),
   'clear-attention': ({ db, practiceId, requestId, itemId }) =>
     clearItemAttention(db, practiceId, requestId, itemId),
+  // The practice saying "I have looked at this", and taking it back. Both are recorded, because the
+  // second is how a mistake gets corrected and the history should show that it was.
+  check: ({ db, practiceId, requestId, itemId }) =>
+    setItemReviewed(db, practiceId, requestId, itemId, true),
+  uncheck: ({ db, practiceId, requestId, itemId }) =>
+    setItemReviewed(db, practiceId, requestId, itemId, false),
 };
 
 async function changeItemPage({ db, request, response, practitioner, params, practiceId }) {
@@ -1207,7 +1370,6 @@ function clientPage({ db, response, params }) {
   // — but a client asked again for something the practice has stopped wanting is a client who stops
   // trusting the list.
   const items = itemsOf(db, open.id).filter((item) => !item.withdrawn);
-  const arrived = new Set(uploadsOf(db, open.id).map((upload) => upload.request_item_id));
 
   if (!open.practice_public_key) {
     return sendPage(response, 503, page({
@@ -1222,9 +1384,11 @@ function clientPage({ db, response, params }) {
     <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
     <td>${item.needsAttention
       ? html`<strong>please send this again</strong>${item.attentionNote ? html`<br><span class="note">${item.attentionNote}</span>` : ''}`
-      : arrived.has(item.id)
+      : item.received
         ? html`<strong>received</strong>`
-        : 'still needed'}</td>
+        : item.clientSays
+          ? html`<strong>you said:</strong> <span class="note">${item.clientSays}</span>`
+          : 'still needed'}</td>
     <td>
       <form class="upload" method="post" action="/r/${params[0]}/items/${item.id}">
         <input type="file" name="file" required>
@@ -1232,6 +1396,12 @@ function clientPage({ db, response, params }) {
         <button type="submit">Send</button>
         <div class="status note"></div>
       </form>
+      ${item.received
+        ? ''
+        : html`<form method="post" action="/r/${params[0]}/items/${item.id}/says" class="inline">
+            ${Object.entries(CLIENT_SAYS).map(([value, words]) => html`
+              <button type="submit" name="says" value="${value}">${words}</button> `)}
+          </form>`}
     </td>
   </tr>`);
 
@@ -1248,6 +1418,8 @@ function clientPage({ db, response, params }) {
         <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+      <p class="note">If you cannot send one of these, say so with the buttons beside it — the practice
+      would rather know than keep asking. Neither button takes it off the list; that is their call.</p>
       ${items.length === 0
         ? html`<p>Nothing is being asked of you at the moment. Add the practice's address to your
             contacts, in case they ask for something later.</p>`
@@ -1257,6 +1429,36 @@ function clientPage({ db, response, params }) {
       ${jsonTag('practice-key', { keyId: open.practice_key_id, publicKey: JSON.parse(open.practice_public_key) })}
       ${raw('<script type="module" src="/assets/upload.js"></script>')}`,
   }));
+}
+
+/**
+ * The client saying something other than sending a file.
+ *
+ * Two sentences, both of which a practice would rather have than silence: "I do not have this" and "I
+ * will send this later". The item stays on the list either way — whether to stop asking is the
+ * practice's decision — and the client can take it back by saying nothing again.
+ */
+async function clientSays({ db, request, response, params }) {
+  const [token, itemId] = params;
+  const found = tokenLookup(db, token);
+  if (found.state !== 'open') {
+    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
+  }
+
+  const item = itemInRequest(db, found.request.id, itemId);
+  if (!item) return fail(response, 404, 'That document is not part of this request.');
+
+  const fields = formFields(await readBody(request));
+  const asked = field(fields, 'says');
+  if (!Object.hasOwn(CLIENT_SAYS, asked)) {
+    return fail(response, 400, 'That is not one of the answers this page offers. Nothing was changed.');
+  }
+
+  // A client can clear their own answer by choosing the same one again — otherwise the sentence would be
+  // stuck on the practice's list with no way to withdraw it from the side that said it.
+  const same = item.client_says === CLIENT_SAYS[asked];
+  setClientSays(db, found.request.practice_id, found.request.id, itemId, same ? null : CLIENT_SAYS[asked]);
+  return redirect(response, `/r/${token}`);
 }
 
 /**
