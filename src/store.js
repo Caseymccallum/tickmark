@@ -282,6 +282,22 @@ export function practiceFor(db, practiceId) {
 }
 
 /**
+ * Rename a practice.
+ *
+ * Until this existed every practice was called `My practice`, because a sign-up form asks for an email
+ * and a password and nothing knows what the firm is called. A placeholder that cannot be changed is a
+ * label nobody chose, on the page a new member sees first.
+ *
+ * The name is not used in any URL or lookup — it is a display string — so changing it breaks nothing.
+ */
+export function renamePractice(db, practiceId, name) {
+  const row = db.prepare('SELECT id FROM practice WHERE id = ?').get(practiceId);
+  if (!row) return false;
+  db.prepare('UPDATE practice SET name = ? WHERE id = ?').run(name, practiceId);
+  return true;
+}
+
+/**
  * Everyone in a practice, oldest first, so the person who created it is first.
  *
  * `password_hash` is deliberately not selected: nothing that displays a member list needs it, and a

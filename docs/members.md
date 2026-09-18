@@ -107,7 +107,7 @@ make it selective beyond keeping it private.
 | --- | --- | --- |
 | **A** (done) | `practice` exists; `practice_id` on every tenant-owned row; a migration that gives every existing practitioner their own practice and backfills | The database is ready. **Behaviour is unchanged**, and every existing test still passes — one practitioner, one practice |
 | **B** (done) | The code reads and writes `practice_id`; `createdBy` records the person; sign-up creates a practice; sessions carry the practice | Two people in one practice see the same client's records — a capability the old shape could not express |
-| **C** (done) | C-i: the invitation crypto and one sealed copy of the key per member. C-ii: the members page, the invitation pages, and two browser halves | A two-partner firm can use this |
+| **C** (done) | C-i: the invitation crypto and one sealed copy of the key per member. C-ii: the members page, the invitation pages, two browser halves, and a practice name you can change | A two-partner firm can use this |
 
 **Why stage A was separate.** It changed an existing operator's database, which is the one thing here that
 can lose data. It got its own pass, its own migration test, and its own commit. The old `practitioner_id`

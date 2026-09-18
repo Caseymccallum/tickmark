@@ -113,7 +113,11 @@ follows is the original ordering, kept because the reasons are the interesting p
   the deliverability problem is answered by pointing the tool at the practice's own provider as a
   relay, a failed send keeps the text and reports the relay's own words, and there is deliberately no
   queue or retry.
-- **Multiple users per practice.** Version one is one login for one practice.
+- **Multiple users per practice.** *Shipped in Phase 2b* — see `docs/members.md`. Version one was one
+  login for one practice, which meant a shared password and a shared passphrase. Now each member has
+  their own login and their own passphrase and holds their own sealed copy of the practice's key, and an
+  invitation moves a copy of that key to them without the server ever seeing it. What is not part of it:
+  roles, permissions, and removing a member.
 - **Decryption in the browser for download.** *Shipped.* The browser viewer came before the export
   tool turned out to be needed.
 - **Docker Compose as the only install path.** *Shipped and verified by running it.* A Helm chart, a

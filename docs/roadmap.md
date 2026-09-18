@@ -262,8 +262,11 @@ wrong — the honest version needs the "no wrapped copy of the newest key" state
 on, and it needs a decision about what happens to the sealed copies of a person who leaves. The state is
 visible today (the members page has the column); the act is not built, and `docs/members.md` records why.
 
-Also not built, and smaller: a practice name that is not the placeholder `My practice`. The column exists,
-one sign-up writes it, and nothing edits it yet.
+**The practice can be renamed** (`POST /members/name`), because until that existed every practice was
+called `My practice` — a label nobody chose, on the page a new member sees first. Anyone in the practice
+may do it, and that is the honest consequence of having no roles: inventing a hidden owner-only rule would
+be a permission system with one rule in it. One test asserts the new name reaches the *invitation* page,
+because that is where it matters most.
 
 ### 2c. Re-encrypting old files, so a key can be deleted
 

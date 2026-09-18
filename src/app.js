@@ -62,6 +62,8 @@ import {
   issueToken,
   claimInvite,
   membersOf,
+  practiceFor,
+  renamePractice,
   wrappingHoldersOf,
   itemInRequest,
   itemsOf,
@@ -92,6 +94,15 @@ const MIN_PASSWORD = 12;
  * in a mailbox in a year is not a key. It is one number, in one place, and the page says it out loud.
  */
 const INVITE_DAYS = 7;
+
+/**
+ * How long a practice name may be.
+ *
+ * Not a database limit — `name` is TEXT and would take anything — but a display one: it appears in the
+ * page header, in the table on the members page, and on the page a new member lands on. A hundred and
+ * twenty characters is more than any firm needs and short enough to still be a heading.
+ */
+const MAX_PRACTICE_NAME = 120;
 const MAX_ITEMS = 50;
 const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
 
@@ -119,6 +130,7 @@ export const ROUTES = [
   ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase],
   ['GET', '/members', membersPage],
   ['POST', '/members/invite', createInvitePage],
+  ['POST', '/members/name', renamePracticePage],
   ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
   ['GET', '/requests/new', newRequestForm],
@@ -1438,13 +1450,20 @@ function membersPage({ db, response, practitioner, practiceId }) {
   const newest = keys[0] ?? null;
   const mine = newest?.wrappedPrivateKey ?? null;
   const holders = newest ? new Set(wrappingHoldersOf(db, newest.id)) : new Set();
+  const practice = practiceFor(db, practiceId);
 
   return sendPage(response, 200, page({
     title: 'Members',
     practitioner,
     body: html`
-      <h1>Members <span class="note">${members.length === 1 ? 'one person' : `${members.length} people`}
-        in this practice</span></h1>
+      <h1>${practice.name}</h1>
+      <p class="note">${members.length === 1 ? 'One person' : `${members.length} people`} in this practice.
+        The name is yours to change — it is the first thing a new member sees.</p>
+      <form method="post" action="/members/name" class="inline">
+        <input name="name" value="${practice.name}" maxlength="${MAX_PRACTICE_NAME}"
+          aria-label="Practice name" required>
+        <button type="submit">Rename</button>
+      </form>
       <table>
         <thead><tr><th>Email</th><th>Joined</th><th>Can open the newest files?</th></tr></thead>
         <tbody>
@@ -1643,6 +1662,30 @@ async function acceptInvite({ db, request, response, params }) {
 
   const { token } = createSession(db, claimed.practitionerId);
   return redirect(response, '/requests', [sessionCookie(token)]);
+}
+
+/**
+ * Rename the practice.
+ *
+ * Anyone in the practice may do this, and that is deliberate rather than lazy: there are no roles yet
+ * (`docs/members.md` says so), and inventing a hidden owner-only rule here would be a permission system
+ * with one rule in it and no way to see the rest. When roles exist, this becomes one of the things a
+ * role decides — and until then the members page does not pretend otherwise.
+ */
+async function renamePracticePage({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const name = (field(fields, 'name') ?? '').trim();
+
+  if (name.length === 0) {
+    return fail(response, 400, 'A practice needs a name. It can be anything — it is only shown to you and to the people you invite.', practitioner);
+  }
+  if (name.length > MAX_PRACTICE_NAME) {
+    return fail(response, 400, `That name is longer than ${MAX_PRACTICE_NAME} characters, which is more than a heading can hold.`, practitioner);
+  }
+
+  renamePractice(db, practiceId, name);
+  return redirect(response, '/members');
 }
 
 function keysPage({ db, response, practitioner, practiceId }) {

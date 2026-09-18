@@ -20,10 +20,17 @@ encrypted uploads, **seeing what is still outstanding and what needs re-sending*
 reminder** for what has not arrived — and **sending it**, if you point Tickmark at a mail relay —
 **closing a request** when there is nothing left to ask for, **opening what arrived in the browser** —
 the passphrase is typed into the page, the file is decrypted there, and the server never sees it —
-and **rotating the key**, with the old one kept so that nothing already sent becomes unopenable.
+**rotating the key**, with the old one kept so that nothing already sent becomes unopenable, and
+**inviting a second person into the practice**: each member gets their own login and their own
+passphrase, holds their own sealed copy of the practice's key, and can open documents that arrived
+before they did. The invitation carries the key sealed under a secret that travels in the part of a
+link a browser never sends to a server.
 
 What does not exist yet: **re-encrypting old files to a new key**, which is the only thing that would
-let an old key be deleted. Until it exists, old keys stay, and `docs/encryption.md` says why.
+let an old key be deleted; and **removing a member**, which is the state you can see on the members page
+but not yet an act — `docs/members.md` says what it would take and why the honest version has to come with
+a sentence about what it cannot do. Until old files can be re-encrypted, old keys stay, and
+`docs/encryption.md` says why.
 
 `docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,
 and the records survive a restart. That sentence is here because it was tested, not because it was
@@ -44,7 +51,10 @@ key your clients' documents are encrypted to, it is never sent to the server, an
 recover it. Read [the encryption document](docs/encryption.md) before choosing it.
 
 `docker compose up` is the intended install and it is now verified — built, run, driven through the
-whole loop including a rotation, and restarted to confirm the volume keeps the records.
+whole loop including a rotation, and restarted to confirm the volume keeps the records. One container,
+one volume, no external database and no third-party service: `node:sqlite` and `node:crypto` are in the
+runtime. `docs/mvp.md` has the design, and `docs/verify-demand.md` is the check that was supposed to
+come before the code.
 
 ## The problem it exists for
 
@@ -94,8 +104,10 @@ first version, not an oversight:
 - **no compliance badges.** No SOC 2, no "IRS-compliant", no "GDPR-certified". The
   honest claim is narrower and better for this buyer: your data is on your hardware,
   and the operator cannot read the files.
-- **no team roles, seats or per-user pricing.** One practice, self-hosted, unlimited
-  clients. If you need multi-user permissions, this is not it yet.
+- **no roles or permissions.** Several people can be in one practice, each with their own login and
+  their own passphrase — but everyone can see and do everything. There are no seats, no per-user
+  pricing, and no "read only" colleague. If you need permissions rather than shared access, this is not
+  it yet.
 - **no mobile app.** Responsive pages only.
 - **no AI.** Nothing here sends a client's documents anywhere.
 
@@ -116,19 +128,6 @@ Worth being precise, because it is the product's main claim:
 - Encrypting a file to a key is not the same as knowing who holds the key. Tickmark
   proves a file arrived intact and unread by the server. It does not prove the person
   who uploaded it was who they claimed to be.
-
-## Running it
-
-Not yet built. The intended experience, which the plan is written against:
-
-```
-docker compose up
-```
-
-One container, one volume, no external database, no third-party service, and no
-runtime dependencies — `node:sqlite` and `node:crypto` are in the runtime. See
-`docs/mvp.md` for the design and `docs/verify-demand.md` for the check that comes
-before the code.
 
 ## Documents
 

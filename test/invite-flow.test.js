@@ -229,6 +229,78 @@ test('a submission with something that is not a key record is refused', async ()
   });
 });
 
+test('the practice can be renamed, and a new member sees the real name', async () => {
+  await withServer(async ({ agent, db }) => {
+    const firm = await practiceWithRequest({ agent, db });
+    const keyId = db.prepare('SELECT id FROM practice_key').get().id;
+
+    const before = await firm.client.get('/members');
+    assert.match(await before.text(), /My practice/, 'it starts as the placeholder');
+
+    const renamed = await firm.client.post('/members/name', { name: '  Northwind & Co  ' });
+    assert.equal(renamed.status, 303, 'the rename is accepted');
+    assert.equal(renamed.headers.get('location'), '/members');
+
+    const after = await firm.client.get('/members');
+    const afterHtml = await after.text();
+    assert.match(afterHtml, /Northwind &amp; Co/, 'the new name is shown, escaped');
+    assert.ok(!/My practice/.test(afterHtml), 'and the placeholder is gone');
+
+    // It is trimmed, so a name pasted with padding is the name.
+    assert.equal(db.prepare('SELECT name FROM practice').get().name, 'Northwind & Co');
+
+    // And the person who lands on an invitation sees it rather than a placeholder.
+    const made = await inviteFromBrowser(firm.client, {
+      keyId,
+      wrappedPrivateKey: firm.keys.wrappedPrivateKey,
+      passphrase: firm.keys.passphrase,
+    });
+    const landing = await agent().get(`/invite/${made.body.token}`);
+    assert.match(await landing.text(), /Join Northwind &amp; Co/, 'the invitation names the firm');
+  });
+});
+
+test('a name that is empty, blank or absurd is refused, and the old name stays', async () => {
+  await withServer(async ({ agent, db }) => {
+    const firm = await practiceWithRequest({ agent, db });
+
+    for (const attempt of ['', '   ', '\n\t ', 'x'.repeat(121)]) {
+      const refused = await firm.client.post('/members/name', { name: attempt });
+      assert.equal(refused.status, 400, `"${attempt.slice(0, 12)}" is refused`);
+      assert.equal(
+        db.prepare('SELECT name FROM practice').get().name,
+        'My practice',
+        'and the name that was there is still there',
+      );
+    }
+
+    // A name of exactly the limit is allowed, because a limit that cannot be reached is a puzzle.
+    const atLimit = await firm.client.post('/members/name', { name: 'y'.repeat(120) });
+    assert.equal(atLimit.status, 303);
+    assert.equal(db.prepare('SELECT name FROM practice').get().name, 'y'.repeat(120));
+  });
+});
+
+test('renaming touches one practice, and needs a session', async () => {
+  await withServer(async ({ agent, db }) => {
+    const mine = await practiceWithRequest({ agent, db }, 'mine@practice.example');
+    await practiceWithRequest({ agent, db }, 'theirs@practice.example');
+
+    await mine.client.post('/members/name', { name: 'Mine Only' });
+    const names = db.prepare('SELECT name FROM practice ORDER BY name').all().map((row) => row.name);
+    assert.deepEqual(names, ['Mine Only', 'My practice'], 'the other practice is untouched');
+
+    // Signed out, the rename does not happen — and does not leak whether anything exists.
+    const anonymous = await agent().post('/members/name', { name: 'Somebody Else' });
+    assert.equal(anonymous.status, 303);
+    assert.equal(anonymous.headers.get('location'), '/signin');
+    assert.deepEqual(
+      db.prepare('SELECT name FROM practice ORDER BY name').all().map((row) => row.name),
+      ['Mine Only', 'My practice'],
+    );
+  });
+});
+
 test('the members page refuses to make an invitation from a key the practice does not hold', async () => {
   await withServer(async ({ agent, db }) => {
     const firm = await practiceWithRequest({ agent, db });

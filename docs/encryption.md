@@ -107,6 +107,41 @@ Two consequences worth knowing:
 - Losing a passphrase is still unrecoverable. A copy of a key without its passphrase is a file nobody
   can open, and that is the same property as the guarantee seen from the other side.
 
+## Giving the key to a second person
+
+A practice has one key, and a member added later needs a copy of it. That is the only operation in
+Tickmark that moves private key material, so it is worth being precise about what travels.
+
+**An invitation is a sealed copy plus a secret, kept apart.** The inviting member's browser takes the
+practice's private key — unwrapped with *their* passphrase — and seals it under a fresh random secret.
+Only the sealed copy is sent to the server. The secret goes in the link's **fragment**: the part after
+`#`, which browsers do not send in a request. So the server stores something it cannot read, in the same
+way it stores a client's documents, and the link is the only thing that can open it.
+
+The new member's browser reads the secret from the fragment, opens the sealed copy, and re-seals **the
+same key** under their own passphrase. It sends only that. The result is one row per member per key:
+
+```
+practice_key
+  └── key_wrapping   one per member: the same key, sealed under their own passphrase
+```
+
+Three things follow, and each is the kind of thing that should be read before relying on it:
+
+- **Whoever opens the link gets the key.** It is not addressed to a person. Anyone who has it before the
+  intended member does, and accepts it, is a member. The page says so above the form rather than in a
+  footnote, and that is the honest cost of not requiring a directory to exist before someone can join.
+- **The server keeps the sealed copy and every member's sealed copy, for as long as the rows exist.** It
+  cannot open any of them, which is the point — but "the server cannot read it" is not the same as "it is
+  not there", and a backup holds them all.
+- **Inviting someone does not rotate anything.** The key is the same key it was, so documents that
+  arrived before the new member existed open for them. That is the whole reason a firm can add a partner
+  mid-season, and it is the property `test/invite-flow.test.js` proves end to end.
+
+A practice with two members has two passphrases, and either one opens the documents. A member who
+changes their passphrase changes only their own sealed copy: their colleague's is untouched, and neither
+can derive the other's.
+
 ## The threat model
 
 **Protected:**
@@ -134,6 +169,10 @@ Two consequences worth knowing:
   practice opens it. The claim is about the *server*, not about either machine's browser.
 - **The identity of the uploader.** Anyone holding the link can send a file. Encryption says
   nothing about who is holding the other end of it.
+- **An invitation link that reaches the wrong person.** Anyone who opens it first gets a sealed copy of
+  the practice's key and becomes a member. It works once and expires, which bounds the window rather
+  than removing the risk, and there is no way to make it selective without requiring the invited person
+  to already be known to the server — which is the thing the link exists to avoid.
 - **Envelopes addressed to the wrong key.** The server cannot tell which practice an envelope was
   encrypted to, because telling would require the ability to open it. A file encrypted to the wrong
   key would be stored and would then be unopenable. Through the product this cannot happen: the key
