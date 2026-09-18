@@ -19,6 +19,11 @@ services:
       # point them at, and why a relay rather than sending directly.
       # TICKMARK_SMTP_URL: "smtp://user@example.com:password@relay.example:587"
       # TICKMARK_MAIL_FROM: "Tickmark Practice <office@practice.example>"
+      #
+      # If the relay's certificate comes from your own authority, the CA file has to be
+      # inside the container as well as named here — add a bind mount for it beside the
+      # volume below, and set TICKMARK_SMTP_CA_FILE to the path inside the container.
+      # TICKMARK_SMTP_CA_FILE: "/etc/tickmark/my-relay-ca.pem"
     volumes:
       - tickmark-data:/data
     restart: unless-stopped
