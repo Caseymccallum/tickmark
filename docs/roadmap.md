@@ -18,7 +18,7 @@ Phase 2   Make it usable in the field
           2c re-encrypting old files      COMPLETE — and a key can now be retired
           2d other install paths          NOT PLANNED
           2e the states the trade asks for COMPLETE — see docs/product-needs.md
-          2f chase everyone at once     COMPLETE — 2c is the last item open
+          2f chase everyone at once     COMPLETE — every item of Phases 1 and 2 is now built
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -324,6 +324,24 @@ is what the move is for), and a key already retired (so the date means something
 **The sentence the page has to say**, because it reaches further than the server: retiring a key cannot be
 undone, and *any copy of an unmoved file held or backed up elsewhere* becomes unopenable, because the key
 that opened it no longer exists. Hence the word has to be typed rather than a button pressed.
+
+### The install path, and how it is checked
+
+**`node tools/check-container.mjs`** drives a running container through the whole loop over HTTP: a
+practice, its key, two encrypted uploads, a rotation, the move of every stored file onto the new key, and
+the retirement of the old one — then, after `docker compose restart`, signs back in and opens those files
+through the volume that survived.
+
+It exists because **`npm test` cannot check the install path.** The suite runs on the host, where `web/` is
+on disk, so it can say nothing about whether the image contains it — and the image once built successfully
+and then crash-looped on `ERR_MODULE_NOT_FOUND` for exactly that reason, while `docker build` reported
+success. That failure mode is now checked two ways: the tool asks the container for `/assets/reencrypt.js`
+and confirms it is the real file, and pointing the tool at a deliberately broken image **exits 1** rather
+than reporting a pass. Both were verified by doing it.
+
+It uses the same crypto module the container serves, because that is the one a browser runs. It is not part
+of `npm test` because it needs Docker and a running container — the same treatment the browser tests get on
+a machine with no browser.
 
 ### 2d. Packaging beyond Docker
 

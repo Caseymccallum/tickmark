@@ -2,9 +2,11 @@
 /**
  * Open a stored envelope with the practice's passphrase.
  *
- * This exists because the browser-side *download* and decryption is not built yet, and without
- * something like it the files a client sends would be unreadable by everyone. It is a bridge,
- * and it says so here rather than being discovered later.
+ * This exists as a bridge for an operator who has the data directory and no browser to hand: the
+ * practice can open a document in the page now, and this opens the same file from a terminal, which is
+ * what a server being restored or a backup being checked actually needs. It was written before the
+ * browser-side download existed and it said so; that sentence outlived the fact, which is why it now
+ * describes what this *is* rather than what was missing when it was written.
  *
  * It is not a second implementation of anything: the cryptography is imported from the same
  * module the browser loads, so an envelope this cannot open is a bug in one place rather than a

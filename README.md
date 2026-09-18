@@ -70,11 +70,22 @@ You will be asked for a passphrase the first time you try to send a client a lin
 key your clients' documents are encrypted to, it is never sent to the server, and nothing can
 recover it. Read [the encryption document](docs/encryption.md) before choosing it.
 
-`docker compose up` is the intended install and it is now verified — built, run, driven through the
-whole loop including a rotation, and restarted to confirm the volume keeps the records. One container,
-one volume, no external database and no third-party service: `node:sqlite` and `node:crypto` are in the
-runtime. `docs/mvp.md` has the design, and `docs/verify-demand.md` is the check that was supposed to
-come before the code.
+`docker compose up` is the intended install and it is verified — built, run, driven through the whole
+loop including a rotation and the re-encryption pass, then restarted to confirm the volume keeps the
+records. One container, one volume, no external database and no third-party service: `node:sqlite` and
+`node:crypto` are in the runtime. You can run that check yourself against your own container:
+
+```
+docker compose up -d
+node tools/check-container.mjs                 # a practice, uploads, a rotation, the move, a retirement
+docker compose restart
+node tools/check-container.mjs --after-restart # signs back in and opens the files the volume kept
+```
+
+It exists because `npm test` cannot check the install path — the suite runs on the host, where `web/` is
+on disk, and the image once built successfully and then died on `ERR_MODULE_NOT_FOUND` because it had
+not copied that directory. `docs/mvp.md` has the design, and `docs/verify-demand.md` is the check that
+was supposed to come before the code.
 
 ## The problem it exists for
 

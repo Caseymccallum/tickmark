@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "check:container": "node tools/check-container.mjs"
   },
   "dependencies": {},
   "devDependencies": {}
