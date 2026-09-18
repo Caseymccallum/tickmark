@@ -32,6 +32,7 @@ const PLAN_TABLES = [
   'access_token',
   'client',
   'event',
+  'practice',
   'practice_key',
   'practitioner',
   'request',
@@ -58,7 +59,7 @@ function scenario(db) {
   return { practitionerId, clientId, requestId };
 }
 
-test('the schema is exactly the seven tables the plan describes', () => {
+test('the schema is exactly the tables this list names, and adding one is a decision', () => {
   const db = openDatabase();
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")

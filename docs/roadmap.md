@@ -14,7 +14,7 @@ Phase 0   Verify the demand            NOT RUN — and it decides whether Phase 
 Phase 1   Version one                  COMPLETE
 Phase 2   Make it usable in the field
           2a email sending             COMPLETE
-          2b several people per practice  NOT STARTED
+          2b several people per practice  A done; B and C NOT STARTED
           2c re-encrypting old files      NOT STARTED
           2d other install paths          NOT PLANNED
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
@@ -159,14 +159,45 @@ project:
 
 ### 2b. More than one person per practice
 
-**Status: not started.** A practice with two partners shares one login today, which means a shared
-password and a shared passphrase. That is worse than inconvenient: it is a security property that
-cannot be expressed. It needs separate logins against one practice, and a decision about whether the
-passphrase is per person or per practice — which is a design question, not a coding one, because
-per-person passphrases mean per-person copies of the key.
+**Status: stage A done; B and C not started.** `docs/members.md` holds the decision, and it came before
+the code because the roadmap was right that it is a design question: the answer decides the shape of the
+data, and the shape of the data is expensive to change later.
 
-It waits because it changes the shape of the data model, and because a sole practitioner is the buyer
-this is written for.
+**The decision: one key pair for the practice, wrapped once per person.** Not a key per person — the
+documents belong to the firm, a request has one recipient for the client to encrypt to, and a partner
+leaving must not make four years of client records unopenable. The cost is stated there rather than
+discovered: adding a member means giving them the private key, and removing one does not un-disclose
+anything they already had.
+
+**Stage A (this pass)** puts the tenancy in the schema: a `practice` row, a `practice_id` on every table
+that belongs to a firm, and a migration that gives each existing practitioner their own practice and
+backfills their clients, requests, keys and sessions into it. **Behaviour is unchanged** — one
+practitioner, one practice — and every existing test still passes, which is the point of doing it
+separately.
+
+Two things went wrong while writing it, and both were caught by tests that already existed:
+
+1. **The new indexes broke old databases.** They were written into `SCHEMA`, which runs *before* the
+   migration adds the columns they name — so opening a version-one database failed with
+   `no such column: practice_id`. `test/keys.test.js`'s old-schema test caught it, because it is the
+   only test that opens a database written by the previous release. The indexes now run after the
+   columns, and the reason is recorded where they are declared.
+2. **`migratedKeys` started meaning something else.** It was a single total, so adding a migration made
+   it count practices and backfills too — a number that would have been a lie in the one place an
+   operator looks to see what happened to their file. Each migration now has its own counter, and a
+   test asserts the key one is still exactly what it says.
+
+The migration is tested against a database built with the **old schema by hand**, because a migration
+tested against the schema it is migrating *to* proves nothing: two practices, each with a client, a
+request, a key and a session. It asserts that each row lands in the practice of whoever created it, that
+no row or value is lost, that the old `practitioner_id` columns are left readable, and that a second run
+changes nothing. Two mutations proved those tests bite: not running the migration fails two of them, and
+pointing the client backfill at the first practice instead of the owner's fails exactly the assertion
+that names it.
+
+**Left for stage B:** the code switches to reading `practice_id`; membership; roles; the invitation
+flow designed in `docs/members.md`, where the private key travels in a link fragment so the server never
+sees it. **Stage C:** a members page, and a practice name that is not the placeholder `My practice`.
 
 ### 2c. Re-encrypting old files, so a key can be deleted
 

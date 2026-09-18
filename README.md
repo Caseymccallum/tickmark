@@ -137,6 +137,7 @@ before the code.
 | `NAMING.md` | Why it is called Tickmark, and every name that was rejected with a reason |
 | `docs/mvp.md` | The scope of the first version, the stack, the data model, and what is cut |
 | `docs/encryption.md` | What is encrypted, what is not, and why — the document the central claim rests on |
+| `docs/members.md` | The decision about several people in one practice: one key, wrapped once per person, and what it costs |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
 | `docs/roadmap.md` | What comes next and why, including what is deliberately not being built |
 | `docs/verify-demand.md` | The pre-build check: who is asked, what is asked, and what the answers decide |

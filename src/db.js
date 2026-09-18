@@ -1,5 +1,5 @@
 /**
- * The database: one file, eight tables, no dependencies.
+ * The database: one file, ten tables, no dependencies.
  *
  * `node:sqlite` ships in the runtime, so a practice that self-hosts this inherits no
  * driver, no ORM and no native module to compile. That matters more here than it would
@@ -7,14 +7,17 @@
  * financial records, and every third-party package in the tree is a thing they have to
  * trust and keep patched.
  *
- * The schema lives here rather than in a migrations directory because version one has
+ * The schema lives here rather than in a migrations directory because version one had
  * exactly one schema. When there is a second, this becomes a migrations directory and
  * this comment goes away.
  *
- * The plan in `docs/mvp.md` said seven tables. There are eight: `session` was added
- * because signing out has to actually revoke access, and that needs server-side state
- * — a signed cookie could be told to stop being valid, but only by keeping a list of
- * secrets the process would lose on restart.
+ * The table count has been wrong twice in this comment's life, which is why it now says
+ * what the count *is* rather than what a plan expected. The plan in `docs/mvp.md` said
+ * seven. `session` made it eight, because signing out has to actually revoke access and
+ * that needs server-side state — a signed cookie could be told to stop being valid, but
+ * only by keeping a list of secrets the process would lose on restart. `practice` made it
+ * ten, because a firm with two partners cannot be represented by one login; see
+ * `docs/members.md`.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -22,11 +25,26 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export const SCHEMA = `
+-- A practice: the firm, which is the thing that owns client records, keys and requests.
+--
+-- Version one had no such row, and a practitioner *was* the practice — one login, one firm. That is
+-- fine until a firm has two partners, at which point "whose client is this?" has no answer that a
+-- shared password can give. See docs/members.md for the decision and what it costs.
+CREATE TABLE IF NOT EXISTS practice (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS practitioner (
   id                  TEXT PRIMARY KEY,
   email               TEXT NOT NULL UNIQUE,
   password_hash       TEXT NOT NULL,
-  created_at          TEXT NOT NULL
+  created_at          TEXT NOT NULL,
+  -- The practice this person belongs to. Nullable *here* and enforced in stage B: SQLite cannot add a
+  -- NOT NULL column to a table that already has rows, so the migration below creates the practices
+  -- first and backfills. New rows always set it.
+  practice_id         TEXT REFERENCES practice(id)
 );
 
 -- A practice's keys, as a history rather than a single value.
@@ -43,7 +61,8 @@ CREATE TABLE IF NOT EXISTS practice_key (
   practitioner_id     TEXT NOT NULL REFERENCES practitioner(id),
   public_key          TEXT NOT NULL,
   wrapped_private_key TEXT NOT NULL,
-  created_at          TEXT NOT NULL
+  created_at          TEXT NOT NULL,
+  practice_id         TEXT REFERENCES practice(id)
 );
 
 CREATE TABLE IF NOT EXISTS client (
@@ -51,7 +70,8 @@ CREATE TABLE IF NOT EXISTS client (
   practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
   name            TEXT NOT NULL,
   email           TEXT,
-  created_at      TEXT NOT NULL
+  created_at      TEXT NOT NULL,
+  practice_id     TEXT REFERENCES practice(id)
 );
 
 CREATE TABLE IF NOT EXISTS request (
@@ -61,7 +81,8 @@ CREATE TABLE IF NOT EXISTS request (
   title           TEXT NOT NULL,
   due_at          TEXT,
   closed_at       TEXT,
-  created_at      TEXT NOT NULL
+  created_at      TEXT NOT NULL,
+  practice_id     TEXT REFERENCES practice(id)
 );
 
 CREATE TABLE IF NOT EXISTS request_item (
@@ -123,7 +144,8 @@ CREATE TABLE IF NOT EXISTS session (
   practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
   token_hash      TEXT NOT NULL UNIQUE,
   expires_at      TEXT NOT NULL,
-  created_at      TEXT NOT NULL
+  created_at      TEXT NOT NULL,
+  practice_id     TEXT REFERENCES practice(id)
 );
 
 CREATE INDEX IF NOT EXISTS request_client ON request(client_id);
@@ -135,19 +157,112 @@ CREATE INDEX IF NOT EXISTS practice_key_owner ON practice_key(practitioner_id, c
 `;
 
 /**
+ * Indexes on the practice columns, created here rather than in `SCHEMA`.
+ *
+ * `SCHEMA` runs before `migrate()` on an existing database, so an index naming a column that
+ * `migrate()` has not added yet fails — which is exactly what happened when these were first written
+ * into `SCHEMA`, and the old-schema migration test in `test/keys.test.js` caught it. The columns must
+ * exist first; then these.
+ */
+const PRACTICE_INDEXES = `
+CREATE INDEX IF NOT EXISTS practitioner_practice  ON practitioner(practice_id);
+CREATE INDEX IF NOT EXISTS client_practice        ON client(practice_id);
+CREATE INDEX IF NOT EXISTS request_practice       ON request(practice_id);
+CREATE INDEX IF NOT EXISTS session_practice       ON session(practice_id);
+CREATE INDEX IF NOT EXISTS practice_key_practice  ON practice_key(practice_id, created_at);
+`;
+
+/**
  * Bring an older database up to this schema.
  *
  * Two kinds of step, both idempotent, because this runs on every open. `added` counts what changed,
  * and a test asserts that running it twice changes nothing the second time.
  */
 function migrate(db) {
-  let changed = singleKeyColumnsToTable(db);
+  // Counted separately rather than as one number. The first version of this returned a single total,
+  // and adding the practice migration silently made `migratedKeys` mean something else — which a test
+  // caught, and which would have been a lie in the one place an operator looks to see what happened to
+  // their database.
+  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0 };
   for (const [table, column, definition] of [
     ['request_item', 'withdrawn_at', 'TEXT'],
     ['request_item', 'attention_at', 'TEXT'],
     ['request_item', 'attention_note', 'TEXT'],
+    ['practitioner', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['practice_key', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['session', 'practice_id', 'TEXT REFERENCES practice(id)'],
   ]) {
-    changed += addColumnIfMissing(db, table, column, definition);
+    changes.columns += addColumnIfMissing(db, table, column, definition);
+  }
+  changes.tenancy = practitionerGetsAPractice(db);
+  // After the columns, not before: see the note on PRACTICE_INDEXES.
+  db.exec(PRACTICE_INDEXES);
+  return changes;
+}
+
+/**
+ * Stage A of `docs/members.md`: give every existing practitioner a practice of their own, and point
+ * everything they own at it.
+ *
+ * This is the one migration in this file that can lose data if it is wrong, so it is written to be
+ * dull and checkable:
+ *
+ * - **It never deletes or rewrites a row it does not have to.** The backfill is an `UPDATE … WHERE
+ *   practice_id IS NULL`, so a database that has already been through this is left alone, and the only
+ *   rows touched are the ones with nothing in the new column.
+ * - **Every backfill is driven by a join back through the creator.** `client`, `request`, `session` and
+ *   `practice_key` all record the practitioner who made them, so the practice each one belongs to is
+ *   already implied by the existing data rather than guessed.
+ * - **It is idempotent**, like every other step here, and a test asserts that running it twice reports
+ *   no change the second time.
+ *
+ * The old `practitioner_id` columns are deliberately **left in place**. They are what the previous
+ * release reads, so a migrated database is still readable by the software that wrote it — which is the
+ * difference between a migration and a one-way door. Stage B drops them once nothing reads them.
+ */
+function practitionerGetsAPractice(db) {
+  if (!columnsOf(db, 'practitioner').includes('practice_id')) return 0;
+
+  const orphans = db
+    .prepare('SELECT id, email, created_at FROM practitioner WHERE practice_id IS NULL')
+    .all();
+  if (orphans.length === 0) return 0;
+
+  const createPractice = db.prepare('INSERT INTO practice (id, name, created_at) VALUES (?, ?, ?)');
+  const attach = db.prepare('UPDATE practitioner SET practice_id = ? WHERE id = ?');
+  const adopt = {
+    practice_key: db.prepare(
+      'UPDATE practice_key SET practice_id = (SELECT practice_id FROM practitioner WHERE id = practice_key.practitioner_id) WHERE practice_id IS NULL',
+    ),
+    client: db.prepare(
+      'UPDATE client SET practice_id = (SELECT practice_id FROM practitioner WHERE id = client.practitioner_id) WHERE practice_id IS NULL',
+    ),
+    request: db.prepare(
+      'UPDATE request SET practice_id = (SELECT practice_id FROM practitioner WHERE id = request.practitioner_id) WHERE practice_id IS NULL',
+    ),
+    session: db.prepare(
+      'UPDATE session SET practice_id = (SELECT practice_id FROM practitioner WHERE id = session.practitioner_id) WHERE practice_id IS NULL',
+    ),
+  };
+
+  let changed = 0;
+  db.exec('BEGIN');
+  try {
+    for (const person of orphans) {
+      const practiceId = randomUUID();
+      // A placeholder name. Nothing about an existing row says what the firm is called, and inventing
+      // one from the email would be worse than a neutral label the owner can change in stage C.
+      createPractice.run(practiceId, 'My practice', person.created_at);
+      attach.run(practiceId, person.id);
+      changed += 1;
+    }
+    for (const statement of Object.values(adopt)) changed += statement.run().changes;
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
   return changed;
 }
@@ -191,7 +306,10 @@ export function openDatabase(file = ':memory:') {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
-  db.migratedKeys = migrate(db);
+  const changes = migrate(db);
+  db.migratedKeys = changes.keys;
+  db.migratedColumns = changes.columns;
+  db.migratedTenancy = changes.tenancy;
   return db;
 }
 
