@@ -41,11 +41,19 @@ stored. Every send therefore issues a new one, which also means a link the clien
 | `TICKMARK_SMTP_URL` | yes, to send | `smtp://user:pass@host:port` — STARTTLS when offered. `smtps://` is TLS from the first byte |
 | `TICKMARK_MAIL_FROM` | yes, to send | The sender, as `Name <address@host>` |
 | `TICKMARK_SMTP_TIMEOUT_MS` | no, default 20000 | How long to wait on the relay before calling it a failure |
+| `TICKMARK_SMTP_CA_FILE` | no | A PEM file of extra trusted CAs, for a relay whose certificate comes from your own authority |
 | `TICKMARK_SMTP_INSECURE` | **only for a relay on this machine** | Accepts any certificate, and allows a password to be sent to a server that offers no encryption |
 
 Setting both URL and sender is required: with only one of them, Tickmark refuses at startup and says
 which is missing, rather than silently drafting instead of sending. With neither, drafting is normal
 and the pages say so.
+
+**If your relay's certificate comes from your own authority** — an internal mail server, a corporate
+relay, one you run yourself — set `TICKMARK_SMTP_CA_FILE` to that authority's PEM file. This exists so
+that trusting one CA does not require `TICKMARK_SMTP_INSECURE`, which turns verification off for
+everything. Trusting one named authority is strictly safer than trusting anything, and a path that
+cannot be read is reported at startup with the path in it rather than as a failed send later. The
+startup log line says `with your own CA` when it is in use.
 
 Credentials are percent-encoded in the URL, so a password containing `@` is `%40`. The startup log
 prints the relay's host and port and **never** the password.
@@ -75,16 +83,26 @@ refuse: it sends what they wrote, and the page says plainly that the client cann
 the same rule as the rest of the product: the words are the practice's decision, and the consequences
 are stated rather than hidden.
 
-## What is not covered here, and why
+## What the tests cover, and what they cannot
 
-**The TLS paths are not exercised by the test suite.** Testing STARTTLS and implicit TLS needs a
-certificate; generating one needs a tool this machine does not have, and a certificate fetched from
-the internet does not belong in a repository. What *is* tested: the client asks for STARTTLS when the
-server offers it, a handshake that fails produces a clean error naming the step, the certificate is
-required unless `TICKMARK_SMTP_INSECURE` says otherwise, and a password is never sent to a server that
-offers no encryption. The first real relay will exercise the rest — so if you set this up, watch the
-first send rather than assuming.
+**Covered, including the handshake.** `test/mail-tls.test.js` runs the client against a real TLS server
+with a certificate from a throwaway CA committed in `test/fixtures/tls/`:
 
-**Document tests cannot replace a real inbox.** A conformance kit proves the conversation is what SMTP
-asks for. It cannot prove a message arrives, and it cannot prove it does not land in spam, because
-both of those are properties of the receiving provider rather than of the message.
+- a message sent over `smtps://`, with the certificate verified;
+- a **real STARTTLS upgrade** — a relay that performs the handshake on the socket, so what is asserted
+  is that the login and the message arrived *after* the upgrade, not merely that STARTTLS was asked for;
+- a certificate the client does not trust being refused, with nothing said to the server at all;
+- the same refusal during a STARTTLS upgrade, and **nothing sent afterwards** — the assertion that
+  matters most, because a client that failed the handshake and then carried on in the clear would hand
+  a password to whoever answered the port;
+- a certificate for the **wrong name** being refused.
+
+That last one is worth a sentence of its own. The client sends no SNI when the relay is addressed by IP
+address, because Node refuses an IP as `servername` — so a reader could reasonably assume the name check
+is skipped. It is not: Node verifies the certificate against the address it dialled, and the test failed
+exactly as it should when `rejectUnauthorized` was forced on in a mutation proof.
+
+**Not covered: whether a message arrives, and whether it lands in spam.** A conformance kit can prove
+the conversation is what SMTP asks for. It cannot prove delivery or reputation, because both are
+properties of the receiving provider rather than of the message. **Watch your first real send** rather
+than assuming — set the relay up, send yourself a reminder, and confirm it arrives.

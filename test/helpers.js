@@ -1,6 +1,13 @@
 /**
  * Shared plumbing for the HTTP tests.
  *
+ * **This file is not a test, and `npm test` does not run it.** The test script names the test files
+ * explicitly (`node --test "test/*.test.js"`) because Node's default discovery executes *every* `.js`
+ * file under a directory named `test`, recursively — and counts each one as a passing test. Plain
+ * `node --test` therefore reported two more tests than exist, this file and `test/smtp-relay.js` being
+ * the two. A count that overstates itself by two is exactly the kind of claim this project tries not to
+ * make.
+ *
  * One cookie-jar implementation and one server-starting helper, shared rather than copied,
  * because two copies of a test harness are two chances for the harness to be wrong in
  * different ways — the failing test would then be the harness's fault, which is the worst

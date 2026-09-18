@@ -86,9 +86,56 @@ Three things the build found that the plan did not anticipate:
    stated rather than hidden.
 
 Covered by tests: the conversation itself against a fake relay, both auth mechanisms, the refusal to
-send a password to a server offering no encryption, STARTTLS being requested, timeouts, refusals
-naming the step, and the whole path through the app. **Not covered: the TLS handshake**, because
-generating a certificate needs a tool this machine does not have. `docs/mail.md` says so.
+send a password to a server offering no encryption, timeouts, refusals naming the step, and the whole
+path through the app. **The TLS handshake is now covered too** — see below.
+
+### 2a-ii. The TLS gap, closed
+
+The first version of this section said the TLS paths were not exercised, because generating a
+certificate needed a tool this machine did not have. **It did have one**: Git for Windows ships
+`openssl`, which was found by looking rather than by assuming. So the gap is closed, and it was worth
+closing — this is the path every real relay uses, and a password travels over it.
+
+`test/fixtures/tls/` holds a throwaway CA and two certificates signed by it, committed deliberately.
+**The CA's private key was deleted after signing**, so no key in the repository can sign another
+certificate and nothing here can impersonate anything. `test/mail-tls.test.js` uses them for six tests:
+a message over `smtps://`, a **real STARTTLS upgrade** (the relay performs the handshake on the socket,
+so the assertion is that the login and message arrived after it), an untrusted certificate refused, the
+same during an upgrade with **nothing sent afterwards**, a wrong-name certificate refused, and the CA
+file's handling.
+
+Mutations proved those tests bite, each run alone and each restored. The last row is deliberately two
+mutations at once, and the paragraph after explains why:
+
+| Mutation | What failed |
+| --- | --- |
+| `rejectUnauthorized` forced to `false` | exactly the three verification tests, while the three happy paths still passed |
+| the own-CA option dropped from both TLS paths | the three tests that rely on the test CA being trusted |
+| the client never asks for STARTTLS | the upgrade test |
+| **no STARTTLS and no refusal to send a password without it** | the upgrade test *and* the "nothing follows in the clear" test |
+
+That fourth one is deliberately two mutations at once, and the reason is a finding in itself: the
+plaintext-leak assertion passed under the third mutation because the behaviour is guarded **twice** —
+by upgrading, and by refusing to send a password to a server that offers no encryption. Either guard
+alone prevents the leak, so proving the test bites meant removing both.
+
+One question was settled by measurement rather than reasoning: the mailer sends no SNI when the relay
+is addressed by IP (Node refuses an IP as `servername`), which looks like it might skip the hostname
+check. It does not — Node verifies the certificate against the address it dialled, proven with a
+certificate naming a different host. Had that gone the other way it would have been a security hole,
+and it would have been invisible without a certificate that *should* fail.
+
+### 2a-iii. A finding in the test harness
+
+`node --test` with no arguments executes **every `.js` file under a directory named `test`,
+recursively**, and counts each one as a passing test. So `test/helpers.js` and `test/smtp-relay.js` were
+being run as test files and counted as tests, and the suite reported **two more tests than exist**.
+
+The fix is one word: `npm test` now names the test files (`node --test "test/*.test.js"`), which reports
+the honest number. The reason it matters is not the count — it is that a shared helper with a top-level
+side effect was being executed by the runner, and an import error in one would have appeared as a
+failing "test" named after the file, which is exactly the kind of red a reader learns to ignore. The
+note is in `test/helpers.js`, where someone adding a third shared module will see it.
 
 Version one drafts the reminder and the practice copies it into whatever they send mail with. That is
 the honest place to have started — it tests whether the client portal gets used without a mail server

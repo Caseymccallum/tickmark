@@ -22,6 +22,7 @@
 import { connect as connectNet, isIP } from 'node:net';
 import { connect as connectTls } from 'node:tls';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 export const DEFAULT_TIMEOUT_MS = 20000;
 export const DEFAULT_PORT = 587;
@@ -86,12 +87,30 @@ export function mailerFromEnvironment(env = process.env) {
   const config = parseSmtpUrl(url);
   if (env.TICKMARK_SMTP_INSECURE === '1') config.rejectUnauthorized = false;
 
+  // A relay whose certificate comes from a private CA — an internal mail server, a corporate relay, a
+  // self-hosted one — needs that CA trusted. Without this the only switch available would be
+  // TICKMARK_SMTP_INSECURE, which turns verification off for everything; trusting one named CA is
+  // strictly safer than that, which is why this exists. It is read here rather than at connect time so
+  // that a path that cannot be read is a startup error naming the file, not a failed send later.
+  if (env.TICKMARK_SMTP_CA_FILE) {
+    try {
+      config.ca = readFileSync(env.TICKMARK_SMTP_CA_FILE, 'utf8');
+    } catch (error) {
+      throw new MailError(
+        'configuration',
+        `TICKMARK_SMTP_CA_FILE could not be read (${env.TICKMARK_SMTP_CA_FILE}) — ${error.message}`,
+      );
+    }
+  }
+
   return {
     ...config,
     from,
     timeoutMs: Number(env.TICKMARK_SMTP_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
     /** What the pages say when they explain how sending is set up. Never includes the password. */
-    describe: () => `${config.host}:${config.port}${config.implicitTls ? ' (TLS)' : ' (STARTTLS when offered)'}`,
+    describe: () =>
+      `${config.host}:${config.port}${config.implicitTls ? ' (TLS)' : ' (STARTTLS when offered)'}` +
+      `${config.ca ? ', with your own CA' : ''}`,
   };
 }
 
@@ -263,6 +282,7 @@ function openSocket(config, timeoutMs) {
           port: config.port,
           servername: servernameFor(config.host),
           rejectUnauthorized: config.rejectUnauthorized,
+          ca: config.ca,
         })
       : connectNet({ host: config.host, port: config.port });
 
@@ -330,6 +350,7 @@ function upgrade(session, config, timeoutMs) {
       socket: session.socket,
       servername: servernameFor(config.host),
       rejectUnauthorized: config.rejectUnauthorized,
+      ca: config.ca,
     });
     secure.setTimeout(timeoutMs, () => {
       secure.destroy();
