@@ -52,11 +52,17 @@ import {
   closedCount,
   createPractitioner,
   createPractice,
+  createInvite,
   createRequest,
   findOrCreateClient,
   history,
   inTransaction,
+  inviteByToken,
+  invitesOf,
   issueToken,
+  claimInvite,
+  membersOf,
+  wrappingHoldersOf,
   itemInRequest,
   itemsOf,
   practiceKeys,
@@ -78,6 +84,14 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 const MIN_PASSWORD = 12;
+
+/**
+ * How long an invitation stays usable.
+ *
+ * Seven days: long enough to survive a weekend and a person being away, short enough that a link found
+ * in a mailbox in a year is not a key. It is one number, in one place, and the page says it out loud.
+ */
+const INVITE_DAYS = 7;
 const MAX_ITEMS = 50;
 const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
 
@@ -88,6 +102,8 @@ const ASSETS = new Map([
   ['setup.js', 'application/javascript; charset=utf-8'],
   ['download.js', 'application/javascript; charset=utf-8'],
   ['keys.js', 'application/javascript; charset=utf-8'],
+  ['members.js', 'application/javascript; charset=utf-8'],
+  ['invite.js', 'application/javascript; charset=utf-8'],
 ]);
 
 export const ROUTES = [
@@ -101,6 +117,8 @@ export const ROUTES = [
   ['POST', '/setup', saveKeys],
   ['GET', '/keys', keysPage],
   ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase],
+  ['GET', '/members', membersPage],
+  ['POST', '/members/invite', createInvitePage],
   ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
   ['GET', '/requests/new', newRequestForm],
@@ -118,6 +136,11 @@ export const ROUTES = [
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)$/, receiveUpload],
+  // Public: no session, gated by the token in the path — and by the secret in the fragment, which the
+  // server never sees. Whoever holds the link can accept it; the page says so rather than implying the
+  // link is addressed to anyone in particular.
+  ['GET', /^\/invite\/([^/]+)$/, invitePage],
+  ['POST', /^\/invite\/([^/]+)$/, acceptInvite],
 ];
 
 function sendJson(response, status, value) {
@@ -469,7 +492,7 @@ export function reminderDraft({ clientName, title, dueAt, outstanding, again = [
   return { subject: `Still needed for ${title}`, body: lines.join('\n') };
 }
 
-function listRequests({ db, response, practitioner, url , practiceId}) {
+function listRequests({ db, response, practitioner, url, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const showingClosed = url.searchParams.get('closed') === '1';
   const rows = requestsFor(db, practiceId, { includeClosed: showingClosed });
@@ -528,7 +551,7 @@ function newRequestForm({ response, practitioner }) {
   return sendPage(response, 200, page({ title: 'New request', practitioner, body: requestForm() }));
 }
 
-async function createRequestPage({ db, request, response, practitioner , practiceId}) {
+async function createRequestPage({ db, request, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const clientName = field(fields, 'client');
@@ -567,7 +590,7 @@ async function createRequestPage({ db, request, response, practitioner , practic
   return redirect(response, `/requests/${requestId}`);
 }
 
-function viewRequest({ db, request, response, practitioner, params , practiceId}) {
+function viewRequest({ db, request, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -765,7 +788,7 @@ function viewRequest({ db, request, response, practitioner, params , practiceId}
  * practice is not found, and a request belonging to another practice cannot be reached to begin
  * with.
  */
-async function serveEnvelope({ db, response, practitioner, params , practiceId}) {
+async function serveEnvelope({ db, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -798,7 +821,7 @@ async function serveEnvelope({ db, response, practitioner, params , practiceId})
   return response.end(bytes);
 }
 
-async function issueLink({ db, request, response, practitioner, params , practiceId}) {
+async function issueLink({ db, request, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   // Ownership first, key second. A request belonging to somebody else must be *not found*
@@ -835,7 +858,7 @@ async function issueLink({ db, request, response, practitioner, params , practic
   }));
 }
 
-async function revokeLink({ db, request, response, practitioner, params , practiceId}) {
+async function revokeLink({ db, request, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -877,7 +900,7 @@ const copyableField = (name, text, rows) => html`
  * reminder makes a fresh one, and says so. That is the visible cost of that design decision, and
  * it belongs on the screen rather than in a footnote.
  */
-async function draftReminder({ db, request, response, practitioner, params, mailer , practiceId}) {
+async function draftReminder({ db, request, response, practitioner, params, mailer, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -988,7 +1011,7 @@ function reminderPage({ mailer, practitioner, found, draft, days, outstanding, t
  *    saying what went wrong, because a send that loses what someone typed is worse than a send that
  *    fails — and both are recorded, so "did we actually send it?" can be answered by reading.
  */
-async function sendReminder({ db, request, response, practitioner, params, mailer , practiceId}) {
+async function sendReminder({ db, request, response, practitioner, params, mailer, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -1047,14 +1070,14 @@ async function sendReminder({ db, request, response, practitioner, params, maile
   }
 }
 
-async function closeRequestPage({ db, response, practitioner, params , practiceId}) {
+async function closeRequestPage({ db, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const closed = closeRequest(db, practiceId, params[0]);
   if (!closed) return fail(response, 404, 'There is no open request at that address.', practitioner);
   return redirect(response, `/requests/${params[0]}`);
 }
 
-async function reopenRequestPage({ db, response, practitioner, params , practiceId}) {
+async function reopenRequestPage({ db, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const reopened = reopenRequest(db, practiceId, params[0]);
   if (!reopened) return fail(response, 404, 'There is no closed request at that address.', practitioner);
@@ -1071,7 +1094,7 @@ async function reopenRequestPage({ db, response, practitioner, params , practice
  * A closed request is refused rather than quietly accepting. Reopening is a deliberate act and it
  * should stay one.
  */
-async function addItemsPage({ db, request, response, practitioner, params , practiceId}) {
+async function addItemsPage({ db, request, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -1111,7 +1134,7 @@ const ITEM_ACTIONS = {
     clearItemAttention(db, practiceId, requestId, itemId),
 };
 
-async function changeItemPage({ db, request, response, practitioner, params , practiceId}) {
+async function changeItemPage({ db, request, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const [requestId, itemId, action] = params;
 
@@ -1373,7 +1396,7 @@ function setupForm({ db, response, practitioner }) {
   }));
 }
 
-async function saveKeys({ db, request, response, practitioner , practiceId}) {
+async function saveKeys({ db, request, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const fields = formFields(await readBody(request));
@@ -1397,7 +1420,232 @@ async function saveKeys({ db, request, response, practitioner , practiceId}) {
  * would orphan every file encrypted to it, and a button that destroys a practice's access to its own
  * clients' documents should not exist until there is a way to re-encrypt those files first.
  */
-function keysPage({ db, response, practitioner , practiceId}) {
+/**
+ * Who is in this practice, how to ask someone to join, and what has been asked already.
+ *
+ * The form is JavaScript-driven because the sealing happens in the browser: the passphrase is typed
+ * here, the key is unwrapped here, and the server receives a blob it cannot open. That is the same shape
+ * as every other key operation in this product, and it is why the invitation is created by a fetch that
+ * returns a token rather than by a form post that returns a page — the secret has to stay in the page
+ * that generated it, and a navigation would throw it away.
+ */
+function membersPage({ db, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+
+  const members = membersOf(db, practiceId);
+  const invites = invitesOf(db, practiceId);
+  const keys = practiceKeys(db, practiceId, practitioner.id);
+  const newest = keys[0] ?? null;
+  const mine = newest?.wrappedPrivateKey ?? null;
+  const holders = newest ? new Set(wrappingHoldersOf(db, newest.id)) : new Set();
+
+  return sendPage(response, 200, page({
+    title: 'Members',
+    practitioner,
+    body: html`
+      <h1>Members <span class="note">${members.length === 1 ? 'one person' : `${members.length} people`}
+        in this practice</span></h1>
+      <table>
+        <thead><tr><th>Email</th><th>Joined</th><th>Can open the newest files?</th></tr></thead>
+        <tbody>
+          ${members.map((person) => html`<tr>
+            <td>${person.email}${person.id === practitioner.id ? html` <span class="note">(you)</span>` : ''}</td>
+            <td>${person.created_at.slice(0, 10)}</td>
+            <td>${newest
+              ? holders.has(person.id)
+                ? html`yes`
+                : html`<span class="warning">no — they hold no copy of the newest key</span>`
+              : html`<span class="note">this practice has no key yet</span>`}</td>
+          </tr>`)}
+        </tbody>
+      </table>
+
+      ${!newest
+        ? html`<p class="note">This practice has no key, so there is nothing to invite anyone to.
+            <a href="/setup">Make one first</a>.</p>`
+        : !mine
+          ? html`<p class="warning">You hold no copy of this practice's newest key, so you cannot invite
+              anyone — an invitation carries a copy of <em>your</em> key, and handing over something you
+              cannot read would be a strange thing to do. Someone who does hold a copy can invite you.</p>`
+          : html`
+            <h2>Invite someone</h2>
+            <p class="warning"><strong>Whoever opens the link gets the key.</strong> It is not addressed to
+              a particular person, it works once, and it stops working after ${INVITE_DAYS} days. Send it
+              the way you would send a password, not the way you would send a link.</p>
+            <form id="invite-form">
+              <label for="passphrase">Your passphrase <span class="note">used in this browser, sent nowhere</span></label>
+              <input id="passphrase" name="passphrase" type="password" autocomplete="current-password">
+              <button type="submit">Create an invitation</button>
+            </form>
+            <p class="status" id="invite-status"></p>
+            <p id="invite-link" hidden></p>
+            <script type="application/json" id="invite-key">${raw(JSON.stringify({ keyId: newest.id, wrapped: mine }))}</script>
+            ${raw('<script type="module" src="/assets/members.js"></script>')}`}
+
+      ${invites.length > 0
+        ? html`<h2>Invitations</h2>
+            <table>
+              <thead><tr><th>Sent by</th><th>When</th><th>Outcome</th></tr></thead>
+              <tbody>
+                ${invites.map((row) => html`<tr>
+                  <td>${row.created_by_email}</td>
+                  <td>${row.created_at.slice(0, 10)}</td>
+                  <td>${row.used_at
+                    ? html`accepted by ${row.used_by_email} on ${row.used_at.slice(0, 10)}`
+                    : row.expires_at <= new Date().toISOString()
+                      ? html`<span class="note">expired, and was never accepted</span>`
+                      : html`<span class="note">not accepted yet</span>`}</td>
+                </tr>`)}
+              </tbody>
+            </table>`
+        : ''}
+      <p><a href="/keys">Keys</a></p>`,
+  }));
+}
+
+/**
+ * Create an invitation, from a blob the browser sealed.
+ *
+ * Two checks, and the second is the one that matters: the key must belong to this practice **and this
+ * member must hold a copy of it**. Without that, a member who holds no copy could mint an invitation
+ * carrying something they cannot read — and the blob itself is whatever was posted, so it has to be
+ * tied to a key the practice actually has.
+ */
+async function createInvitePage({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+
+  const keyId = field(fields, 'key_id');
+  const sealedKey = field(fields, 'sealed_key');
+
+  if (!/^invite\$sha-256\$/.test(sealedKey ?? '')) {
+    return sendJson(response, 400, { error: 'that is not a sealed invitation' });
+  }
+
+  const held = practiceKeys(db, practiceId, practitioner.id).some(
+    (key) => key.id === keyId && key.wrappedPrivateKey !== null,
+  );
+  if (!held) {
+    return sendJson(response, 400, { error: 'that is not a key you hold a copy of' });
+  }
+
+  const token = newToken();
+  const expiresAt = new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  createInvite(db, {
+    practiceId,
+    createdBy: practitioner.id,
+    keyId,
+    sealedKey,
+    tokenHash: hashToken(token),
+    expiresAt,
+  });
+
+  return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS });
+}
+
+/**
+ * The page someone lands on from an invitation link.
+ *
+ * The secret is in the fragment, which the server never receives — so this page cannot know whether the
+ * link is valid in the way that matters. It can know whether the *token* is live, and it hands the
+ * browser the sealed blob to try. If the fragment is missing or wrong, the browser finds out when the
+ * blob refuses to open, which is the only place that can find out.
+ */
+async function invitePage({ db, response, params, error = null }) {
+  const found = inviteByToken(db, params[0]);
+
+  if (found.state !== 'open') {
+    const said = {
+      unknown: 'There is no invitation at that address.',
+      used: 'That invitation has been used. An invitation works once — ask for another one.',
+      expired: 'That invitation has expired. Ask whoever sent it for a new one.',
+    }[found.state];
+    return sendPage(response, found.state === 'unknown' ? 404 : 410, page({
+      title: 'That invitation',
+      body: html`<h1>That invitation</h1><p>${said}</p>
+        <p class="note">Nothing was created, and no key was handed over.</p>`,
+    }));
+  }
+
+  return sendPage(response, 200, page({
+    title: `Join ${found.invite.practice_name}`,
+    body: html`
+      <h1>Join ${found.invite.practice_name}</h1>
+      <p>You have been invited to a practice on this Tickmark. You will get your own login and your own
+        passphrase, and you will be able to open the documents clients have already sent.</p>
+      ${error ? html`<p class="error">${error}</p>` : ''}
+      <form method="post" action="/invite/${params[0]}" id="accept-form">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required autocomplete="username">
+        <label for="password">Password <span class="note">for signing in</span></label>
+        <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
+          autocomplete="new-password">
+        <label for="passphrase">Passphrase <span class="note">protects the key; it is not stored anywhere</span></label>
+        <input id="passphrase" name="passphrase" type="password" autocomplete="new-password">
+        <label for="again">Passphrase again</label>
+        <input id="again" name="again" type="password" autocomplete="new-password">
+        <input type="hidden" name="wrapped_private_key" id="wrapped_private_key">
+        <button type="submit">Join</button>
+      </form>
+      <p class="status" id="accept-status"></p>
+      <p class="note">Your browser opens the invitation with a secret that came in the link itself. That
+        secret is never sent to the server, which is why this page needs JavaScript.</p>
+      <script type="application/json" id="invite-blob">${raw(JSON.stringify({ sealed: found.invite.sealed_key }))}</script>
+      ${raw('<script type="module" src="/assets/invite.js"></script>')}`,
+  }));
+}
+
+/**
+ * Accept an invitation: a person, a password, and a sealed copy of the practice's key.
+ *
+ * The passphrase is never sent — the browser used it to seal the copy and does not post it. So this
+ * handler cannot check that the record it is given is any good: it can only check that it *looks* like a
+ * record, which is the same position the server is in when a key is first made, and for the same reason.
+ */
+async function acceptInvite({ db, request, response, params }) {
+  const found = inviteByToken(db, params[0]);
+  if (found.state !== 'open') return invitePage({ db, response, params });
+
+  const fields = formFields(await readBody(request));
+  const email = field(fields, 'email')?.toLowerCase() ?? null;
+  const password = typeof fields.password === 'string' ? fields.password : '';
+  const wrapped = field(fields, 'wrapped_private_key');
+
+  const refuse = (problem) => invitePage({ db, response, params, error: problem });
+
+  if (field(fields, 'passphrase') || field(fields, 'again')) {
+    // A filled passphrase field means the browser did not run: the form posts those fields only because
+    // they exist, and the script clears them before submitting. Saying so is better than creating a
+    // member whose key copy is empty.
+    return refuse('That did not arrive the way it should have. This page needs JavaScript, because the key is sealed in your browser.');
+  }
+
+  const problem = validateCredentials(email, password);
+  if (problem) return refuse(problem);
+
+  if (!/^pbkdf2\$sha-256\$/.test(wrapped ?? '')) {
+    return refuse('That did not arrive with a sealed copy of the key. If this page is open in an old tab, reload it from the link.');
+  }
+
+  if (practitionerByEmail(db, email)) {
+    return refuse('There is already an account for that email address. Sign in instead — an invitation is not needed to join a practice you are already in.');
+  }
+
+  const passwordHash = await hashPassword(password);
+  const claimed = claimInvite(db, {
+    token: params[0],
+    email,
+    passwordHash,
+    wrappedPrivateKey: wrapped,
+  });
+
+  if (claimed.state !== 'joined') return invitePage({ db, response, params });
+
+  const { token } = createSession(db, claimed.practitionerId);
+  return redirect(response, '/requests', [sessionCookie(token)]);
+}
+
+function keysPage({ db, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const keys = practiceKeys(db, practiceId, practitioner.id);
 
@@ -1449,7 +1697,7 @@ function keysPage({ db, response, practitioner , practiceId}) {
  * record — which is the thing it must not be able to do. What it does check is that the new record
  * is one it would have written: the right shape, and a KDF cost inside what this version accepts.
  */
-async function changePassphrase({ db, request, response, practitioner, params , practiceId}) {
+async function changePassphrase({ db, request, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const wrapped = field(fields, 'wrapped_private_key');

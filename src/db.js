@@ -1,5 +1,5 @@
 /**
- * The database: one file, eleven tables, no dependencies.
+ * The database: one file, twelve tables, no dependencies.
  *
  * `node:sqlite` ships in the runtime, so a practice that self-hosts this inherits no
  * driver, no ORM and no native module to compile. That matters more here than it would
@@ -18,7 +18,8 @@
  * only by keeping a list of secrets the process would lose on restart. `practice` made it
  * ten, because a firm with two partners cannot be represented by one login; see
  * `docs/members.md`. `key_wrapping` made it eleven, because two partners cannot share one
- * passphrase either — the same key needs one sealed copy per member.
+ * passphrase either — the same key needs one sealed copy per member. `invite` made it
+ * twelve, because the copy the second member gets has to come from somewhere.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -82,6 +83,34 @@ CREATE TABLE IF NOT EXISTS key_wrapping (
 
 CREATE INDEX IF NOT EXISTS wrap_key    ON key_wrapping(key_id);
 CREATE INDEX IF NOT EXISTS wrap_member ON key_wrapping(practitioner_id);
+
+-- An invitation to join a practice.
+--
+-- The practice's private key travels in sealed_key, sealed under a secret that only ever exists in the
+-- link's fragment — the part of a URL a browser does not send to a server. So this row holds something
+-- the server cannot read, and it holds it for the same reason it holds client documents: the operator
+-- must be able to run this without being trusted with what is inside.
+--
+-- key_id matters: the sealed copy belongs to one key, and the new member's wrapping has to be attached
+-- to that key. Without it, a member invited today could be recorded as holding a copy of the newest key
+-- while holding one for an older key, and the files they could not open would be a mystery.
+--
+-- Rows are marked used rather than deleted, because "someone was invited, and accepted" is part of the
+-- record of a firm.
+CREATE TABLE IF NOT EXISTS invite (
+  id          TEXT PRIMARY KEY,
+  practice_id TEXT NOT NULL REFERENCES practice(id),
+  created_by  TEXT NOT NULL REFERENCES practitioner(id),
+  key_id      TEXT NOT NULL REFERENCES practice_key(id),
+  token_hash  TEXT NOT NULL UNIQUE,
+  sealed_key  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  used_at     TEXT,
+  used_by     TEXT REFERENCES practitioner(id),
+  created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS invite_token ON invite(token_hash);
 
 CREATE TABLE IF NOT EXISTS client (
   id              TEXT PRIMARY KEY,

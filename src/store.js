@@ -22,6 +22,102 @@ export function inTransaction(db, fn) {
   }
 }
 
+// --- invitations ------------------------------------------------------------------------
+
+/**
+ * An invitation, addressed to nobody in particular.
+ *
+ * There is no email on it on purpose: the link is the invitation, and anyone holding it can accept.
+ * That is the honest description of what this is — the page says so — and it is the same property a
+ * client link has, for the same reason: a person who needs an account should not have to be found in a
+ * directory first.
+ */
+export function createInvite(db, { practiceId, createdBy, keyId, sealedKey, tokenHash, expiresAt, at = now() }) {
+  const id = newId();
+  db.prepare(
+    `INSERT INTO invite (id, practice_id, created_by, key_id, token_hash, sealed_key, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, practiceId, createdBy, keyId, tokenHash, sealedKey, expiresAt, at);
+  return id;
+}
+
+/**
+ * What state an invitation is in, by the digest of its token.
+ *
+ * Returns a state rather than a row or null, because the three ways an invitation fails deserve three
+ * different sentences: an expired link should tell someone to ask for another one, and a used link
+ * should say that it worked and cannot work twice — neither should look like a wrong address.
+ */
+export function inviteByToken(db, token, at = new Date()) {
+  if (typeof token !== 'string' || token.length === 0) return { state: 'unknown' };
+  const row = db
+    .prepare(
+      `SELECT i.id, i.key_id, i.sealed_key, i.expires_at, i.used_at,
+              p.name AS practice_name, p.id AS practice_id,
+              k.public_key
+         FROM invite i
+         JOIN practice p ON p.id = i.practice_id
+         JOIN practice_key k ON k.id = i.key_id
+        WHERE i.token_hash = ?`,
+    )
+    .get(hashToken(token));
+
+  if (!row) return { state: 'unknown' };
+  if (row.used_at) return { state: 'used' };
+  if (row.expires_at <= at.toISOString()) return { state: 'expired' };
+  return { state: 'open', invite: row };
+}
+
+/**
+ * Accept an invitation: a person, in the practice, holding their own copy of the key.
+ *
+ * All three happen in one transaction, because two of them without the third is a member who cannot
+ * open anything, and a person created by a link that was then rejected is a person who cannot sign in.
+ *
+ * The invitation is re-checked inside the transaction. A check before it would leave a window where two
+ * requests could both see an open invitation and both accept it — the same reason a used link is a
+ * state and not a deletion.
+ */
+export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey, at = now() }) {
+  return inTransaction(db, () => {
+    const found = inviteByToken(db, token, new Date(at));
+    if (found.state !== 'open') return { state: found.state };
+
+    const { invite } = found;
+    const practitionerId = createPractitioner(db, {
+      practiceId: invite.practice_id,
+      email,
+      passwordHash,
+      at,
+    });
+    addKeyWrapping(db, {
+      keyId: invite.key_id,
+      practitionerId,
+      wrappedPrivateKey,
+      at,
+    });
+    db.prepare('UPDATE invite SET used_at = ?, used_by = ? WHERE id = ?').run(at, practitionerId, invite.id);
+
+    return { state: 'joined', practitionerId, practiceId: invite.practice_id };
+  });
+}
+
+/** Invitations for a practice, newest first, with who accepted them. For the members page. */
+export function invitesOf(db, practiceId) {
+  return db
+    .prepare(
+      `SELECT i.id, i.expires_at, i.used_at, i.created_at,
+              creator.email AS created_by_email,
+              taker.email   AS used_by_email
+         FROM invite i
+         JOIN practitioner creator ON creator.id = i.created_by
+         LEFT JOIN practitioner taker ON taker.id = i.used_by
+        WHERE i.practice_id = ?
+        ORDER BY i.created_at DESC, i.rowid DESC`,
+    )
+    .all(practiceId);
+}
+
 export function recordEvent(db, { requestId, kind, detail = null, at = now() }) {
   db.prepare('INSERT INTO event (id, request_id, kind, detail, at) VALUES (?, ?, ?, ?, ?)')
     .run(newId(), requestId, kind, detail, at);
@@ -251,6 +347,20 @@ export function addPracticeKey(db, practiceId, { publicKey, wrappedPrivateKey, c
     addKeyWrapping(db, { keyId: id, practitionerId: createdBy, wrappedPrivateKey, at });
     return id;
   });
+}
+
+/**
+ * Which members hold a sealed copy of a key.
+ *
+ * For the members page, so that "can this person open the files we have?" is answered by looking rather
+ * than by assuming — a member created before the wrapping existed, or one whose copy failed to attach,
+ * would otherwise look exactly like a member who is fine.
+ */
+export function wrappingHoldersOf(db, keyId) {
+  return db
+    .prepare('SELECT practitioner_id FROM key_wrapping WHERE key_id = ?')
+    .all(keyId)
+    .map((row) => row.practitioner_id);
 }
 
 /** Give one member a sealed copy of a key. What an invitation produces. */

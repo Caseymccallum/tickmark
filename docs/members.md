@@ -53,7 +53,28 @@ trivially true — and it is wrong for this product, for three reasons that are 
 - **A shared passphrase stops being necessary but does not become impossible.** Two members may still
   choose the same passphrase. Nothing here prevents that, and nothing here can.
 
-## The invitation, and why it looks the way it does
+## Removing a member, which is not built
+
+**The state is visible; the act is not.** The members page has a column saying whether each person holds a
+copy of the newest key, so a member who cannot open recent files is a fact on a screen rather than a
+mystery. There is no button that removes anyone, and that is deliberate rather than unfinished.
+
+What it would need, written down so it is not improvised later:
+
+1. **Their sessions end.** Straightforward: delete the session rows. `endAllSessions` was removed as dead
+   code in stage B; this is the thing that would bring it back.
+2. **Their sealed copies go.** Delete the `key_wrapping` rows for them. This is what stops them signing in
+   later and opening anything new.
+3. **And none of it un-discloses anything.** If they had the key — and they did, or they could not have
+   worked there — then any copy of the wrapped record they kept still opens under their passphrase, and any
+   document they downloaded is theirs. Removing a member is a statement about the future. `docs/encryption.md`
+   already says the same thing about rotation, and it is the same fact seen twice.
+4. **The honest answer for a firm that needs more than that** is a key per client, or a trust model this
+   format deliberately does not have — and the removal page should say so rather than implying a party the
+   software cannot deliver.
+
+The reason it is not built yet is the third point. A button that looked like revocation and was not would
+be worse than no button, so the decision to add one should come with the sentence that goes next to it.
 
 **Built in two parts: the crypto and the storage (done), then the pages (next).** The constraint: the new
 member's sealed copy must be produced by someone who has the key, and the server must never hold the key
@@ -86,7 +107,7 @@ make it selective beyond keeping it private.
 | --- | --- | --- |
 | **A** (done) | `practice` exists; `practice_id` on every tenant-owned row; a migration that gives every existing practitioner their own practice and backfills | The database is ready. **Behaviour is unchanged**, and every existing test still passes — one practitioner, one practice |
 | **B** (done) | The code reads and writes `practice_id`; `createdBy` records the person; sign-up creates a practice; sessions carry the practice | Two people in one practice see the same client's records — a capability the old shape could not express |
-| **C** (under way) | C-i: the invitation crypto and one sealed copy of the key per member. C-ii: invitations, a members page, removing a member, a real practice name | When C-ii lands, a two-partner firm can use this |
+| **C** (done) | C-i: the invitation crypto and one sealed copy of the key per member. C-ii: the members page, the invitation pages, and two browser halves | A two-partner firm can use this |
 
 **Why stage A was separate.** It changed an existing operator's database, which is the one thing here that
 can lose data. It got its own pass, its own migration test, and its own commit. The old `practitioner_id`

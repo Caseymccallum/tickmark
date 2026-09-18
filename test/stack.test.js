@@ -33,6 +33,7 @@ const PLAN_TABLES = [
   'access_token',
   'client',
   'event',
+  'invite',
   'key_wrapping',
   'practice',
   'practice_key',
