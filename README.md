@@ -45,12 +45,18 @@ practices actually lose time to. The short version is that the chase is not a co
 every portal collects — it is that "received" and "ready" are different things and most tools conflate
 them.
 
-What does not exist yet: **a reminder cadence**, because the run that chases everybody has no
-memory of who it has already written to and pressing it twice writes twice — the chase list shows when
-each client was last reminded so that the decision is yours rather than a surprise, and
-`docs/product-needs.md` says why the threshold is a decision and not a default; and **files that arrived
-before their key was recorded**, which no move can touch because the move works from the record — the keys
-page says how many there are.
+**Chasing everybody at once** has a cadence, and the number is yours: Tickmark starts at "no limit" and
+will not pick a threshold for you, because how often it is acceptable to chase a client is your judgement
+about your clients. Set it and clients inside it are held back and named in the report — never dropped
+quietly. Sending one request's reminder by hand is never held back, because there you are looking at that
+client.
+
+What does not exist yet: **recurring requests** on a schedule, which needs a decision about what happens
+when the schedule fires while the previous request is still open; and **files that arrived before their key
+was recorded**, which no move can touch because the move works from the record — the keys page says how
+many there are. Two things are refused rather than pending, and `docs/product-needs.md` says why: reading
+the documents (OCR and inference, which would mean sending a client's records to a third party), and
+integrations with the tax software practices already run.
 
 `docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,
 and the records survive a restart. That sentence is here because it was tested, not because it was

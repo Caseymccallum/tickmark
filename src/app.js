@@ -92,6 +92,7 @@ import {
   memberIn,
   removeMember,
   removedMembersOf,
+  setCadence,
 } from './store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -138,6 +139,14 @@ const CLIENT_SAYS = {
  * list has no form to ask on, so it uses that same default rather than inventing a second one.
  */
 const REMINDER_DAYS = 30;
+
+/**
+ * The most days a practice may set as its chase cadence.
+ *
+ * A year, because a cadence longer than a season is a cadence that silences the button for a whole season
+ * — which is not what the setting is for. Zero is allowed and means "no limit", which is the default.
+ */
+const MAX_CADENCE_DAYS = 365;
 
 /**
  * How long a practice name may be.
@@ -196,6 +205,7 @@ export const ROUTES = [
   // The run that writes to everyone at once. A GET to look before pressing, a POST to press.
   ['GET', '/chase', chasePage],
   ['POST', '/chase', sendAllReminders],
+  ['POST', '/chase/cadence', setCadencePage],
   // Re-sealing a stored document to a newer key, and retiring a key that no longer opens anything.
   ['GET', /^\/keys\/([^/]+)\/pending$/, pendingFor],
   ['POST', /^\/keys\/([^/]+)\/move$/, moveWithoutScript],
@@ -1356,6 +1366,40 @@ function chaseList(db, practiceId) {
     });
 }
 
+/**
+ * Whether the practice's own cadence holds a reminder back.
+ *
+ * The rule is one line and it lives in one place, because the page and the run must agree about it: a page
+ * that says "this sends 4" over a run that sends 2 would be the same class of lie as a banner that
+ * overstates itself anywhere else.
+ */
+function heldBackBy(line, cadenceDays, nowIso = now()) {
+  if (cadenceDays <= 0 || !line.lastRemindedAt) return false;
+  const days = (Date.parse(nowIso) - Date.parse(line.lastRemindedAt)) / 86400000;
+  return days < cadenceDays;
+}
+
+/**
+ * The chase list, split by what the button would do to each row.
+ *
+ * One function read by the pre-flight page and by the run, so the two cannot disagree — and the split is
+ * ordered by which reason is more fundamental: **no address beats the cadence**, because a client with no
+ * address could not be written to whatever the cadence says, and reporting them as "held by your cadence"
+ * would name the wrong problem.
+ */
+function chaseSplits(db, practiceId) {
+  const practice = practiceFor(db, practiceId);
+  const cadenceDays = practice?.cadenceDays ?? 0;
+  const rows = chaseList(db, practiceId);
+
+  const withoutAddress = rows.filter((row) => !row.client_email);
+  const addressed = rows.filter((row) => row.client_email);
+  const held = addressed.filter((row) => heldBackBy(row, cadenceDays));
+  const sendable = addressed.filter((row) => !heldBackBy(row, cadenceDays));
+
+  return { rows, sendable, held, withoutAddress, cadenceDays };
+}
+
 /** How long ago something happened, in words, for a page a person reads. */
 function agoWords(iso, nowIso) {
   const minutes = Math.floor((Date.parse(nowIso) - Date.parse(iso)) / 60000);
@@ -1375,12 +1419,12 @@ function agoWords(iso, nowIso) {
  * one is being chased for — before anything leaves the server. "Are you sure?" on its own would be a
  * worse page: it asks for confidence without giving information.
  */
-function chasePage({ db, response, practitioner, practiceId, mailer }) {
+function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
   if (!requireSignIn({ practitioner, response })) return;
 
-  const rows = chaseList(db, practiceId);
-  const sendable = rows.filter((row) => row.client_email);
-  const withoutAddress = rows.filter((row) => !row.client_email);
+  const { rows, sendable, held, withoutAddress, cadenceDays } = chaseSplits(db, practiceId);
+  const saved = url.searchParams.get('saved');
+  const justSaved = saved && /^\d+$/.test(saved) ? saved : null;
 
   const table = rows.length === 0
     ? html`<p>Nothing is outstanding for anyone. <a href="/requests">The board</a> has the full picture.</p>`
@@ -1398,7 +1442,8 @@ function chasePage({ db, response, practitioner, practiceId, mailer }) {
             <td>${row.client_email ?? html`<span class="error">no email address on this client</span>`}</td>
             <td>${row.lastRemindedAt
               ? html`<span class="note">reminded ${agoWords(row.lastRemindedAt, now())}</span>`
-              : html`<span class="note">never reminded</span>`}</td>
+              : html`<span class="note">never reminded</span>`}
+              ${held.includes(row) ? html`<br><span class="warning">held back — inside your cadence</span>` : ''}</td>
           </tr>`)}
         </tbody>
       </table>`;
@@ -1406,17 +1451,25 @@ function chasePage({ db, response, practitioner, practiceId, mailer }) {
   return sendPage(response, 200, page({
     title: 'Chase everyone',
     practitioner,
-    banner: mailer
-      ? html`<p class="warning">This sends <strong>${sendable.length}</strong>
-          ${sendable.length === 1 ? 'message' : 'messages'} from
-          <strong>${mailer.describe()}</strong>. It cannot be undone or recalled, and each client gets
-          their own link.${withoutAddress.length > 0
-            ? html` ${withoutAddress.length} ${withoutAddress.length === 1 ? 'client is' : 'clients are'}
-                left out for want of an email address.`
-            : ''}</p>`
-      : html`<p class="warning">Tickmark has no mail server configured, so nothing can be sent. Set
+    banner: !mailer
+      ? html`<p class="warning">Tickmark has no mail server configured, so nothing can be sent. Set
           <code>TICKMARK_SMTP_URL</code> and <code>TICKMARK_MAIL_FROM</code> and restart it — or open a
-          request and copy its reminder by hand.</p>`,
+          request and copy its reminder by hand.</p>`
+      : sendable.length === 0
+        ? html`<p class="note">Nothing would be sent at the moment${held.length > 0
+            ? html`, because every client who owes something was written to inside your
+                ${cadenceDays}-day cadence`
+            : ''}. <a href="/requests">The board</a> shows what is outstanding.</p>`
+        : html`<p class="warning">This sends <strong>${sendable.length}</strong>
+            ${sendable.length === 1 ? 'message' : 'messages'} from
+            <strong>${mailer.describe()}</strong>. It cannot be undone or recalled, and each client gets
+            their own link.${held.length > 0
+              ? html` ${held.length} ${held.length === 1 ? 'client is' : 'clients are'} held back by your
+                  cadence.`
+              : ''}${withoutAddress.length > 0
+              ? html` ${withoutAddress.length} ${withoutAddress.length === 1 ? 'client is' : 'clients are'}
+                  left out for want of an email address.`
+              : ''}</p>`,
     body: html`
       <h1>Chase everyone who owes you something</h1>
       <p class="note">${rows.length} ${rows.length === 1 ? 'request has' : 'requests have'} something
@@ -1431,25 +1484,78 @@ function chasePage({ db, response, practitioner, practiceId, mailer }) {
                   ${sendable.length === 1 ? 'reminder' : 'reminders'}</button>`
               : html`<button type="submit" disabled>Send${mailer ? '' : ' (no mail server)'}</button>`}
           </form>`}
+
+      <h2>How often to chase</h2>
+      <form method="post" action="/chase/cadence" class="inline">
+        <label>Do not write to the same client more often than every
+          <input name="days" type="number" min="0" max="${MAX_CADENCE_DAYS}" value="${cadenceDays}"
+            aria-label="Cadence in days" required> days</label>
+        <button type="submit">Save</button>
+      </form>
+      ${justSaved
+        ? html`<p class="success">Your cadence is now ${justSaved}
+            ${justSaved === '0' ? 'days — no limit' : `day${justSaved === '1' ? '' : 's'}`}.</p>`
+        : ''}
+      <p class="note"><strong>0 means no limit, and that is where this starts.</strong> How often it is
+      acceptable to chase a client is your judgement about your clients, not a number this should pick for
+      you — which is why there is no default. Any number of days holds a repeat back: even 1 day stops the
+      same client being written to twice in one afternoon, which is the accident worth preventing.
+      <strong>It applies to this page only.</strong> Opening one request and sending that reminder by hand
+      is never held back, because there you are looking at that client.</p>
+
       <p class="note">The run stops after ${Math.round(CHASE_BUDGET_MS / 60000)} minutes and reports where
       it got to, so that a slow relay cannot leave half the messages sent with no record of which.
-      <strong>It has no memory of who it has already written to:</strong> pressing the button twice
-      reminds everyone still outstanding twice — which is why the last column above is there, and why
-      each request keeps its own history.</p>
+      ${cadenceDays > 0
+        ? html`Clients inside your cadence are named in the report rather than dropped quietly.`
+        : html`<strong>With no cadence set, it has no memory of who it has already written to:</strong>
+            pressing the button twice reminds everyone still outstanding twice — which is why the last
+            column above is there, why each request keeps its own history, and why the setting above
+            exists.`}</p>
       <p><a href="/requests">Back to the board</a></p>`,
   }));
 }
 
 /**
+ * Save the practice's chase cadence.
+ *
+ * A whole number of days, 0 for no limit, and nothing clever about it. The value is validated here rather
+ * than in the store because this is where the sentence explaining a refusal can go — and a refusal is what
+ * a practice gets for `-1`, for `3.5`, for `"soon"`, or for a number so large the setting would silence
+ * the button for a season, which is not what the setting is for.
+ */
+async function setCadencePage({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const raw = (field(fields, 'days') ?? '').trim();
+  const days = Number(raw);
+
+  if (!/^\d+$/.test(raw) || !Number.isInteger(days) || days < 0 || days > MAX_CADENCE_DAYS) {
+    return fail(
+      response,
+      400,
+      `A cadence has to be a whole number of days between 0 and ${MAX_CADENCE_DAYS}. 0 means no limit, which is where this starts.`,
+      practitioner,
+    );
+  }
+
+  setCadence(db, practiceId, days);
+  return redirect(response, `/chase?saved=${days}`);
+}
+
+/**
  * Send the ordinary reminder to everyone who owes something.
  *
- * Three rules, each of them a failure this feature would otherwise have:
+ * Four rules, each of them a failure this feature would otherwise have:
  *
  * 1. **A failure never stops the run and is never hidden.** One client with a dead mailbox must not stop
  *    the other thirty being written to, and the report says which failed and what the server said.
  * 2. **The run bounds itself in time** — see `CHASE_BUDGET_MS` — and says where it stopped.
  * 3. **Every send is recorded per request**, in the same events the single-send path writes, so a
  *    client's history says what was sent to them and when, whichever way it was sent.
+ * 4. **The practice's own cadence is respected, and the clients it holds back are named.** A run that
+ *    quietly skipped people would be indistinguishable from a run that wrote to them, which is the one
+ *    thing a report must never be. The split comes from `chaseSplits`, the same function the page reads,
+ *    so the pre-flight count and the run cannot disagree.
  */
 async function sendAllReminders({ db, request, response, practitioner, practiceId, mailer, chaseBudgetMs = CHASE_BUDGET_MS }) {
   if (!requireSignIn({ practitioner, response })) return;
@@ -1458,16 +1564,14 @@ async function sendAllReminders({ db, request, response, practitioner, practiceI
   }
 
   const origin = originOf(request);
-  const rows = chaseList(db, practiceId);
-  const skipped = rows.filter((row) => !row.client_email);
-  const queued = rows.filter((row) => row.client_email);
+  const { sendable, held, withoutAddress, cadenceDays } = chaseSplits(db, practiceId);
 
   const results = [];
   const startedAt = Date.now();
 
-  for (const [index, row] of queued.entries()) {
+  for (const [index, row] of sendable.entries()) {
     if (Date.now() - startedAt > chaseBudgetMs) {
-      for (const rest of queued.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
+      for (const rest of sendable.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
       break;
     }
     results.push(await sendOneReminder(db, row, origin, mailer));
@@ -1476,7 +1580,14 @@ async function sendAllReminders({ db, request, response, practitioner, practiceI
   return sendPage(
     response,
     200,
-    chaseReportPage({ practitioner, results, skipped, elapsedMs: Date.now() - startedAt }),
+    chaseReportPage({
+      practitioner,
+      results,
+      skipped: withoutAddress,
+      held,
+      cadenceDays,
+      elapsedMs: Date.now() - startedAt,
+    }),
   );
 }
 
@@ -1522,7 +1633,7 @@ async function sendOneReminder(db, row, origin, mailer) {
  * whose result is "done" teaches a practice to distrust it, and the first time a message quietly did not
  * arrive they would go back to sending them by hand.
  */
-function chaseReportPage({ practitioner, results, skipped, elapsedMs }) {
+function chaseReportPage({ practitioner, results, skipped, held = [], cadenceDays = 0, elapsedMs }) {
   const sent = results.filter((entry) => entry.outcome === 'sent');
   const failed = results.filter((entry) => entry.outcome === 'failed');
   const later = results.filter((entry) => entry.outcome === 'not-attempted');
@@ -1539,15 +1650,27 @@ function chaseReportPage({ practitioner, results, skipped, elapsedMs }) {
     practitioner,
     body: html`
       <h1>What happened</h1>
-      <p>${sent.length} sent, ${failed.length} failed, ${later.length} not attempted${skipped.length > 0
+      <p>${sent.length} sent, ${failed.length} failed, ${later.length} not attempted${held.length > 0
+        ? html`, ${held.length} held back by your cadence`
+        : ''}${skipped.length > 0
         ? html`, ${skipped.length} with no email address`
         : ''} — in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.</p>
       ${failed.length > 0
         ? html`<p class="error"><strong>${failed.length}
             ${failed.length === 1 ? 'message was' : 'messages were'} not sent.</strong> Nothing was lost:
             each one is still on <a href="/chase">the chase list</a>, so pressing the button again will
-            try it again — along with everyone else still outstanding, because the run keeps no record of
-            who it has already reminded.</p>`
+            try it again${cadenceDays > 0
+              ? html` — but only once your ${cadenceDays}-day cadence lets it, so a failure inside the
+                  cadence is a reason to open that request and send it by hand`
+              : html` — along with everyone else still outstanding, because no cadence is set and the run
+                  keeps no record of who it has already reminded`}.</p>`
+        : ''}
+      ${held.length > 0
+        ? html`<p class="note"><strong>${held.length} ${held.length === 1 ? 'client was' : 'clients were'}
+            not written to</strong>, because you asked not to remind the same client more often than every
+            ${cadenceDays} ${cadenceDays === 1 ? 'day' : 'days'} and they were reminded more recently than
+            that. Nothing is wrong: they are still on <a href="/chase">the chase list</a>, and the setting
+            is on that page if you want to change it.</p>`
         : ''}
       ${later.length > 0
         ? html`<p class="warning"><strong>The run stopped before it finished.</strong> It reached its time
@@ -1555,7 +1678,7 @@ function chaseReportPage({ practitioner, results, skipped, elapsedMs }) {
             of who had already been written to. The ${later.length} below are untouched and still on
             <a href="/chase">the chase list</a>.</p>`
         : ''}
-      ${results.length + skipped.length === 0
+      ${results.length + skipped.length + held.length === 0
         ? html`<p>There was nothing to send.</p>`
         : html`<table>
             <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr></thead>
@@ -1564,6 +1687,11 @@ function chaseReportPage({ practitioner, results, skipped, elapsedMs }) {
                 <td>${entry.row.client_name}</td>
                 <td><a href="/requests/${entry.row.id}">${entry.row.title}</a></td>
                 <td>${outcomeOf(entry)}</td>
+              </tr>`)}
+              ${held.map((row) => html`<tr>
+                <td>${row.client_name}</td>
+                <td><a href="/requests/${row.id}">${row.title}</a></td>
+                <td><span class="note">held back by your cadence — reminded ${agoWords(row.lastRemindedAt, now())}</span></td>
               </tr>`)}
               ${skipped.map((row) => html`<tr>
                 <td>${row.client_name}</td>

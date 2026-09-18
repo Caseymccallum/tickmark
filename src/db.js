@@ -35,7 +35,14 @@ export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS practice (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- How many days must pass before the batch chase will write to the same client again. **0 means no
+  -- limit**, and 0 is the default: docs/product-needs.md says a threshold is a decision and not a default,
+  -- so Tickmark does not guess at a number for a firm. A practice sets this for itself, or leaves it off.
+  --
+  -- Nullable, and null reads as 0 — every practice written before this column existed had no cadence, and
+  -- the previous release's behaviour was to send every time.
+  cadence_days INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS practitioner (
@@ -343,6 +350,7 @@ function migrate(db) {
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['upload', 'key_id', 'TEXT REFERENCES practice_key(id)'],
     ['practitioner', 'removed_at', 'TEXT'],
+    ['practice', 'cadence_days', 'INTEGER'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }

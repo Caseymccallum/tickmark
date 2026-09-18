@@ -31,9 +31,10 @@ empties stops being read, which makes the tool useless in its second season rath
 drafting a reminder makes a fresh one. That is the visible cost of a deliberate decision, and it is
 on the screen where the practice can see it rather than in a footnote.
 
-**Not built:** re-encrypting old files to a new key, which is the only thing that would let an old key
-be deleted safely. Everything else in the first version's scope is done, and the honest limits of the
-encryption are in `docs/encryption.md` rather than in this file.
+**Built.** Re-encrypting old files to a new key — which is what lets a key be retired — landed as phase 2c,
+and removing a member as 2g, so nothing in the first version's scope is missing any more. What remains
+unbuilt is deliberate and named: recurring requests on a schedule, and integrations with the tax software
+practices already run. The honest limits of the encryption are in `docs/encryption.md` rather than here.
 
 ## Keys are a history, not a value
 

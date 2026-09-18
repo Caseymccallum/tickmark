@@ -19,7 +19,8 @@ Phase 2   Make it usable in the field
           2d other install paths          NOT PLANNED
           2e the states the trade asks for COMPLETE — see docs/product-needs.md
           2f chase everyone at once     COMPLETE
-          2g removing a member          COMPLETE — every item of Phases 1 and 2 is now built
+          2g removing a member          COMPLETE
+          2h a chase cadence            COMPLETE — every item of Phases 1 and 2 is now built
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -395,10 +396,10 @@ at a time has diagnosed the problem without solving it.
 4. **Every send is recorded per request**, in the same events the single-send path writes, so a client's
    history says what was sent to them and when, whichever way it was sent.
 
-Two things are deliberately not here, and both are named in `docs/product-needs.md`: **recurring
-requests**, and **a cadence the run respects** — the run has no memory of who it has already written to,
-and presses twice will send twice. The chase list shows when each client was last reminded so the
-decision is the practice's, but the threshold itself is a decision and not a default I should invent.
+One thing is deliberately not here, and it is named in `docs/product-needs.md`: **recurring requests** on a
+schedule, which needs a decision about what happens when the schedule fires while the previous request is
+still open. **A cadence the run respects** was the second thing on that list, and 2h below is where it
+went.
 
 The one thing to watch when reading the code: the message a reminder contains is built by **one**
 function, `messageFor`, used by both the single-request page and the run. Two implementations of "what
@@ -447,6 +448,58 @@ so the test now writes the old table by hand, which is both portable and more fa
 also wearing a disguise: the throw skipped `close()`, the handle stayed open, and the `EPERM` from the
 cleanup was reported instead of the real error. **A `finally` that can fail can hide the exception it is
 cleaning up after**, which is worth knowing anywhere a test closes a handle and deletes a directory.
+
+### 2h. A chase cadence the practice sets
+
+**Status: complete.** The last item `docs/product-needs.md` named as not built, and the one where the
+design decision *is* the feature.
+
+The problem it solves is small and specific: the run has no memory of who it already wrote to, so pressing
+the button twice in an afternoon writes to everybody twice. A practice would stop trusting the button over
+that. The fix is a threshold — and **a threshold is a decision about a firm's own clients**, which is why
+Tickmark does not ship one. The setting starts at **0, "no limit"**, and a practice chooses its own number.
+
+That decision is what makes the feature honest, so the page says it out loud: *"How often it is acceptable
+to chase a client is your judgement about your clients, not a number this should pick for you — which is why
+there is no default."* Even a cadence of 1 day fixes the accident that matters, because a client reminded
+five minutes ago is inside it.
+
+**Four things had to be true, and each is a failure the feature would otherwise have:**
+
+1. **The number is the practice's, stored per practice** (`practice.cadence_days`), validated as a whole
+   number between 0 and 365 — with 366 refused, because a cadence longer than a season silences the button
+   for a season, which is not what the setting is for.
+2. **Clients held back are named, never dropped.** The report counts them in its summary and lists each one
+   with the reason and how long ago they were reminded. A run that quietly skipped people would be
+   indistinguishable from a run that wrote to them, which is the one thing a report must never be.
+3. **The page and the run cannot disagree about who is in scope**, because both read one function,
+   `chaseSplits`. A banner saying "this sends 4" over a run that sends 2 is the same class of lie as any
+   other overstatement.
+4. **The single-request reminder is never held back.** On one request's page you are looking at that
+   client, and the words are on the screen in front of you; the cadence exists for the button that writes
+   to everybody without anybody reading each message. The page says this in as many words rather than
+   leaving it to be discovered by the person who wants to send one.
+
+**The ordering inside the split is a decision too:** no address beats the cadence, because a client with no
+address could not be written to whatever the cadence says, and reporting them as "held back by your cadence"
+would name the wrong problem. There is a test whose whole job is that the two reasons do not get swapped.
+
+**Five mutations were run against it**, each alone, each restored and verified in one process. Four are
+worth naming:
+
+- `return days < cadenceDays` → `return false` (cadence disabled): **4 fail**, each exactly the assertion
+  about holding back.
+- The report's table guard reverted to `results + skipped` without `held`: **fails** *"and the table names
+  them"* — which is precisely the bug the tests found while this was being written, so the fix is now
+  permanently guarded rather than merely made.
+- `withoutAddress` set to empty: **fails** *"the client with no address is named"*.
+- The validation removed: **fails** *"\"-1\" is refused"*.
+
+The fifth mutation was a mistake worth recording: the first thing tried was `if (false) return false;`
+inserted at the top of `heldBackBy` — which is a **no-op**, because it never fires, and the suite went
+green. A mutation that does not change behaviour proves nothing, and a green result from one is not
+evidence that a test bites. It was caught by asking what the mutation actually did rather than by the
+suite.
 
 ## Phase 3 — Find out if anyone wants it
 

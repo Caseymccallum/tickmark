@@ -515,7 +515,12 @@ export function practitionerByEmail(db, email) {
 
 /** The firm behind an id. Null if there is no such practice. */
 export function practiceFor(db, practiceId) {
-  return db.prepare('SELECT id, name, created_at FROM practice WHERE id = ?').get(practiceId) ?? null;
+  const row = db.prepare('SELECT id, name, created_at, cadence_days FROM practice WHERE id = ?').get(practiceId);
+  if (!row) return null;
+  // The "null reads as 0" mapping happens here and nowhere else. Null means "written before the column
+  // existed", and every practice like that had no cadence — so every caller gets a number, and no caller
+  // has to remember which column is nullable for which reason.
+  return { ...row, cadenceDays: row.cadence_days ?? 0 };
 }
 
 /**
@@ -531,6 +536,21 @@ export function renamePractice(db, practiceId, name) {
   const row = db.prepare('SELECT id FROM practice WHERE id = ?').get(practiceId);
   if (!row) return false;
   db.prepare('UPDATE practice SET name = ? WHERE id = ?').run(name, practiceId);
+  return true;
+}
+
+/**
+ * How often the batch chase may write to the same client. 0 means no limit.
+ *
+ * Stored per practice rather than fixed, and that is the point of the feature rather than a detail of it:
+ * `docs/product-needs.md` refuses to invent a threshold, because how often it is acceptable to chase a
+ * client is a firm's judgement about its own clients. The software's job is to remember the number the
+ * firm chose and to say out loud when it is holding somebody back.
+ */
+export function setCadence(db, practiceId, days) {
+  const row = db.prepare('SELECT id FROM practice WHERE id = ?').get(practiceId);
+  if (!row) return false;
+  db.prepare('UPDATE practice SET cadence_days = ? WHERE id = ?').run(days, practiceId);
   return true;
 }
 
