@@ -27,18 +27,40 @@ export function recordEvent(db, { requestId, kind, detail = null, at = now() }) 
     .run(newId(), requestId, kind, detail, at);
 }
 
-export function createPractitioner(db, { email, passwordHash, at = now() }) {
+export function createPractice(db, { name, at = now() }) {
   const id = newId();
-  db.prepare('INSERT INTO practitioner (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
-    .run(id, email, passwordHash, at);
+  db.prepare('INSERT INTO practice (id, name, created_at) VALUES (?, ?, ?)').run(id, name, at);
   return id;
 }
 
-export function createClient(db, { practitionerId, name, email = null, at = now() }) {
+/**
+ * A person, inside a practice.
+ *
+ * `practiceId` is required rather than optional so that a practitioner cannot be created without a
+ * firm to belong to by forgetting an argument — the insert fails loudly instead of writing a row that
+ * belongs to nobody.
+ */
+export function createPractitioner(db, { practiceId, email, passwordHash, at = now() }) {
   const id = newId();
   db.prepare(
-    'INSERT INTO client (id, practitioner_id, name, email, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, practitionerId, name, email, at);
+    'INSERT INTO practitioner (id, practice_id, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, practiceId, email, passwordHash, at);
+  return id;
+}
+
+/**
+ * A client of a practice.
+ *
+ * `createdBy` is recorded **beside** the practice and not instead of it. The practice is who owns the
+ * record; the person is provenance, for the audit trail a firm eventually wants and for the question
+ * "who asked this client for this?" that a two-partner firm will one day ask. Same for requests and
+ * for keys.
+ */
+export function createClient(db, { practiceId, createdBy, name, email = null, at = now() }) {
+  const id = newId();
+  db.prepare(
+    'INSERT INTO client (id, practice_id, practitioner_id, name, email, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, practiceId, createdBy, name, email, at);
   return id;
 }
 
@@ -49,22 +71,22 @@ export function createClient(db, { practitionerId, name, email = null, at = now(
  * half of that sentence is an assumption about the data, and the scope is a fact about
  * the query. Assumptions break; facts do not.
  */
-export function findOrCreateClient(db, { practitionerId, name, email = null, at = now() }) {
+export function findOrCreateClient(db, { practiceId, createdBy, name, email = null, at = now() }) {
   const existing = db
-    .prepare('SELECT id FROM client WHERE practitioner_id = ? AND name = ? COLLATE NOCASE')
-    .get(practitionerId, name);
+    .prepare('SELECT id FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE')
+    .get(practiceId, name);
   if (existing) return existing.id;
-  return createClient(db, { practitionerId, name, email, at });
+  return createClient(db, { practiceId, createdBy, name, email, at });
 }
 
 /** A titled list of documents owed by one client, with its items, created atomically. */
-export function createRequest(db, { practitionerId, clientId, title, dueAt = null, items = [], at = now() }) {
+export function createRequest(db, { practiceId, createdBy, clientId, title, dueAt = null, items = [], at = now() }) {
   return inTransaction(db, () => {
     const id = newId();
     db.prepare(
-      `INSERT INTO request (id, practitioner_id, client_id, title, due_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, practitionerId, clientId, title, dueAt, at);
+      `INSERT INTO request (id, practice_id, practitioner_id, client_id, title, due_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, practiceId, createdBy, clientId, title, dueAt, at);
     recordEvent(db, { requestId: id, kind: 'request.created', at });
     // Inside the transaction on purpose: a request that exists with none of its items
     // is a state the practice would have to notice and repair.
@@ -153,21 +175,40 @@ export function history(db, requestId) {
 }
 
 export function practitionerByEmail(db, email) {
-  return db.prepare('SELECT id, email, password_hash FROM practitioner WHERE email = ?').get(email);
+  return db
+    .prepare('SELECT id, email, password_hash, practice_id FROM practitioner WHERE email = ?')
+    .get(email);
+}
+
+/** The firm behind an id. Null if there is no such practice. */
+export function practiceFor(db, practiceId) {
+  return db.prepare('SELECT id, name, created_at FROM practice WHERE id = ?').get(practiceId) ?? null;
+}
+
+/**
+ * Everyone in a practice, oldest first, so the person who created it is first.
+ *
+ * `password_hash` is deliberately not selected: nothing that displays a member list needs it, and a
+ * function that returns secrets is a function that will one day print them.
+ */
+export function membersOf(db, practiceId) {
+  return db
+    .prepare('SELECT id, email, created_at FROM practitioner WHERE practice_id = ? ORDER BY created_at, id')
+    .all(practiceId);
 }
 
 /**
  * A practice's keys, newest first. The newest is the one a client's browser encrypts to; the older
  * ones exist because files already stored are encrypted to them and cannot be moved.
  */
-export function practiceKeys(db, practitionerId) {
+export function practiceKeys(db, practiceId) {
   return db
     .prepare(
       `SELECT id, public_key, wrapped_private_key, created_at
-         FROM practice_key WHERE practitioner_id = ?
+         FROM practice_key WHERE practice_id = ?
         ORDER BY created_at DESC, rowid DESC`,
     )
-    .all(practitionerId)
+    .all(practiceId)
     .map((row) => ({
       id: row.id,
       publicKey: JSON.parse(row.public_key),
@@ -176,8 +217,8 @@ export function practiceKeys(db, practitionerId) {
     }));
 }
 
-export function currentPracticeKey(db, practitionerId) {
-  return practiceKeys(db, practitionerId)[0] ?? null;
+export function currentPracticeKey(db, practiceId) {
+  return practiceKeys(db, practiceId)[0] ?? null;
 }
 
 /**
@@ -187,13 +228,17 @@ export function currentPracticeKey(db, practitionerId) {
  * The wrapping happened in the browser, as it always does. If the server wrapped it, the server
  * could unwrap it, and the claim that a self-hosted Tickmark cannot read a client's documents would
  * be false in exactly the situation where it matters: when the host is compromised.
+ *
+ * `createdBy` records which member added it. The key belongs to the practice; the person is
+ * provenance, and in a firm with two partners "who rotated this, and when" is a question someone
+ * will ask.
  */
-export function addPracticeKey(db, practitionerId, { publicKey, wrappedPrivateKey, at = now() }) {
+export function addPracticeKey(db, practiceId, { publicKey, wrappedPrivateKey, createdBy, at = now() }) {
   const id = newId();
   db.prepare(
-    `INSERT INTO practice_key (id, practitioner_id, public_key, wrapped_private_key, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, practitionerId, JSON.stringify(publicKey), wrappedPrivateKey, at);
+    `INSERT INTO practice_key (id, practice_id, practitioner_id, public_key, wrapped_private_key, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, practiceId, createdBy, JSON.stringify(publicKey), wrappedPrivateKey, at);
   return id;
 }
 
@@ -203,17 +248,17 @@ export function addPracticeKey(db, practitionerId, { publicKey, wrappedPrivateKe
  * Changing a passphrase does not rotate anything: the same key comes back, sealed differently. That
  * is why it is cheap, and why it is worth having as a separate act from rotation.
  */
-export function replaceWrappedKey(db, practitionerId, keyId, wrappedPrivateKey) {
-  const row = db.prepare('SELECT id FROM practice_key WHERE id = ? AND practitioner_id = ?').get(keyId, practitionerId);
+export function replaceWrappedKey(db, practiceId, keyId, wrappedPrivateKey) {
+  const row = db.prepare('SELECT id FROM practice_key WHERE id = ? AND practice_id = ?').get(keyId, practiceId);
   if (!row) return false;
   db.prepare('UPDATE practice_key SET wrapped_private_key = ? WHERE id = ?').run(wrappedPrivateKey, keyId);
   return true;
 }
 
-export function clientsOf(db, practitionerId) {
+export function clientsOf(db, practiceId) {
   return db
-    .prepare('SELECT id, name, email FROM client WHERE practitioner_id = ? ORDER BY name')
-    .all(practitionerId);
+    .prepare('SELECT id, name, email FROM client WHERE practice_id = ? ORDER BY name')
+    .all(practiceId);
 }
 
 /**
@@ -224,7 +269,7 @@ export function clientsOf(db, practitionerId) {
  * season and a list that never empties stops being read — so closed requests are a second view
  * rather than a deletion.
  */
-export function requestsFor(db, practitionerId, { includeClosed = false } = {}) {
+export function requestsFor(db, practiceId, { includeClosed = false } = {}) {
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
@@ -235,18 +280,18 @@ export function requestsFor(db, practitionerId, { includeClosed = false } = {}) 
                  JOIN request_item i2 ON i2.id = u.request_item_id
                 WHERE i2.request_id = r.id AND i2.withdrawn_at IS NULL) AS received_count
          FROM request r JOIN client c ON c.id = r.client_id
-        WHERE r.practitioner_id = ?
+        WHERE r.practice_id = ?
           ${includeClosed ? '' : 'AND r.closed_at IS NULL'}
         ORDER BY r.created_at DESC`,
     )
-    .all(practitionerId)
+    .all(practiceId)
     .map((row) => ({ ...row, outstanding_count: row.item_count - row.received_count }));
 }
 
-export function closedCount(db, practitionerId) {
+export function closedCount(db, practiceId) {
   return db
-    .prepare('SELECT COUNT(*) AS n FROM request WHERE practitioner_id = ? AND closed_at IS NOT NULL')
-    .get(practitionerId).n;
+    .prepare('SELECT COUNT(*) AS n FROM request WHERE practice_id = ? AND closed_at IS NOT NULL')
+    .get(practiceId).n;
 }
 
 /**
@@ -256,20 +301,20 @@ export function closedCount(db, practitionerId) {
  * client's link is untouched — revoking is a separate act, and closing a file is not the same as
  * telling a client to stop sending.
  */
-export function closeRequest(db, practitionerId, requestId, at = now()) {
+export function closeRequest(db, practiceId, requestId, at = now()) {
   const row = db
-    .prepare('SELECT id, closed_at FROM request WHERE id = ? AND practitioner_id = ?')
-    .get(requestId, practitionerId);
+    .prepare('SELECT id, closed_at FROM request WHERE id = ? AND practice_id = ?')
+    .get(requestId, practiceId);
   if (!row || row.closed_at) return false;
   db.prepare('UPDATE request SET closed_at = ? WHERE id = ?').run(at, requestId);
   recordEvent(db, { requestId, kind: 'request.closed', at });
   return true;
 }
 
-export function reopenRequest(db, practitionerId, requestId, at = now()) {
+export function reopenRequest(db, practiceId, requestId, at = now()) {
   const row = db
-    .prepare('SELECT id, closed_at FROM request WHERE id = ? AND practitioner_id = ?')
-    .get(requestId, practitionerId);
+    .prepare('SELECT id, closed_at FROM request WHERE id = ? AND practice_id = ?')
+    .get(requestId, practiceId);
   if (!row || !row.closed_at) return false;
   db.prepare('UPDATE request SET closed_at = NULL WHERE id = ?').run(requestId);
   recordEvent(db, { requestId, kind: 'request.reopened', at });
@@ -284,15 +329,15 @@ export function reopenRequest(db, practitionerId, requestId, at = now()) {
  * another practice is indistinguishable from one that does not exist, which is also the
  * right answer to give.
  */
-export function requestFor(db, practitionerId, requestId) {
+export function requestFor(db, practiceId, requestId) {
   const row = db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
               c.id AS client_id, c.name AS client_name, c.email AS client_email
          FROM request r JOIN client c ON c.id = r.client_id
-        WHERE r.id = ? AND r.practitioner_id = ?`,
+        WHERE r.id = ? AND r.practice_id = ?`,
     )
-    .get(requestId, practitionerId);
+    .get(requestId, practiceId);
   return row ?? null;
 }
 
@@ -319,15 +364,15 @@ export function itemsOf(db, requestId) {
  * Every mutation below goes through this, so there is one place that can be wrong about who is
  * allowed to change an item, rather than four.
  */
-export function itemIn(db, practitionerId, requestId, itemId) {
+export function itemIn(db, practiceId, requestId, itemId) {
   return (
     db
       .prepare(
         `SELECT i.id, i.label, i.withdrawn_at, i.attention_at
            FROM request_item i JOIN request r ON r.id = i.request_id
-          WHERE i.id = ? AND i.request_id = ? AND r.practitioner_id = ?`,
+          WHERE i.id = ? AND i.request_id = ? AND r.practice_id = ?`,
       )
-      .get(itemId, requestId, practitionerId) ?? null
+      .get(itemId, requestId, practiceId) ?? null
   );
 }
 
@@ -375,8 +420,8 @@ export function addItems(db, { requestId, labels, at = now() }) {
  * Withdrawing is reversible, like closing a request and for the same reason: a status that cannot be
  * undone is a trap for whoever sets it by mistake.
  */
-export function setItemWithdrawn(db, practitionerId, requestId, itemId, withdrawn, at = now()) {
-  const item = itemIn(db, practitionerId, requestId, itemId);
+export function setItemWithdrawn(db, practiceId, requestId, itemId, withdrawn, at = now()) {
+  const item = itemIn(db, practiceId, requestId, itemId);
   if (!item || Boolean(item.withdrawn_at) === withdrawn) return false;
   db.prepare('UPDATE request_item SET withdrawn_at = ? WHERE id = ?').run(withdrawn ? at : null, itemId);
   recordEvent(db, { requestId, kind: withdrawn ? 'item.withdrawn' : 'item.restored', detail: item.label, at });
@@ -390,8 +435,8 @@ export function setItemWithdrawn(db, practitionerId, requestId, itemId, withdraw
  * stays outstanding, so the next reminder asks for it again and the client's page says what was
  * wrong with the last attempt.
  */
-export function setItemAttention(db, practitionerId, requestId, itemId, { note = null } = {}, at = now()) {
-  const item = itemIn(db, practitionerId, requestId, itemId);
+export function setItemAttention(db, practiceId, requestId, itemId, { note = null } = {}, at = now()) {
+  const item = itemIn(db, practiceId, requestId, itemId);
   if (!item) return false;
   const trimmed = typeof note === 'string' && note.trim().length > 0 ? note.trim().slice(0, 500) : null;
   db.prepare('UPDATE request_item SET attention_at = ?, attention_note = ? WHERE id = ?').run(at, trimmed, itemId);
@@ -404,8 +449,8 @@ export function setItemAttention(db, practitionerId, requestId, itemId, { note =
   return true;
 }
 
-export function clearItemAttention(db, practitionerId, requestId, itemId, at = now()) {
-  const item = itemIn(db, practitionerId, requestId, itemId);
+export function clearItemAttention(db, practiceId, requestId, itemId, at = now()) {
+  const item = itemIn(db, practiceId, requestId, itemId);
   if (!item || !item.attention_at) return false;
   db.prepare('UPDATE request_item SET attention_at = NULL, attention_note = NULL WHERE id = ?').run(itemId);
   recordEvent(db, { requestId, kind: 'item.attention-cleared', detail: item.label, at });
@@ -435,15 +480,14 @@ export function tokenLookup(db, token, at = new Date()) {
   const row = db
     .prepare(
       `SELECT t.id AS token_id, t.expires_at, t.revoked_at,
-              r.id, r.title, r.due_at, r.practitioner_id,
+              r.id, r.title, r.due_at, r.practice_id,
               c.name AS client_name,
               (SELECT k.public_key FROM practice_key k
-                WHERE k.practitioner_id = r.practitioner_id
+                WHERE k.practice_id = r.practice_id
                 ORDER BY k.created_at DESC, k.rowid DESC LIMIT 1) AS practice_public_key
          FROM access_token t
          JOIN request r ON r.id = t.request_id
          JOIN client c ON c.id = r.client_id
-         JOIN practitioner p ON p.id = r.practitioner_id
         WHERE t.token_hash = ?`,
     )
     .get(hashToken(token));
@@ -478,14 +522,14 @@ export function tokensFor(db, requestId) {
 }
 
 /** Revoke a link. Scoped by practice, so one practice cannot revoke another's. */
-export function revokeToken(db, practitionerId, tokenId, at = now()) {
+export function revokeToken(db, practiceId, tokenId, at = now()) {
   const row = db
     .prepare(
       `SELECT t.id, t.request_id, t.revoked_at
          FROM access_token t JOIN request r ON r.id = t.request_id
-        WHERE t.id = ? AND r.practitioner_id = ?`,
+        WHERE t.id = ? AND r.practice_id = ?`,
     )
-    .get(tokenId, practitionerId);
+    .get(tokenId, practiceId);
   if (!row || row.revoked_at) return false;
   db.prepare('UPDATE access_token SET revoked_at = ? WHERE id = ?').run(at, tokenId);
   recordEvent(db, { requestId: row.request_id, kind: 'link.revoked', at });

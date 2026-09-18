@@ -14,7 +14,7 @@ Phase 0   Verify the demand            NOT RUN — and it decides whether Phase 
 Phase 1   Version one                  COMPLETE
 Phase 2   Make it usable in the field
           2a email sending             COMPLETE
-          2b several people per practice  A done; B and C NOT STARTED
+          2b several people per practice  A and B done; C NOT STARTED
           2c re-encrypting old files      NOT STARTED
           2d other install paths          NOT PLANNED
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
@@ -159,7 +159,7 @@ project:
 
 ### 2b. More than one person per practice
 
-**Status: stage A done; B and C not started.** `docs/members.md` holds the decision, and it came before
+**Stages A and B are done; C is not started.** `docs/members.md` holds the decision, and it came before
 the code because the roadmap was right that it is a design question: the answer decides the shape of the
 data, and the shape of the data is expensive to change later.
 
@@ -169,35 +169,47 @@ leaving must not make four years of client records unopenable. The cost is state
 discovered: adding a member means giving them the private key, and removing one does not un-disclose
 anything they already had.
 
-**Stage A (this pass)** puts the tenancy in the schema: a `practice` row, a `practice_id` on every table
-that belongs to a firm, and a migration that gives each existing practitioner their own practice and
-backfills their clients, requests, keys and sessions into it. **Behaviour is unchanged** — one
-practitioner, one practice — and every existing test still passes, which is the point of doing it
-separately.
+**Stage A** put the tenancy in the schema: a `practice` row, a `practice_id` on every table that belongs
+to a firm, and a migration backfilling each practitioner's work into a practice of their own.
 
-Two things went wrong while writing it, and both were caught by tests that already existed:
+**Stage B** switched the code over. Everything the store does is now scoped by **practice** rather than
+by person: `requestFor`, `itemsOf`'s guards, the key history, the client-link lookup, the token checks.
+`createClient`, `createRequest` and `addPracticeKey` take `practiceId` **and** `createdBy`, so the firm
+owns the record and the person is recorded as provenance. Sign-up creates a practice and its first
+member in one transaction. `contextFor` resolves the practice once, so no handler has to remember to ask.
+And `sessionFor` now returns the practice beside the person.
 
-1. **The new indexes broke old databases.** They were written into `SCHEMA`, which runs *before* the
-   migration adds the columns they name — so opening a version-one database failed with
-   `no such column: practice_id`. `test/keys.test.js`'s old-schema test caught it, because it is the
-   only test that opens a database written by the previous release. The indexes now run after the
-   columns, and the reason is recorded where they are declared.
-2. **`migratedKeys` started meaning something else.** It was a single total, so adding a migration made
-   it count practices and backfills too — a number that would have been a lie in the one place an
-   operator looks to see what happened to their file. Each migration now has its own counter, and a
-   test asserts the key one is still exactly what it says.
+**Behaviour is unchanged with one member, and that is the point** — every test written before this pass
+still passes. The capability that is genuinely new needs two members to see, so it is asserted directly:
+two people in one practice see the same client's records, which under the old shape was unrepresentable
+because a person *was* the tenant.
 
-The migration is tested against a database built with the **old schema by hand**, because a migration
-tested against the schema it is migrating *to* proves nothing: two practices, each with a client, a
-request, a key and a session. It asserts that each row lands in the practice of whoever created it, that
-no row or value is lost, that the old `practitioner_id` columns are left readable, and that a second run
-changes nothing. Two mutations proved those tests bite: not running the migration fails two of them, and
-pointing the client backfill at the first practice instead of the owner's fails exactly the assertion
-that names it.
+Five things went wrong or were found while switching, and each is recorded because the pattern matters
+more than the instance:
 
-**Left for stage B:** the code switches to reading `practice_id`; membership; roles; the invitation
-flow designed in `docs/members.md`, where the private key travels in a link fragment so the server never
-sees it. **Stage C:** a members page, and a practice name that is not the placeholder `My practice`.
+1. **A substitution-order mistake of mine.** I added `createdBy: practitioner.id` *before* the blanket
+   rename from `practitioner.id` to `practiceId`, so the rename turned the creator into the practice —
+   and the foreign key refused 53 tests at `/setup`. The rename had to come first. (This is the third
+   time in this project that the *order* of two edits was the bug, after a batch writing one file twice.)
+2. **The tests caught a half-finished removal.** Dropping `session.practice_id` left the backfill
+   statement that updated it, and four tests failed with `no such column: practice_id` — which is what a
+   half-removed thing looks like when something is still reading it.
+3. **A dead join, removed.** `tokenLookup` joined `practitioner` and read nothing from it.
+4. **A dead export, removed.** `endAllSessions` in `auth.js` was called from nowhere, and its comment
+   claimed a passphrase change needed it, which is not true of a session created by password sign-in.
+5. **A test that was not testing anything.** The "members are listed oldest first" assertion passed with
+   the `ORDER BY` deleted, because SQLite returns rows in insertion order and I had inserted them in
+   timestamp order. The fixture now creates them in the *opposite* order to their timestamps, and the
+   mutation now fails the test with the sentence that names the ordering.
+
+Two mutations proved the new tests bite. Scoping `requestFor` by the creator instead of the practice
+fails 49 tests — and the reason is worth stating: a practice id and a person id are both random UUIDs,
+so confusing them is **loud, never silent**. Removing `membersOf`'s ordering fails exactly the assertion
+about ordering.
+
+**Left for stage C:** the invitation flow designed in `docs/members.md`, where the private key travels in
+a link fragment so the server never sees it; a members page; and a practice name that is not the
+placeholder `My practice`.
 
 ### 2c. Re-encrypting old files, so a key can be deleted
 

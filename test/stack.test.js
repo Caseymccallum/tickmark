@@ -19,6 +19,7 @@ import { openDatabase } from '../src/db.js';
 import {
   addItem,
   createClient,
+  createPractice,
   createPractitioner,
   createRequest,
   history,
@@ -43,20 +44,24 @@ const PLAN_TABLES = [
 
 /** A practice with one client and one request, which most tests need. */
 function scenario(db) {
+  const practiceId = createPractice(db, { name: 'My practice' });
   const practitionerId = createPractitioner(db, {
+    practiceId,
     email: 'sam@practice.example',
     passwordHash: 'scrypt$placeholder',
-    publicKey: 'unused-in-the-spike',
-    wrappedPrivateKey: 'unused-in-the-spike',
   });
-  const clientId = createClient(db, { practitionerId, name: 'Northwind Ltd' });
+  // `createdBy` is the person, beside the practice rather than instead of it. The two arguments here
+  // used to be `publicKey` and `wrappedPrivateKey`, which `createPractitioner` has ignored since the
+  // key moved into its own table — dead arguments in a test are a claim that something is being set.
+  const clientId = createClient(db, { practiceId, createdBy: practitionerId, name: 'Northwind Ltd' });
   const requestId = createRequest(db, {
-    practitionerId,
+    practiceId,
+    createdBy: practitionerId,
     clientId,
     title: '2025 return',
     dueAt: '2026-01-31T00:00:00.000Z',
   });
-  return { practitionerId, clientId, requestId };
+  return { practiceId, practitionerId, clientId, requestId };
 }
 
 test('the schema is exactly the tables this list names, and adding one is a decision', () => {

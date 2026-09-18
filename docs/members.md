@@ -86,11 +86,16 @@ rather than in a footnote.
 | Stage | What it does | What is true at the end |
 | --- | --- | --- |
 | **A** (done) | `practice` exists; `practice_id` on every tenant-owned row; a migration that gives every existing practitioner their own practice and backfills | The database is ready. **Behaviour is unchanged**, and every existing test still passes — one practitioner, one practice |
-| **B** (next) | The code switches to reading and writing `practice_id`; membership; roles | Two people can be in one practice, each with their own login and passphrase |
-| **C** | Invitations in the UI; a members page; removing a member | The feature is usable by a practitioner rather than by a developer |
+| **B** (done) | The code reads and writes `practice_id`; `createdBy` records the person; sign-up creates a practice; sessions carry the practice | Two people in one practice see the same client's records — a capability the old shape could not express |
+| **C** (next) | Invitations; a members page; removing a member; a real practice name | The feature is usable by a practitioner rather than by a developer |
 
-**Why stage A is separate.** It changes an existing operator's database, which is the one thing here that
-can lose data. It gets its own pass, its own migration test, and its own commit — and the old
-`practitioner_id` columns are left in place during the transition so that a database that has been
-migrated is still readable by the previous release. They are dropped in stage B, when nothing reads
-them.
+**Why stage A was separate.** It changed an existing operator's database, which is the one thing here that
+can lose data. It got its own pass, its own migration test, and its own commit. The old `practitioner_id`
+columns are still in place and still written, so a migrated database remains readable by the previous
+release — and stage B added `createdBy` rather than repurposing them, which keeps that property true.
+
+**Why stage B needed its own pass too.** Sixty-nine call sites across `src/`, plus a schema change. Doing
+it in the same pass as A would have meant a single commit where a data migration and a mechanical rename
+could not be told apart — and when something failed, the culprit would have been unclear. It was still
+worth doing in one pass with A already banked: with one member, the switch is behaviour-preserving, and
+the 113 tests that existed before it were the guard.

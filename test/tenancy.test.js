@@ -18,6 +18,18 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { openDatabase } from '../src/db.js';
+import {
+  addPracticeKey,
+  createClient,
+  createPractice,
+  createPractitioner,
+  createRequest,
+  membersOf,
+  practiceFor,
+  requestFor,
+} from '../src/store.js';
+import { createSession, sessionFor } from '../src/auth.js';
+import { signUp, withServer } from './helpers.js';
 
 const OLD_SCHEMA = `
 CREATE TABLE practitioner (
@@ -86,8 +98,8 @@ test('every practitioner gets a practice of their own, and their work is moved i
 
   assert.equal(
     db.migratedTenancy,
-    10,
-    'two practices created and eight rows adopted: four tables, two rows each',
+    8,
+    'two practices created and six rows adopted: three tables, two rows each',
   );
 
   const practices = db.prepare('SELECT id, name FROM practice').all();
@@ -106,11 +118,9 @@ test('every practitioner gets a practice of their own, and their work is moved i
     ['practice_key', 'key-sam', 'person-sam'],
     ['client', 'client-sam', 'person-sam'],
     ['request', 'request-sam', 'person-sam'],
-    ['session', 'session-sam', 'person-sam'],
     ['practice_key', 'key-ada', 'person-ada'],
     ['client', 'client-ada', 'person-ada'],
     ['request', 'request-ada', 'person-ada'],
-    ['session', 'session-ada', 'person-ada'],
   ]) {
     const row = db.prepare(`SELECT practice_id FROM ${table} WHERE id = ?`).get(idColumn);
     const owner = db.prepare('SELECT practice_id FROM practitioner WHERE id = ?').get(expected);
@@ -166,7 +176,7 @@ test('running the migration twice changes nothing the second time', (t) => {
     .prepare('SELECT id, practice_id FROM practitioner ORDER BY id')
     .all()
     .map((row) => `${row.id}=${row.practice_id}`);
-  assert.equal(first.migratedTenancy, 10);
+  assert.equal(first.migratedTenancy, 8);
   first.close();
 
   const second = openDatabase(file);
@@ -191,6 +201,7 @@ test('a fresh database invents no practices, and its schema needs no migration',
 
   assert.equal(db.migratedTenancy, 0, 'there is nobody to give a practice to');
   assert.equal(db.migratedColumns, 0, 'and every column is already there');
+  assert.equal(db.migratedSession, 0, 'and there is no session column to remove on a fresh database');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM practice').get().n, 0, 'so the table is empty');
 
   // The columns exist and are indexed, which is what stage B will rely on.
@@ -209,8 +220,177 @@ test('a fresh database invents no practices, and its schema needs no migration',
     'practice_key_practice',
     'practitioner_practice',
     'request_practice',
-    'session_practice',
   ], 'every tenant table is indexed by practice, beside the older index on the key owner');
 
+
+/**
+ * The tests below are stage B: the code reads the practice, not the person.
+ *
+ * The difference is invisible with one member — which is why stage A could land with no behaviour
+ * change and why these tests have to assert a capability that did not exist before, rather than an
+ * existing one that still works. **Two people in one firm seeing the same client's records** is that
+ * capability: under the old shape it was unrepresentable, because a person *was* the tenant.
+ */
+test('signing up creates a practice, and the person belongs to it', async () => {
+  await withServer(async ({ db, agent }) => {
+    const client = agent();
+    const created = await signUp(client, 'sam@firm.example');
+    assert.equal(created.status, 303, 'the sign-up was accepted');
+
+    const practices = db.prepare('SELECT id, name FROM practice').all();
+    assert.equal(practices.length, 1, 'exactly one practice was created');
+    assert.equal(practices[0].name, 'My practice', 'with the placeholder name stage C will replace');
+
+    const person = db
+      .prepare('SELECT practice_id FROM practitioner WHERE email = ?')
+      .get('sam@firm.example');
+    assert.equal(person.practice_id, practices[0].id, 'and the person belongs to it, not to nobody');
+
+    // A second sign-up makes a second practice rather than joining the first.
+    const other = await signUp(agent(), 'ada@firm.example');
+    assert.equal(other.status, 303);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM practice').get().n, 2, 'two people, two firms');
+    assert.notEqual(
+      db.prepare('SELECT practice_id FROM practitioner WHERE email = ?').get('ada@firm.example').practice_id,
+      person.practice_id,
+    );
+  });
+});
+
+test('two members of one practice share its client records, which the old shape could not express', (t) => {
+  const db = openDatabase();
+  t.after(() => db.close());
+
+  const practiceId = createPractice(db, { name: 'Two partners' });
+  // Created in the **opposite order to their timestamps**, on purpose. A query that returned rows in
+  // insertion order would list sam first, so this is what makes "oldest first" a claim the test can
+  // fail on. The first version of this inserted them in timestamp order, and removing the `ORDER BY`
+  // from `membersOf` did not fail it — the assertion was being satisfied by the storage order by
+  // accident, which is a test that looks like it checks something and does not.
+  const sam = createPractitioner(db, {
+    practiceId,
+    email: 'sam@firm.example',
+    passwordHash: 'x',
+    at: '2026-09-01T00:00:01.000Z',
+  });
+  const ada = createPractitioner(db, {
+    practiceId,
+    email: 'ada@firm.example',
+    passwordHash: 'x',
+    at: '2026-09-01T00:00:00.000Z',
+  });
+
+  const clientId = createClient(db, { practiceId, createdBy: ada, name: 'Northwind Ltd' });
+  const requestId = createRequest(db, {
+    practiceId,
+    createdBy: ada,
+    clientId,
+    title: '2025 return',
+    items: ['Bank statements'],
+  });
+
+  // Ada made it; Sam can see it. The tenant is the firm.
+  assert.ok(requestFor(db, practiceId, requestId), 'the practice sees its own request');
+  assert.equal(requestFor(db, practiceId, requestId).title, '2025 return');
+  assert.equal(membersOf(db, practiceId).length, 2, 'and both people are members of it');
+  assert.deepEqual(
+    membersOf(db, practiceId).map((person) => person.email),
+    ['ada@firm.example', 'sam@firm.example'],
+    'ordered by when they joined, not by when the row was written: ada joined first but was created second',
+  );
+
+  // The row still records who did it, beside the practice rather than instead of it.
+  const row = db.prepare('SELECT practice_id, practitioner_id FROM request WHERE id = ?').get(requestId);
+  assert.equal(row.practice_id, practiceId, 'the tenant is the practice');
+  assert.equal(row.practitioner_id, ada, 'and the creator is the person, which is provenance');
+
+  // Another firm sees nothing of it, which is the property that must not have been traded away.
+  const other = createPractice(db, { name: 'Somebody else' });
+  assert.equal(requestFor(db, other, requestId), null, 'a different practice finds nothing');
+  assert.equal(membersOf(db, other).length, 0);
+  assert.equal(practiceFor(db, practiceId).name, 'Two partners');
+  assert.equal(practiceFor(db, 'no-such-practice'), null);
+});
+
+test('a key belongs to the practice, so the other member can be sent files', (t) => {
+  const db = openDatabase();
+  t.after(() => db.close());
+
+  const practiceId = createPractice(db, { name: 'Two partners' });
+  const ada = createPractitioner(db, { practiceId, email: 'ada@firm.example', passwordHash: 'x' });
+  const sam = createPractitioner(db, { practiceId, email: 'sam@firm.example', passwordHash: 'x' });
+
+  addPracticeKey(db, practiceId, {
+    publicKey: { kty: 'EC', crv: 'P-256', x: 'a', y: 'b' },
+    wrappedPrivateKey: 'pbkdf2$sha-256$600000$AA$AAAAAAAAAAAAAAAA$AA',
+    createdBy: ada,
+  });
+
+  // The key was added by Ada and belongs to the firm: whether a client can be sent a file is a question
+  // about the practice, so both members answer yes.
+  const forAda = db
+    .prepare('SELECT EXISTS (SELECT 1 FROM practice_key k WHERE k.practice_id = p.practice_id) AS has_key FROM practitioner p WHERE p.id = ?')
+    .get(ada);
+  const forSam = db
+    .prepare('SELECT EXISTS (SELECT 1 FROM practice_key k WHERE k.practice_id = p.practice_id) AS has_key FROM practitioner p WHERE p.id = ?')
+    .get(sam);
+  assert.equal(forAda.has_key, 1);
+  assert.equal(forSam.has_key, 1, 'the second member sees the firm has a key without adding one');
+
+  const row = db.prepare('SELECT practice_id, practitioner_id FROM practice_key').get();
+  assert.equal(row.practice_id, practiceId, 'the key belongs to the practice');
+  assert.equal(row.practitioner_id, ada, 'and records who rotated it');
+});
+
+test('a session carries the practice, so a page knows whose records it is showing', (t) => {
+  const db = openDatabase();
+  t.after(() => db.close());
+
+  const practiceId = createPractice(db, { name: 'One person' });
+  const person = createPractitioner(db, { practiceId, email: 'sam@firm.example', passwordHash: 'x' });
+
+  const { token } = createSession(db, person);
+  const who = sessionFor(db, token);
+
+  assert.equal(who.id, person, 'the session still identifies the person');
+  assert.equal(who.practiceId, practiceId, 'and now carries the firm');
+  assert.equal(who.hasKey, false, 'with no key yet');
+  assert.equal(sessionFor(db, 'not-a-token'), null);
+});
+
   db.close();
+});
+
+test('stage B removes the session column stage A added, because nothing read it', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'tickmark-stageb-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = join(directory, 'tickmark.db');
+
+  // A database as stage A left it: `session` carries a practice_id, with an index on it. The index
+  // matters — SQLite refuses to drop a column an index refers to, so a removal that forgot to drop the
+  // index first would fail here rather than in production.
+  const before = new DatabaseSync(file);
+  before.exec(
+    'CREATE TABLE session (id TEXT PRIMARY KEY, practitioner_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)',
+  );
+  before.exec('ALTER TABLE session ADD COLUMN practice_id TEXT');
+  before.exec('CREATE INDEX session_practice ON session(practice_id)');
+  before
+    .prepare(
+      'INSERT INTO session (id, practitioner_id, token_hash, expires_at, created_at, practice_id) VALUES (?,?,?,?,?,?)',
+    )
+    .run('s1', 'p1', 'hash-one', '2027-01-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 'the-practice');
+  before.close();
+
+  const db = openDatabase(file);
+  assert.equal(db.migratedSession, 1, 'the column was removed');
+  const columns = db.prepare("SELECT name FROM pragma_table_info('session')").all().map((row) => row.name);
+  assert.ok(!columns.includes('practice_id'), 'and it is gone from the table');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM session').get().n, 1, 'with the session itself kept');
+  assert.equal(db.prepare('SELECT token_hash FROM session').get().token_hash, 'hash-one', 'and its value intact');
+  db.close();
+
+  const again = openDatabase(file);
+  assert.equal(again.migratedSession, 0, 'a second open has nothing left to do');
+  again.close();
 });

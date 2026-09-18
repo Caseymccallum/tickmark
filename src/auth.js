@@ -31,13 +31,21 @@ export function createSession(db, practitionerId, at = new Date()) {
   return { token, expiresAt: expires.toISOString() };
 }
 
-/** The practice behind a session token, or null. Expired sessions are removed on sight. */
+/**
+ * The person behind a session token, and the practice they belong to, or null. Expired sessions are
+ * removed on sight.
+ *
+ * `hasKey` is asked about the **practice**, not about the person: a key belongs to the firm, so
+ * whether this person can be sent files is a question about the firm. The doc comment here used to say
+ * "the practice behind a session token" while the row was a practitioner — true when one person was
+ * the whole practice, and a sentence that would now be wrong.
+ */
 export function sessionFor(db, token, at = new Date()) {
   if (typeof token !== 'string' || token.length === 0) return null;
   const row = db
     .prepare(
-      `SELECT s.id, s.expires_at, p.id AS practitioner_id, p.email,
-              EXISTS (SELECT 1 FROM practice_key k WHERE k.practitioner_id = p.id) AS has_key
+      `SELECT s.id, s.expires_at, p.id AS practitioner_id, p.email, p.practice_id,
+              EXISTS (SELECT 1 FROM practice_key k WHERE k.practice_id = p.practice_id) AS has_key
          FROM session s JOIN practitioner p ON p.id = s.practitioner_id
         WHERE s.token_hash = ?`,
     )
@@ -47,9 +55,14 @@ export function sessionFor(db, token, at = new Date()) {
     db.prepare('DELETE FROM session WHERE id = ?').run(row.id);
     return null;
   }
-  // `hasKey` travels with the identity because a practice without a key cannot be sent files,
-  // and every signed-in page needs to know that without asking the database again.
-  return { id: row.practitioner_id, email: row.email, hasKey: row.has_key === 1 };
+  // `hasKey` travels with the identity because a practice without a key cannot be sent files, and
+  // every signed-in page needs to know that without asking the database again.
+  return {
+    id: row.practitioner_id,
+    email: row.email,
+    practiceId: row.practice_id,
+    hasKey: row.has_key === 1,
+  };
 }
 
 export function endSession(db, token) {
@@ -57,10 +70,12 @@ export function endSession(db, token) {
   db.prepare('DELETE FROM session WHERE token_hash = ?').run(hashToken(token));
 }
 
-/** Every session for a practice — the "sign out everywhere" that a passphrase change needs. */
-export function endAllSessions(db, practitionerId) {
-  db.prepare('DELETE FROM session WHERE practitioner_id = ?').run(practitionerId);
-}
+// `endAllSessions` used to live here: `DELETE FROM session WHERE practitioner_id = ?`, described as
+// "the sign out everywhere that a passphrase change needs". It was called from nowhere, and the
+// description was wrong — a session is created by signing in with a password, so changing a passphrase
+// neither needs nor justifies ending one. Found while switching the tenant in stage B of
+// `docs/members.md`, and removed rather than left with an apologetic comment. Removing a member will
+// want exactly this function, and it is three lines to bring back when something calls it.
 
 export function parseCookies(header) {
   const jar = {};

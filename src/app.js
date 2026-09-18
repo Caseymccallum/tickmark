@@ -51,9 +51,11 @@ import {
   closeRequest,
   closedCount,
   createPractitioner,
+  createPractice,
   createRequest,
   findOrCreateClient,
   history,
+  inTransaction,
   issueToken,
   itemInRequest,
   itemsOf,
@@ -126,7 +128,11 @@ function sendJson(response, status, value) {
 
 /** Everything a handler is given, so that every handler has one signature. */
 async function contextFor(db, request, response, url, params) {
-  return { db, request, response, url, params, practitioner: practitionerFor(db, request) };
+  const practitioner = practitionerFor(db, request);
+  // Resolved here, once, so that no handler has to remember to ask. A handler that needs the person
+  // — for a name in the header, or for provenance — uses `practitioner`. One that needs the firm's
+  // data uses `practiceId`.
+  return { db, request, response, url, params, practitioner, practiceId: practitioner?.practiceId ?? null };
 }
 
 function fail(response, status, message, practitioner = null, extra = null) {
@@ -326,7 +332,16 @@ async function signUp({ db, request, response }) {
   }
 
   const passwordHash = await hashPassword(password);
-  const practitionerId = createPractitioner(db, { email, passwordHash });
+  // A practice and its first member, created together. A practitioner belonging to no firm would be a
+  // row nothing else can reach, so the two happen in one transaction or not at all.
+  //
+  // The name is a placeholder. Nothing in a sign-up form says what the firm is called — it asks for an
+  // email and a password — and inventing a name from the address would be worse than a neutral label
+  // the owner can change. Stage C of `docs/members.md` is where a practice gets named.
+  const practitionerId = inTransaction(db, () => {
+    const practiceId = createPractice(db, { name: 'My practice' });
+    return createPractitioner(db, { practiceId, email, passwordHash });
+  });
   const { token } = createSession(db, practitionerId);
   return redirect(response, '/requests', [sessionCookie(token)]);
 }
@@ -454,11 +469,11 @@ export function reminderDraft({ clientName, title, dueAt, outstanding, again = [
   return { subject: `Still needed for ${title}`, body: lines.join('\n') };
 }
 
-function listRequests({ db, response, practitioner, url }) {
+function listRequests({ db, response, practitioner, url , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
   const showingClosed = url.searchParams.get('closed') === '1';
-  const rows = requestsFor(db, practitioner.id, { includeClosed: showingClosed });
-  const closed = closedCount(db, practitioner.id);
+  const rows = requestsFor(db, practiceId, { includeClosed: showingClosed });
+  const closed = closedCount(db, practiceId);
 
   const table = rows.length === 0
     ? html`<p>${showingClosed ? 'Nothing has been closed yet.' : html`No requests yet. <a href="/requests/new">Start one</a>.`}</p>`
@@ -513,7 +528,7 @@ function newRequestForm({ response, practitioner }) {
   return sendPage(response, 200, page({ title: 'New request', practitioner, body: requestForm() }));
 }
 
-async function createRequestPage({ db, request, response, practitioner }) {
+async function createRequestPage({ db, request, response, practitioner , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const clientName = field(fields, 'client');
@@ -540,9 +555,10 @@ async function createRequestPage({ db, request, response, practitioner }) {
     }));
   }
 
-  const clientId = findOrCreateClient(db, { practitionerId: practitioner.id, name: clientName, email: clientEmail });
+  const clientId = findOrCreateClient(db, { practiceId, createdBy: practitioner.id, name: clientName, email: clientEmail });
   const requestId = createRequest(db, {
-    practitionerId: practitioner.id,
+    practiceId,
+    createdBy: practitioner.id,
     clientId,
     title,
     dueAt: due,
@@ -551,9 +567,9 @@ async function createRequestPage({ db, request, response, practitioner }) {
   return redirect(response, `/requests/${requestId}`);
 }
 
-function viewRequest({ db, request, response, practitioner, params }) {
+function viewRequest({ db, request, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   // A reminder that was just sent says so here. The confirmation has to be on the page the practice
@@ -628,7 +644,7 @@ function viewRequest({ db, request, response, practitioner, params }) {
   // here, or the plaintext would have to be produced by the server, which is the one thing that must
   // not happen. All of them, because a file sent before the last rotation is encrypted to an older
   // key.
-  const keys = practiceKeys(db, practitioner.id);
+  const keys = practiceKeys(db, practiceId);
 
   return sendPage(response, 200, page({
     title: found.title,
@@ -749,9 +765,9 @@ function viewRequest({ db, request, response, practitioner, params }) {
  * practice is not found, and a request belonging to another practice cannot be reached to begin
  * with.
  */
-async function serveEnvelope({ db, response, practitioner, params }) {
+async function serveEnvelope({ db, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   const row = db
@@ -782,13 +798,13 @@ async function serveEnvelope({ db, response, practitioner, params }) {
   return response.end(bytes);
 }
 
-async function issueLink({ db, request, response, practitioner, params }) {
+async function issueLink({ db, request, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
 
   // Ownership first, key second. A request belonging to somebody else must be *not found*
   // whatever state this practice is in — a refusal that depends on my own setup would leak
   // whether the request exists.
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   // No key, no link. This is where the encryption requirement bites, and it bites before a
@@ -819,14 +835,14 @@ async function issueLink({ db, request, response, practitioner, params }) {
   }));
 }
 
-async function revokeLink({ db, request, response, practitioner, params }) {
+async function revokeLink({ db, request, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   const fields = formFields(await readBody(request));
   const tokenId = field(fields, 'token_id');
-  const revoked = tokenId ? revokeToken(db, practitioner.id, tokenId) : false;
+  const revoked = tokenId ? revokeToken(db, practiceId, tokenId) : false;
   if (!revoked) {
     return fail(response, 400, 'That link is not one of yours, or it was already revoked.', practitioner);
   }
@@ -861,9 +877,9 @@ const copyableField = (name, text, rows) => html`
  * reminder makes a fresh one, and says so. That is the visible cost of that design decision, and
  * it belongs on the screen rather than in a footnote.
  */
-async function draftReminder({ db, request, response, practitioner, params, mailer }) {
+async function draftReminder({ db, request, response, practitioner, params, mailer , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
   if (!practitioner.hasKey) return redirect(response, '/setup');
 
@@ -972,9 +988,9 @@ function reminderPage({ mailer, practitioner, found, draft, days, outstanding, t
  *    saying what went wrong, because a send that loses what someone typed is worse than a send that
  *    fails — and both are recorded, so "did we actually send it?" can be answered by reading.
  */
-async function sendReminder({ db, request, response, practitioner, params, mailer }) {
+async function sendReminder({ db, request, response, practitioner, params, mailer , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
   if (!mailer) {
     return fail(response, 400, 'This installation has no mail server configured, so nothing can be sent.', practitioner);
@@ -1031,16 +1047,16 @@ async function sendReminder({ db, request, response, practitioner, params, maile
   }
 }
 
-async function closeRequestPage({ db, response, practitioner, params }) {
+async function closeRequestPage({ db, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const closed = closeRequest(db, practitioner.id, params[0]);
+  const closed = closeRequest(db, practiceId, params[0]);
   if (!closed) return fail(response, 404, 'There is no open request at that address.', practitioner);
   return redirect(response, `/requests/${params[0]}`);
 }
 
-async function reopenRequestPage({ db, response, practitioner, params }) {
+async function reopenRequestPage({ db, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const reopened = reopenRequest(db, practitioner.id, params[0]);
+  const reopened = reopenRequest(db, practiceId, params[0]);
   if (!reopened) return fail(response, 404, 'There is no closed request at that address.', practitioner);
   return redirect(response, `/requests/${params[0]}`);
 }
@@ -1055,9 +1071,9 @@ async function reopenRequestPage({ db, response, practitioner, params }) {
  * A closed request is refused rather than quietly accepting. Reopening is a deliberate act and it
  * should stay one.
  */
-async function addItemsPage({ db, request, response, practitioner, params }) {
+async function addItemsPage({ db, request, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const found = requestFor(db, practitioner.id, params[0]);
+  const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
   if (found.closed_at) {
     return fail(response, 400, `"${found.title}" is closed. Reopen it before adding to it.`, practitioner);
@@ -1085,21 +1101,21 @@ async function addItemsPage({ db, request, response, practitioner, params }) {
  * reader can check — and so that an unknown action is a refusal rather than a silent no-op.
  */
 const ITEM_ACTIONS = {
-  withdraw: ({ db, practitioner, requestId, itemId }) =>
-    setItemWithdrawn(db, practitioner.id, requestId, itemId, true),
-  restore: ({ db, practitioner, requestId, itemId }) =>
-    setItemWithdrawn(db, practitioner.id, requestId, itemId, false),
-  attention: ({ db, practitioner, requestId, itemId, note }) =>
-    setItemAttention(db, practitioner.id, requestId, itemId, { note }),
-  'clear-attention': ({ db, practitioner, requestId, itemId }) =>
-    clearItemAttention(db, practitioner.id, requestId, itemId),
+  withdraw: ({ db, practiceId, requestId, itemId }) =>
+    setItemWithdrawn(db, practiceId, requestId, itemId, true),
+  restore: ({ db, practiceId, requestId, itemId }) =>
+    setItemWithdrawn(db, practiceId, requestId, itemId, false),
+  attention: ({ db, practiceId, requestId, itemId, note }) =>
+    setItemAttention(db, practiceId, requestId, itemId, { note }),
+  'clear-attention': ({ db, practiceId, requestId, itemId }) =>
+    clearItemAttention(db, practiceId, requestId, itemId),
 };
 
-async function changeItemPage({ db, request, response, practitioner, params }) {
+async function changeItemPage({ db, request, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
   const [requestId, itemId, action] = params;
 
-  const found = requestFor(db, practitioner.id, requestId);
+  const found = requestFor(db, practiceId, requestId);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   const change = Object.hasOwn(ITEM_ACTIONS, action) ? ITEM_ACTIONS[action] : null;
@@ -1108,7 +1124,7 @@ async function changeItemPage({ db, request, response, practitioner, params }) {
   }
 
   const fields = formFields(await readBody(request));
-  const changed = change({ db, practitioner, requestId, itemId, note: field(fields, 'attention_note') });
+  const changed = change({ db, practiceId, requestId, itemId, note: field(fields, 'attention_note') });
   if (!changed) {
     return fail(
       response,
@@ -1324,7 +1340,7 @@ function keyProblem(publicKeyJson, wrapped) {
 
 function setupForm({ db, response, practitioner }) {
   if (!requireSignIn({ practitioner, response })) return;
-  const existing = practiceKeys(db, practitioner.id);
+  const existing = practiceKeys(db, practiceId);
   const first = existing.length === 0;
   return sendPage(response, 200, page({
     title: first ? 'Set up encryption' : 'Add a new key',
@@ -1357,7 +1373,7 @@ function setupForm({ db, response, practitioner }) {
   }));
 }
 
-async function saveKeys({ db, request, response, practitioner }) {
+async function saveKeys({ db, request, response, practitioner , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const fields = formFields(await readBody(request));
@@ -1366,9 +1382,10 @@ async function saveKeys({ db, request, response, practitioner }) {
   const problem = keyProblem(publicKeyJson, wrapped);
   if (problem) return fail(response, 400, problem, practitioner);
 
-  addPracticeKey(db, practitioner.id, {
+  addPracticeKey(db, practiceId, {
     publicKey: JSON.parse(publicKeyJson),
     wrappedPrivateKey: wrapped,
+    createdBy: practitioner.id,
   });
   return redirect(response, '/keys');
 }
@@ -1380,9 +1397,9 @@ async function saveKeys({ db, request, response, practitioner }) {
  * would orphan every file encrypted to it, and a button that destroys a practice's access to its own
  * clients' documents should not exist until there is a way to re-encrypt those files first.
  */
-function keysPage({ db, response, practitioner }) {
+function keysPage({ db, response, practitioner , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
-  const keys = practiceKeys(db, practitioner.id);
+  const keys = practiceKeys(db, practiceId);
 
   const rows = keys.map((key, index) => html`<tr>
     <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
@@ -1432,7 +1449,7 @@ function keysPage({ db, response, practitioner }) {
  * record — which is the thing it must not be able to do. What it does check is that the new record
  * is one it would have written: the right shape, and a KDF cost inside what this version accepts.
  */
-async function changePassphrase({ db, request, response, practitioner, params }) {
+async function changePassphrase({ db, request, response, practitioner, params , practiceId}) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const wrapped = field(fields, 'wrapped_private_key');
@@ -1440,7 +1457,7 @@ async function changePassphrase({ db, request, response, practitioner, params })
   const problem = wrappedKeyProblem(wrapped);
   if (problem) return fail(response, 400, problem, practitioner);
 
-  const changed = replaceWrappedKey(db, practitioner.id, params[0], wrapped);
+  const changed = replaceWrappedKey(db, practiceId, params[0], wrapped);
   if (!changed) return fail(response, 404, 'There is no key of yours with that id.', practitioner);
   return redirect(response, '/keys');
 }

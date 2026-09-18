@@ -144,8 +144,7 @@ CREATE TABLE IF NOT EXISTS session (
   practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
   token_hash      TEXT NOT NULL UNIQUE,
   expires_at      TEXT NOT NULL,
-  created_at      TEXT NOT NULL,
-  practice_id     TEXT REFERENCES practice(id)
+  created_at      TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS request_client ON request(client_id);
@@ -168,9 +167,26 @@ const PRACTICE_INDEXES = `
 CREATE INDEX IF NOT EXISTS practitioner_practice  ON practitioner(practice_id);
 CREATE INDEX IF NOT EXISTS client_practice        ON client(practice_id);
 CREATE INDEX IF NOT EXISTS request_practice       ON request(practice_id);
-CREATE INDEX IF NOT EXISTS session_practice       ON session(practice_id);
 CREATE INDEX IF NOT EXISTS practice_key_practice  ON practice_key(practice_id, created_at);
 `;
+
+/**
+ * Stage B of `docs/members.md` removes a column stage A added.
+ *
+ * Stage A put `practice_id` on `session`, before the design had settled. Stage B found the practitioner
+ * row is the single source of truth for which practice a session acts in — `sessionFor` reads it from
+ * `practitioner`, which it joins anyway for the email — so the column was written by the migration and
+ * read by nothing. A column nothing reads is a claim nobody checks, so it goes rather than sitting
+ * there looking meaningful.
+ *
+ * The index has to go first: SQLite refuses to drop a column an index refers to.
+ */
+function sessionPracticeColumnGoes(db) {
+  if (!columnsOf(db, 'session').includes('practice_id')) return 0;
+  db.exec('DROP INDEX IF EXISTS session_practice');
+  db.exec('ALTER TABLE session DROP COLUMN practice_id');
+  return 1;
+}
 
 /**
  * Bring an older database up to this schema.
@@ -183,7 +199,7 @@ function migrate(db) {
   // and adding the practice migration silently made `migratedKeys` mean something else — which a test
   // caught, and which would have been a lie in the one place an operator looks to see what happened to
   // their database.
-  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0 };
+  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0 };
   for (const [table, column, definition] of [
     ['request_item', 'withdrawn_at', 'TEXT'],
     ['request_item', 'attention_at', 'TEXT'],
@@ -192,11 +208,11 @@ function migrate(db) {
     ['practice_key', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
-    ['session', 'practice_id', 'TEXT REFERENCES practice(id)'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }
   changes.tenancy = practitionerGetsAPractice(db);
+  changes.session = sessionPracticeColumnGoes(db);
   // After the columns, not before: see the note on PRACTICE_INDEXES.
   db.exec(PRACTICE_INDEXES);
   return changes;
@@ -241,9 +257,6 @@ function practitionerGetsAPractice(db) {
     ),
     request: db.prepare(
       'UPDATE request SET practice_id = (SELECT practice_id FROM practitioner WHERE id = request.practitioner_id) WHERE practice_id IS NULL',
-    ),
-    session: db.prepare(
-      'UPDATE session SET practice_id = (SELECT practice_id FROM practitioner WHERE id = session.practitioner_id) WHERE practice_id IS NULL',
     ),
   };
 
@@ -310,6 +323,7 @@ export function openDatabase(file = ':memory:') {
   db.migratedKeys = changes.keys;
   db.migratedColumns = changes.columns;
   db.migratedTenancy = changes.tenancy;
+  db.migratedSession = changes.session;
   return db;
 }
 
