@@ -76,11 +76,11 @@ What it would need, written down so it is not improvised later:
 The reason it is not built yet is the third point. A button that looked like revocation and was not would
 be worse than no button, so the decision to add one should come with the sentence that goes next to it.
 
-**Built in two parts: the crypto and the storage (done), then the pages (next).** The constraint: the new
-member's sealed copy must be produced by someone who has the key, and the server must never hold the key
-or the secret that opens the invitation.
+**Built, in the order it had to be: the crypto and the storage first, then the pages.** The constraint:
+the new member's sealed copy must be produced by someone who has the key, and the server must never hold
+the key or the secret that opens the invitation.
 
-**The owner's browser** (this is C-ii, not yet built):
+**The owner's browser** (`web/members.js`):
 
 1. generates a random **invite secret** — 32 bytes, produced by the browser and sent nowhere;
 2. unwraps the practice's private key with the owner's passphrase, getting PKCS#8 bytes;

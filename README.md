@@ -90,6 +90,11 @@ Tickmark's answer is: **on your server, and nobody else.**
 - **end-to-end encryption**: files are encrypted in the client's browser to your
   public key. The server stores ciphertext it cannot read, including if you self-host
   it — which matters when the host is a VPS you do not physically control.
+- **several people in one practice**, each with their own login and their own passphrase,
+  each holding their own sealed copy of the practice's key — so a second partner can be
+  added mid-season and open the documents that arrived before they did. An invitation
+  carries a copy of that key without the server ever seeing it. There are no roles or
+  permissions, and removing a member is not built; see [docs/members.md](docs/members.md).
 
 ## What it will not do
 
