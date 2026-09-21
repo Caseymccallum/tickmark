@@ -1,5 +1,5 @@
 /**
- * The database: one file, twelve tables, no dependencies.
+ * The database: one file, fourteen tables, no dependencies.
  *
  * `node:sqlite` ships in the runtime, so a practice that self-hosts this inherits no
  * driver, no ORM and no native module to compile. That matters more here than it would
@@ -19,7 +19,9 @@
  * ten, because a firm with two partners cannot be represented by one login; see
  * `docs/members.md`. `key_wrapping` made it eleven, because two partners cannot share one
  * passphrase either — the same key needs one sealed copy per member. `invite` made it
- * twelve, because the copy the second member gets has to come from somewhere.
+ * twelve, because the copy the second member gets has to come from somewhere. `template`
+ * and `template_item` made it fourteen, because the same forty document names were being
+ * typed again for the fifty-first client.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -42,7 +44,21 @@ CREATE TABLE IF NOT EXISTS practice (
   --
   -- Nullable, and null reads as 0 — every practice written before this column existed had no cadence, and
   -- the previous release's behaviour was to send every time.
-  cadence_days INTEGER
+  cadence_days INTEGER,
+  -- Where the practice is, as an IANA zone name ("Europe/London"), or null for UTC. Stored because the one
+  -- piece of arithmetic this product does about time — whether a request is overdue — has to happen on the
+  -- practice's calendar, not Greenwich's. Stored as a *zone* rather than an offset so that daylight saving
+  -- is somebody else's problem; see src/clock.js.
+  timezone TEXT,
+  -- Whether the practice is emailed when a client sends something. **Nullable, and anything other than 0 means
+  -- yes**, which is the opposite of the convention the other columns here follow — and the reason is in the
+  -- next sentence. Every other nullable column in this file reads null as "the behaviour before it existed",
+  -- because an upgrade should not silently change what the software does. This one exists because the software
+  -- did something it should have been doing all along: a practice that configured a mail server in order to
+  -- write to clients wants to be told when work arrives, and a product that knows and says nothing is worse
+  -- than one that does not know. So the column records the *decision to stop*, not a decision to start, and a
+  -- database written before it existed starts being useful rather than starting silent.
+  notify_on_upload INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS practitioner (
@@ -152,6 +168,11 @@ CREATE TABLE IF NOT EXISTS request (
   due_at          TEXT,
   closed_at       TEXT,
   created_at      TEXT NOT NULL,
+  -- The practice's own words to the client: why these documents are wanted, by when. Shown at
+  -- the top of the client's page, above the list, in a box of its own — it is the sentence that
+  -- answers "why am I being asked for this?" before the list asks "where is it?". Written when
+  -- the request is made or duplicated; plain text, escaped on the way out, newlines kept.
+  client_note     TEXT,
   practice_id     TEXT REFERENCES practice(id)
 );
 
@@ -184,6 +205,39 @@ CREATE TABLE IF NOT EXISTS request_item (
   client_says    TEXT,
   client_says_at TEXT
 );
+
+-- A saved checklist, and the answer to the year's most repeated task: typing the same forty document
+-- names again for the fifty-first client.
+--
+-- A template is **not a record**. Everything else in this file keeps a row forever because something
+-- points at it and something happened; a template is a starting point, and requests copy its items at
+-- the moment they are made rather than referring to them. That is why this is the one table with a
+-- real delete: removing a template that nobody is using discards a draft nobody needs, and leaving it
+-- behind would mean a practice's list of lists slowly filling with the names of work they no longer do.
+--
+-- The items are copied, not referenced, for the same reason a request is closed rather than deleted:
+-- rewriting a template next year must not change what was asked of a client this year.
+CREATE TABLE IF NOT EXISTS template (
+  id          TEXT PRIMARY KEY,
+  practice_id TEXT NOT NULL REFERENCES practice(id),
+  name        TEXT NOT NULL,
+  -- The practice's standing words for this kind of job — "please send these by the end of the month".
+  -- A default the request form starts from and the practice edits, not something the client ever sees
+  -- unbidden: the request's own client_note is what a client reads.
+  note        TEXT,
+  created_by  TEXT NOT NULL REFERENCES practitioner(id),
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS template_item (
+  id          TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL REFERENCES template(id),
+  label       TEXT NOT NULL,
+  note        TEXT,
+  position    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS template_item_of ON template_item(template_id);
 
 -- The token itself is never stored. A database that leaks must not let anyone
 -- open a client's link.
@@ -348,9 +402,12 @@ function migrate(db) {
     ['practice_key', 'deleted_at', 'TEXT'],
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['request', 'client_note', 'TEXT'],
     ['upload', 'key_id', 'TEXT REFERENCES practice_key(id)'],
     ['practitioner', 'removed_at', 'TEXT'],
     ['practice', 'cadence_days', 'INTEGER'],
+    ['practice', 'timezone', 'TEXT'],
+    ['practice', 'notify_on_upload', 'INTEGER'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }

@@ -25,9 +25,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hashPassword, hashToken, newToken, verifyPassword } from './crypto.js';
-import { clearSessionCookie, createSession, endSession, practitionerFor, sessionCookie } from './auth.js';
+import { MIN_PASSWORD, clearSessionCookie, createSession, endSession, practitionerFor, sessionCookie } from './auth.js';
 import { RequestError, field, formFields, readBody } from './http.js';
-import { html, page, raw, redirect, sendPage } from './views.js';
+import { TONES, badge, empty, html, page, raw, redirect, section, sendCsv, sendPage, tile } from './views.js';
 
 /**
  * Data for the browser to read, inside a script element.
@@ -43,15 +43,29 @@ import { newId, now } from './db.js';
 // plaintext one. It cannot use the rest of that module: the key needed to open an envelope
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
-import { sendMail } from './mailer.js';
+import { MailError, sendMail } from './mailer.js';
+import { COMMON_ZONES, dateIn, knownZone, monthIn, todayIn } from './clock.js';
+import { createAttemptLimiter } from './ratelimit.js';
 import {
   addItems,
   addPracticeKey,
+  addTemplateItems,
   clearItemAttention,
+  clientFor,
+  clientSummaries,
+  clientsForBulkSend,
+  clientsDueForAsking,
   closeRequest,
   closedCount,
   createPractitioner,
   createPractice,
+  createTemplate,
+  deleteTemplate,
+  removeTemplateItem,
+  renameTemplate,
+  templateFor,
+  templateItemsOf,
+  templatesOf,
   allPracticeKeys,
   createInvite,
   createRequest,
@@ -63,8 +77,16 @@ import {
   issueToken,
   claimInvite,
   membersOf,
+  outstandingOf,
+  lastNoticeAt,
   practiceFor,
+  previousChecklistFor,
   renamePractice,
+  requestOwner,
+  requestsForClient,
+  setPracticeNotify,
+  setPracticeTimezone,
+  updateClient,
   wrappingHoldersOf,
   itemInRequest,
   itemsOf,
@@ -82,9 +104,11 @@ import {
   setClientSays,
   setItemAttention,
   setItemReviewed,
+  setItemLabel,
   setItemWithdrawn,
   tokenLookup,
   tokensFor,
+  updateRequest,
   uploadsOf,
   uploadsSealedTo,
   replaceUpload,
@@ -97,8 +121,6 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const MIN_PASSWORD = 12;
-
 /**
  * How long an invitation stays usable.
  *
@@ -110,15 +132,32 @@ const INVITE_DAYS = 7;
 /**
  * What each request state is called on a screen.
  *
- * "Ready to work on" is the word the research uses and the word a practice would use. The other two
- * describe **whose turn it is**, because that is the question the list exists to answer — and "waiting
- * on the client" is a different job from "the client has sent something and nobody has opened it".
+ * "Ready to work on" is the word the research uses and the word a practice would use. The others describe **whose
+ * turn it is**, because that is the question the list exists to answer — and each of the three is a different
+ * job: "files to check" is material nobody has opened, "waiting on the client" is nothing to do but wait, and
+ * "the client answered" is a decision somebody owes them.
  */
 const REQUEST_STATE_WORDS = {
   ready: 'ready to work on',
   'to-check': 'files to check',
+  // Parallel to "waiting on the client", because the two are the same sentence from opposite sides: this one
+  // means the client has replied and the practice owes them an answer.
+  answered: 'the client answered',
   waiting: 'waiting on the client',
 };
+
+/**
+ * Which of the three colours a request state is.
+ *
+ * One function rather than the same ternary in four places, which is what it was until `answered` arrived and had
+ * to be added to each of them — a state that renders in the wrong colour in one place is worse than a state that
+ * is missing, because it looks like it has been considered.
+ */
+const stateTone = (state) => (state === 'ready'
+  ? TONES.done
+  : state === 'to-check' || state === 'answered'
+    ? TONES.todo
+    : TONES.waiting);
 
 /**
  * What a client can say instead of nothing.
@@ -185,14 +224,44 @@ export const ROUTES = [
   ['GET', '/members', membersPage],
   ['POST', '/members/invite', createInvitePage],
   ['POST', '/members/name', renamePracticePage],
+  ['POST', '/members/notify', setNotifyPage],
   // Removal is two steps on purpose: a page that says what will happen (and what will not), then the act.
   ['GET', /^\/members\/([^/]+)\/remove$/, removeMemberPage],
   ['POST', /^\/members\/([^/]+)\/remove$/, removeMemberAction],
   ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
+  // The same two lists as files. Accountants reconcile a season in a spreadsheet, so a list that cannot
+  // be got out of the tool is a list they retype.
+  ['GET', '/requests.csv', requestsCsv],
+  ['GET', '/clients.csv', clientsCsv],
+  // Clients: a record of its own, and the page every request starts from when the client is known.
+  ['GET', '/clients', listClients],
+  ['GET', /^\/clients\/([^/]+)$/, viewClient],
+  ['POST', /^\/clients\/([^/]+)$/, saveClient],
   ['GET', '/requests/new', newRequestForm],
+  // The end of a season, done in one go. A string route before the pattern below, because
+  // `/^\/requests\/([^/]+)$/` would otherwise swallow "close" as a request id.
+  ['GET', '/templates', templatesPage],
+  ['POST', '/templates', createTemplatePage],
+  ['GET', /^\/templates\/([^/]+)$/, templatePage],
+  ['POST', /^\/templates\/([^/]+)$/, saveTemplate],
+  ['POST', /^\/templates\/([^/]+)\/items$/, addTemplateItemsPage],
+  ['POST', /^\/templates\/([^/]+)\/items\/([^/]+)\/remove$/, removeTemplateItemPage],
+  ['POST', /^\/templates\/([^/]+)\/delete$/, deleteTemplatePage],
+  // One list, one deadline, one action: a request per client, each with its own link.
+  ['GET', '/ask-everyone', askEveryonePage],
+  ['POST', '/ask-everyone', askEveryone],
+  ['POST', /^\/requests\/([^/]+)\/save-as-template$/, saveAsTemplate],
+  ['GET', '/requests/close', closeSeveralPage],
+  ['POST', '/requests/close', closeSeveral],
   ['POST', '/requests', createRequestPage],
   ['GET', /^\/requests\/([^/]+)$/, viewRequest],
+  // Changing a request after it exists, and asking for it by email — the two things a practice needs the
+  // day a deadline moves or a client has to be contacted, both of which happen after creation.
+  ['GET', /^\/requests\/([^/]+)\/edit$/, editRequestForm],
+  ['POST', /^\/requests\/([^/]+)\/edit$/, saveRequest],
+  ['POST', /^\/requests\/([^/]+)\/send$/, draftOpening],
+  ['POST', /^\/requests\/([^/]+)\/send-request$/, sendOpening],
   ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
@@ -206,6 +275,11 @@ export const ROUTES = [
   ['GET', '/chase', chasePage],
   ['POST', '/chase', sendAllReminders],
   ['POST', '/chase/cadence', setCadencePage],
+  // The mail relay's test bench: a real send against whatever the environment configures, with the
+  // relay's own reply when it refuses. Off the nav on purpose — the people who need it arrive from
+  // docs/mail.md, and the rest of the practice never has to see it.
+  ['GET', '/admin/test-email', testEmailForm],
+  ['POST', '/admin/test-email', testEmailSend],
   // Re-sealing a stored document to a newer key, and retiring a key that no longer opens anything.
   ['GET', /^\/keys\/([^/]+)\/pending$/, pendingFor],
   ['POST', /^\/keys\/([^/]+)\/move$/, moveWithoutScript],
@@ -295,22 +369,74 @@ export function createApp(db, {
   // is otherwise a two-minute test — and a safety property that cannot be tested is a safety property
   // nobody has checked.
   chaseBudgetMs = CHASE_BUDGET_MS,
+  // How many times one account may be guessed at before sign-in stops answering for a while. Injected so a
+  // test can hit the cap in three attempts rather than eleven, and so a hosted deployment can swap the
+  // in-process limiter for a shared one without touching a route.
+  signInLimiter = createAttemptLimiter(),
+  // Multi-tenancy arrives as an injected resolver and never as edits to the route table: given a
+  // request, it names the practice and the database, blob directory and mailer that answer for it.
+  // A resolution of null is a host with no practice behind it, answered before any database is
+  // opened. Without a resolver every request is answered by the process's own database — which is
+  // the whole of the single-tenant server. See docs/saas.md §2.4.
+  resolveTenant = null,
+  // A last pre-pass in front of everything the core serves, and the only place the SaaS gateway
+  // hooks in: `preHandle(request, response, url)` answers a request itself and returns true, or
+  // returns false and gets out of the way. The core never learns what a gateway is; the gateway
+  // never edits the route table. (docs/saas.md §2.4.)
+  preHandle = null,
+  // Called when a client link is issued, with `{ practiceId, token }`. A no-op by default: the
+  // single-tenant server has nowhere else for a link to live. The SaaS entry injects the recorder
+  // that files the link's digest prefix into the registry, so a client link can find its way home
+  // without a host header — and the core never learns that a registry exists.
+  onLinkIssued = null,
+  // What /healthz counts. The process's own database in single-tenant mode; injected by the SaaS
+  // entry, whose process database is the registry and holds no `practitioner` table at all.
+  healthCheck = null,
 } = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
 
     // A health check that touches the database, because a process that is up and cannot
-    // read its own schema is not healthy.
+    // read its own schema is not healthy. Deliberately before tenant resolution: the health of
+    // the process is not a question about any one practice. In SaaS mode the process's own
+    // database is the registry, and it says so, because "healthy" with the registry broken
+    // would be a lie with a 200 on it.
     if (url.pathname === '/healthz') {
       try {
-        const practices = db.prepare('SELECT COUNT(*) AS n FROM practitioner').get().n;
+        const practices = healthCheck ? healthCheck() : db.prepare('SELECT COUNT(*) AS n FROM practitioner').get().n;
         return sendJson(response, 200, { ok: true, practices });
       } catch (error) {
         return sendJson(response, 503, { ok: false, error: error.message });
       }
     }
 
+    // The one object every handler below reads from, resolved per request before any routing.
+    // Declared here so that the catch block reports against the practice the request was
+    // actually answered by, not whichever one started the process.
+    let scoped = { db, blobDir, mailer, chaseBudgetMs, maxUploadBytes, onLinkIssued };
+
     try {
+      if (preHandle) {
+        const claimed = await preHandle(request, response, url);
+        if (claimed) return;
+      }
+
+      if (resolveTenant) {
+        // The resolver is given the response because it may be the one to answer — a practice with
+        // a closed subscription gets its billing page from here, before any tenant file is opened.
+        const tenant = resolveTenant(request, url, response);
+        if (tenant?.handled) return;
+        if (!tenant) return fail(response, 404, 'There is no practice at that address.');
+        scoped = {
+          db: tenant.db,
+          blobDir: tenant.blobDir ?? blobDir,
+          mailer: tenant.mailer ?? mailer,
+          chaseBudgetMs: tenant.chaseBudgetMs ?? chaseBudgetMs,
+          maxUploadBytes: tenant.maxUploadBytes ?? maxUploadBytes,
+          onLinkIssued: tenant.onLinkIssued ?? onLinkIssued,
+        };
+      }
+
       for (const [method, pattern, handler] of ROUTES) {
         if (request.method !== method) continue;
         let params = null;
@@ -321,14 +447,23 @@ export function createApp(db, {
         }
         if (!params) continue;
 
-        const context = await contextFor(db, request, response, url, params.slice(1));
-        await handler({ ...context, blobDir, maxUploadBytes, webDir, mailer, chaseBudgetMs });
+        const context = await contextFor(scoped.db, request, response, url, params.slice(1));
+        await handler({
+          ...context,
+          blobDir: scoped.blobDir,
+          maxUploadBytes: scoped.maxUploadBytes,
+          webDir,
+          mailer: scoped.mailer,
+          chaseBudgetMs: scoped.chaseBudgetMs,
+          signInLimiter,
+          onLinkIssued: scoped.onLinkIssued,
+        });
         return;
       }
       return fail(response, 404, 'There is no page at that address.');
     } catch (error) {
       if (error instanceof RequestError) {
-        return fail(response, error.status, error.message, practitionerFor(db, request));
+        return fail(response, error.status, error.message, practitionerFor(scoped.db, request));
       }
       // The operator gets the detail; the browser gets a sentence.
       console.error(`tickmark: ${request.method} ${url.pathname} failed:`, error);
@@ -349,13 +484,28 @@ function home({ response, practitioner }) {
     page({
       title: 'Tickmark',
       body: html`
-        <h1>The list of documents a client owes you, and a tick as each one arrives.</h1>
-        <p>Tickmark is a self-hosted tool for a practice that needs documents from
-        clients. Build the list, send a link, and watch it get ticked off. The client
-        needs no account and installs nothing.</p>
-        <p><a href="/signup">Create a practice</a> &middot; <a href="/signin">Sign in</a></p>
-        <p class="note">Early days. Anything not described in <code>docs/mvp.md</code>
-        does not exist yet, including the links and the uploads.</p>
+        <div class="hero">
+          <p class="eyebrow">Documents, chased politely</p>
+          <h1>The list of documents a client owes you,
+            and a tick as each one arrives.</h1>
+          <p class="lead">Tickmark is a self-hosted tool for a practice that needs documents from
+          clients. Build the list, send a link, and watch it get ticked off. The client needs no
+          account and installs nothing.</p>
+          <div class="actions">
+            <a class="btn primary lg" href="/signup">Create a practice</a>
+            <a class="btn lg" href="/signin">Sign in</a>
+          </div>
+          <div class="tiles">
+            ${tile('1 link', 'per client, no account needed')}
+            ${tile('0 keys', 'the server holds — it cannot read your files')}
+            ${tile('every tick', 'kept, with the date it happened')}
+          </div>
+          <p class="note">Files are encrypted in the client's browser before they are sent, so the
+          server stores what it cannot read. That is why your passphrase cannot be reset for you —
+          and why it is worth saving the first time you choose one.</p>
+          <p class="note">Early days. Anything not described in <code>docs/mvp.md</code>
+          does not exist yet.</p>
+        </div>
       `,
     }),
   );
@@ -375,21 +525,25 @@ function validateCredentials(email, password) {
 
 function credentialsForm({ action, title, submit, error = null, email = '', hint = false }) {
   return html`
-    <h1>${title}</h1>
-    ${error ? html`<p class="error">${error}</p>` : ''}
-    <form method="post" action="${action}">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" required value="${email}" autocomplete="username">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
-             autocomplete="${action === '/signup' ? 'new-password' : 'current-password'}">
-      ${hint
-        ? html`<p class="note">At least ${MIN_PASSWORD} characters. It is the only thing
-            between a stranger and other people's financial records, so it is stored with
-            a deliberately expensive hash rather than a fast one.</p>`
-        : ''}
-      <button type="submit">${submit}</button>
-    </form>`;
+    <div class="center">
+      <div class="card">
+        <h1>${title}</h1>
+        ${error ? html`<p class="error">${error}</p>` : ''}
+        <form method="post" action="${action}">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" required value="${email}" autocomplete="username" autofocus>
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
+                 autocomplete="${action === '/signup' ? 'new-password' : 'current-password'}">
+          ${hint
+            ? html`<p class="note">At least ${MIN_PASSWORD} characters. It is the only thing
+                between a stranger and other people's financial records, so it is stored with
+                a deliberately expensive hash rather than a fast one.</p>`
+            : ''}
+          <button type="submit" class="primary">${submit}</button>
+        </form>
+      </div>
+    </div>`;
 }
 
 function signUpForm({ response }) {
@@ -459,10 +613,28 @@ function signInForm({ response }) {
   }));
 }
 
-async function signIn({ db, request, response }) {
+async function signIn({ db, request, response, signInLimiter }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
   const password = typeof fields.password === 'string' ? fields.password : '';
+
+  // Checked before the password is verified, because the point is to spend no expensive hashing on a guess
+  // — and because the answer is "not now" rather than "wrong", which the form says in those words.
+  const key = email ?? '';
+  const blockedFor = signInLimiter?.blockedFor(key) ?? 0;
+  if (blockedFor > 0) {
+    const minutes = Math.ceil(blockedFor / 60000);
+    return sendPage(response, 429, page({
+      title: 'Too many attempts',
+      body: credentialsForm({
+        action: '/signin',
+        title: 'Too many attempts',
+        submit: 'Sign in',
+        error: `Too many failed attempts for that address. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or use a different address to sign in.`,
+        email: email ?? '',
+      }),
+    }));
+  }
 
   const record = email ? practitionerByEmail(db, email) : null;
   let accepted = false;
@@ -471,6 +643,8 @@ async function signIn({ db, request, response }) {
   } else {
     await spendTheSameTimeAsARealCheck(password);
   }
+  if (accepted) signInLimiter?.succeeded(key);
+  else signInLimiter?.failed(key);
 
   // A removed member who gives the right password is told the truth, and one who gives the wrong one is
   // told nothing. The order is the point: answering "that account was removed" before checking the
@@ -535,6 +709,193 @@ export function parseItems(text) {
 }
 
 /**
+ * A template's list, as the lines the request form's textarea expects.
+ *
+ * A document's note goes on the same line, after an em dash, because that is how a practice types one — and it
+ * is the same shape the duplicate-a-request path writes, so both ways of filling that textarea agree.
+ */
+function templateItemLines(template) {
+  return template.items.map((item) => (item.note ? `${item.label} — ${item.note}` : item.label)).join('\n');
+}
+
+/**
+ * The message a practice gets when a client does something.
+ *
+ * This is the other half of the loop, and the half the research is most specific about: *"a job should flip to
+ * ready when the document set is complete, not when files arrive"*, and *"a system that hides its uncertainty is
+ * worse than none"*. A practice with sixty clients cannot poll a board, so without this the product knows
+ * something its owner does not — which is the one thing a document-chasing tool must not do.
+ *
+ * Five decisions in the wording, each of them a failure this would otherwise have:
+ *
+ * 1. **It says what arrived *and* what has not.** "3 documents arrived" invites the question "is that all of
+ *    them?", and the answer is the only thing the practice actually needs.
+ * 2. **It carries the client's own words.** An answer to "why can't you send this?" is a decision waiting to be
+ *    made, in the client's own phrasing — and it is quoted rather than summarised, because "I do not have this"
+ *    and "I will send this later" are different situations and telling them apart is the point of asking.
+ * 3. **It never says the work is ready unless it is.** All arrived is reported as all arrived; anything else
+ *    carries the count still owed, and something flagged for re-sending is said outright.
+ * 4. **It does not name files.** Filenames are metadata the server can see and the practice can see, but an
+ *    email is a copy that leaves the building — quoted, forwarded, sync'd to a phone in plaintext — and the
+ *    practice is one click from the real names. The narrower thing is the right one here; the labels are enough
+ *    to know whether to go and look.
+ * 5. **It is a nudge to look, not a running total.** One message per request per day (see the caller), because
+ *    a client sending six files must not produce six emails — that is how a helpful notification becomes one the
+ *    practice filters into a folder and stops reading.
+ */
+export function arrivalDraft({
+  clientName,
+  title,
+  received,
+  total,
+  missing = [],
+  answers = [],
+  again = [],
+  link,
+  practiceName = null,
+}) {
+  const lines = ['Hello,', ''];
+  const complete = received === total && again.length === 0 && answers.length === 0;
+
+  if (complete) {
+    lines.push(
+      `Everything asked for has arrived: ${total} of ${total} ${total === 1 ? 'document' : 'documents'} for ${title}.`,
+    );
+  } else {
+    lines.push(`${clientName} has sent ${received} of ${total} ${total === 1 ? 'document' : 'documents'} for ${title}.`);
+  }
+  lines.push('');
+
+  // The client's own words, before anything else, because they change what the practice does next: a document
+  // somebody has explained they cannot supply is not chased, it is decided about.
+  if (answers.length > 0) {
+    lines.push(
+      `${answers.length === 1 ? 'One document has an answer' : `${answers.length} documents have answers`} from ${clientName}:`,
+      '',
+      ...answers.map((item) => `  - ${item.label} — "${item.says}"`),
+      '',
+      'Those are waiting on a decision from you rather than on the client.',
+      '',
+    );
+  }
+
+  if (complete) {
+    lines.push('There is nothing more to wait for. Open the request to check what came in and mark it off.', '');
+  } else if (missing.length > 0) {
+    lines.push('Still outstanding:', '', ...missing.map((label) => `  - ${label}`), '');
+  }
+  // Said before the link, because it changes what the practice does next: a document that has been sent but is
+  // no use is a thing to chase, not a thing to count as arrived.
+  if (again.length > 0) {
+    lines.push(
+      `${again.length} ${again.length === 1 ? 'document has' : 'documents have'} been sent but flagged as needing sending again:`,
+      '',
+      ...again.map((item) => `  - ${item.label}${item.note ? ` (${item.note})` : ''}`),
+      '',
+    );
+  }
+
+  lines.push('The request, with the files themselves:', link);
+
+  // Said only when the position may have moved on, because a message sent on the first file of a sitting
+  // describes that moment and the client may well have sent the rest by the time it is read.
+  if (!complete) {
+    lines.push('', 'That is where it stood when this was sent — the request itself shows the current position.');
+  }
+  lines.push('', ...signOff(practiceName));
+  return {
+    // The subject is a fact that stays true when it is read a week later in a list, because a subject is the one
+    // part of an email people read without opening it. "Sent 1 of 3" would be true when written and false minutes
+    // later, and a practice scanning a column of subjects deserves better than arithmetic that has moved on. The
+    // count is in the body, where the snapshot is dated.
+    //
+    // Which of the two things happened is *derived* from the facts rather than passed in as a "trigger", because a
+    // caller that got the trigger wrong would produce a subject that contradicts its own body. Nothing received
+    // and an answer present means the answer is what happened; anything else is a file.
+    subject: complete
+      ? `Everything has arrived for ${title}`
+      : received === 0 && answers.length > 0
+        ? `${clientName} has answered about ${title}`
+        : `${clientName} has sent something for ${title}`,
+    body: lines.join('\n'),
+  };
+}
+
+/**
+ * Tell the practice that something happened on the client's side — **after the client has already been answered.**
+ *
+ * Two triggers reach this: a file arriving, and a client saying something ("I do not have this", "I will send it
+ * later"). They share one message and one set of rules, because they are the same event from the practice's point
+ * of view — the client has done something and somebody has to look. Every email this product sent before this one
+ * was triggered by the practice pressing a button; this is the other half of the loop, and the half the research
+ * is most specific about: *"a job should flip to ready when the document set is complete, not when files arrive"*
+ * is a sentence about the person doing the work being told.
+ *
+ * The ordering is the whole design. The client's action is recorded and their response sent before this runs, so a
+ * mail server that is down, slow, or refusing the practice's own address can never make a client's upload fail,
+ * never make them wait, and never make an answer look like an error. The client is doing the practice a favour.
+ *
+ * Everything is wrapped, and every outcome is named rather than thrown. Returns a short word for the caller —
+ * and for the tests, which is how each of these rules is checked without reading a log.
+ */
+export async function notifyPracticeOfChange({ db, requestRow, mailer, origin }) {
+  try {
+    const practice = practiceFor(db, requestRow.practice_id);
+    if (!practice) return 'no-practice';
+    if (!mailer) return 'no-mail-server';
+    if (!practice.notifyOnUpload) return 'turned-off';
+
+    const owner = requestOwner(db, requestRow.id);
+    if (!owner?.email) return 'nobody-to-tell';
+
+    // Once per request per day, on the practice's own calendar. Without this, a client sending six files sends
+    // six emails — and the sixth is the reason the practice turns the whole thing off. The day is counted from
+    // the practice's timezone, which is the one piece of time arithmetic this product does.
+    const last = lastNoticeAt(db, requestRow.id);
+    if (last && dateIn(practice.timezone, new Date(last)) === todayIn(practice.timezone)) return 'already-told';
+
+    const items = itemsOf(db, requestRow.id).filter((item) => !item.withdrawn);
+    if (items.length === 0) return 'nothing-asked-for';
+
+    const message = arrivalDraft({
+      clientName: requestRow.client_name,
+      title: requestRow.title,
+      received: items.filter((item) => item.received).length,
+      total: items.length,
+      missing: items.filter((item) => !item.received).map((item) => item.label),
+      // What the client said, which is the reason this email fires on an answer as well as on a file: an item the
+      // client has explained they cannot supply is still outstanding, and a practice that does not know is a
+      // practice that nags them about it.
+      answers: items
+        .filter((item) => item.clientSays)
+        .map((item) => ({ label: item.label, says: item.clientSays })),
+      // Flagged documents are listed apart, because "we have all of it" and "we have all of it and one of them is
+      // the wrong year" are different mornings for the person reading this.
+      again: items
+        .filter((item) => item.needsAttention)
+        .map((item) => ({ label: item.label, note: item.attentionNote })),
+      link: `${origin}/requests/${requestRow.id}`,
+      practiceName: practice.name,
+    });
+
+    const { messageId } = await sendMail(mailer, { to: owner.email, subject: message.subject, body: message.body });
+    recordEvent(db, { requestId: requestRow.id, kind: 'notice.sent', detail: `${owner.email} — ${messageId}` });
+    return 'sent';
+  } catch (error) {
+    // A failed notification is recorded and swallowed. It is never the client's problem and never worth failing
+    // their action over: what happened is on the board either way, and with no `notice.sent` written the next
+    // change will try again rather than being suppressed by a day that never happened.
+    try {
+      recordEvent(db, { requestId: requestRow.id, kind: 'notice.failed', detail: error.message });
+    } catch {
+      // If even that fails, the log is the last resort. The client has already had their answer.
+    }
+    console.error(`tickmark: could not tell the practice about a change to ${requestRow.id}:`, error);
+    return 'failed';
+  }
+}
+
+/**
  * Where this server is, as a client would reach it.
  *
  * The link a practice pastes into an email has to be absolute, and the only place that knows the
@@ -544,6 +905,56 @@ export function parseItems(text) {
  */
 const originOf = (request) =>
   `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
+
+/**
+ * How a letter from the practice ends: the practice's own name.
+ *
+ * It was `Thanks,` and nothing else, which is the one thing an email asking a stranger for their bank
+ * statements must not be: unsigned. A client who has never heard of Tickmark, receiving a message from an
+ * address they may not recognise, asking them to open a link and upload documents, needs the sender's name in
+ * front of them — and the name on the portal they land on. This is a *draft*, so a practice that signs its
+ * letters differently can change it; the point is that the default is not anonymous.
+ */
+const signOff = (practiceName) => (practiceName ? ['Thanks,', '', practiceName] : ['Thanks,']);
+
+/**
+ * The message a practice sends when it first asks for something.
+ *
+ * A different letter from a reminder, and the difference is the whole point: nothing has gone wrong yet, so
+ * there is nothing to chase and nobody to correct. It introduces the request, lists everything wanted, and
+ * says who is asking.
+ *
+ * The practice's own note to the client is quoted at the top when there is one, because that note was
+ * written *for this client* — "here is the list for your 2026 filing, please upload these by Friday" — and
+ * a letter that made the client open the portal to read it would be hiding the practice's own words behind
+ * a click.
+ *
+ * Like the reminder, this is a pure function of the facts so the wording has one home and can be tested
+ * without a mail server, and like the reminder it is a **draft**: the page puts it in a textarea the
+ * practice edits, because the tool does not know this client and the practice does.
+ */
+export function openingDraft({ clientName, title, dueAt, items, note = null, link, practiceName = null }) {
+  const lines = [`Hello ${clientName},`, ''];
+
+  if (note) {
+    lines.push(note, '');
+  } else {
+    lines.push(`We need the following for ${title}:`, '');
+  }
+
+  lines.push(`  - ${items.join('\n  - ')}`, '');
+
+  lines.push('You can send them at this link — no account or password needed:', link);
+  if (dueAt) lines.push('', `We would like these by ${dueAt}.`);
+  lines.push(
+    '',
+    'If something on the list does not apply to you, reply and tell us — it is easier than sending the wrong thing.',
+    '',
+    ...signOff(practiceName),
+  );
+
+  return { subject: `Documents we need for ${title}`, body: lines.join('\n') };
+}
 
 /**
  * The message a practice sends when something has not arrived.
@@ -559,7 +970,16 @@ const originOf = (request) =>
  * supply — because it does not apply to them, or they have already explained why — is a reminder that
  * gets ignored, and the cheapest way to prevent that is to invite the reply.
  */
-export function reminderDraft({ clientName, title, dueAt, outstanding, again = [], theySaid = [], link }) {
+export function reminderDraft({
+  clientName,
+  title,
+  dueAt,
+  outstanding,
+  again = [],
+  theySaid = [],
+  link,
+  practiceName = null,
+}) {
   const lines = [`Hello ${clientName},`, ''];
 
   if (outstanding.length > 0) {
@@ -598,143 +1018,385 @@ export function reminderDraft({ clientName, title, dueAt, outstanding, again = [
     '',
     'If something on the list does not apply to you, reply and tell us — it is easier than sending the wrong thing.',
     '',
-    'Thanks,',
+    ...signOff(practiceName),
   );
 
   return { subject: `Still needed for ${title}`, body: lines.join('\n') };
 }
 
+/**
+ * Whose turn it is. An answered request sorts with the ones waiting on the practice rather than the ones waiting
+ * on the client: somebody has to decide something, and the client is the one waiting for that.
+ */
+const REQUEST_ORDER = { 'to-check': 0, answered: 1, waiting: 2, ready: 3 };
+
+/** An undated request sorts last: "no date" must not read as "due now". */
+const dueFirst = (a, b) => (a.due_at ?? '9999').localeCompare(b.due_at ?? '9999');
+const byClientName = (a, b) => a.client_name.localeCompare(b.client_name);
+
+/**
+ * The orders the board can be read in, defined once and used by both the page and the export.
+ *
+ * The list exists to answer "what do I do now?", so the default is **whose turn it is**: files to check
+ * first, because chasing a client about a document that is already sitting there is the mistake that state
+ * exists to prevent. The other orders exist because the question changes — at the end of a season it is
+ * dates, and when a client rings up it is their name.
+ *
+ * Shared with the CSV export on purpose: a file whose rows are in a different order from the screen it was
+ * downloaded from is a file somebody has to sort again by hand.
+ */
+const REQUEST_ORDERS = {
+  state: (a, b) =>
+    (REQUEST_ORDER[a.progress.state] ?? 9) - (REQUEST_ORDER[b.progress.state] ?? 9) ||
+    dueFirst(a, b) ||
+    byClientName(a, b),
+  due: (a, b) => dueFirst(a, b) || byClientName(a, b),
+  client: byClientName,
+  asked: (a, b) => b.created_at.localeCompare(a.created_at),
+};
+
 function listRequests({ db, response, practitioner, url, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const showingClosed = url.searchParams.get('closed') === '1';
   const wanted = url.searchParams.get('state');
-  const all = requestsFor(db, practiceId, { includeClosed: showingClosed });
+  const query = (url.searchParams.get('q') ?? '').trim();
+  const sort = url.searchParams.get('sort') ?? 'state';
+  const all = requestsFor(db, practiceId, { scope: showingClosed ? 'closed' : 'open' });
   const closed = closedCount(db, practiceId);
-  const today = now().slice(0, 10);
+  // Overdue is a question about the practice's calendar, not Greenwich's: a due date of the 31st is late on
+  // the 31st where they are, and answering it in UTC makes that answer wrong for part of every day — in the
+  // direction that says "overdue" a day early in Auckland and a day late in Honolulu.
+  const today = todayIn(practiceFor(db, practiceId).timezone);
 
   const counts = {};
   for (const row of all) counts[row.progress.state] = (counts[row.progress.state] ?? 0) + 1;
+  // Search before the state filter, so the count under the search box is "what matched" rather than
+  // "what matched that also happens to be in the tab I am looking at", which nobody can act on.
+  //
+  // Matched against the client, the title and the address: an accountant looking for a request by the
+  // address it came from is as likely as by the name, and matching a substring at all is what makes this
+  // useful for the way a practice actually remembers things ("the 2025 one", "northwind").
+  const needle = query.toLowerCase();
+  const matching = needle
+    ? all.filter((row) =>
+        [row.client_name, row.title, row.client_email ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(needle),
+      )
+    : all;
 
-  // Ordered by whose turn it is, then by the nearest deadline. The list exists to answer "what do I do
-  // now?", and a list ordered by when a request was created answers "what did I touch most recently?" —
-  // which is not the question.
-  const order = { 'to-check': 0, waiting: 1, ready: 2 };
-  const rows = all
+  const rows = matching
     .filter((row) => !wanted || row.progress.state === wanted)
-    .sort((a, b) => {
-      const rank = (order[a.progress.state] ?? 9) - (order[b.progress.state] ?? 9);
-      if (rank !== 0) return rank;
-      if (a.due_at !== b.due_at) return (a.due_at ?? '9999').localeCompare(b.due_at ?? '9999');
-      return a.client_name.localeCompare(b.client_name);
-    });
+    .sort(REQUEST_ORDERS[sort] ?? REQUEST_ORDERS.state);
+
+  /**
+   * A link back to this list with one thing changed, and everything else kept.
+   *
+   * Written once because there are now four filters that compose — tab, state, search, order — and a URL
+   * built by hand at each call site is how one of them quietly gets dropped. An empty value removes its
+   * parameter rather than sending `q=`, so the address bar stays readable and a link can be sent to
+   * somebody else.
+   */
+  const href = (changes = {}) => {
+    const params = new URLSearchParams();
+    const merged = {
+      closed: showingClosed ? '1' : '',
+      state: wanted ?? '',
+      q: query,
+      sort: sort === 'state' ? '' : sort,
+      ...changes,
+    };
+    for (const [key, value] of Object.entries(merged)) if (value) params.set(key, value);
+    const string = params.toString();
+    return `/requests${string ? `?${string}` : ''}`;
+  };
 
   const dueCell = (row) => {
-    if (!row.due_at) return html`<span class="note">no date</span>`;
+    if (!row.due_at) return html`<span class="muted">no date</span>`;
     if (row.due_at < today && !showingClosed) {
-      return html`<strong class="error">overdue</strong> <span class="note">${row.due_at}</span>`;
+      return html`${badge('overdue', TONES.wrong)} <span class="muted">${row.due_at}</span>`;
     }
     return row.due_at;
   };
 
+  const stateBadge = (state) => badge(REQUEST_STATE_WORDS[state], stateTone(state));
+
   const table = rows.length === 0
-    ? html`<p>${showingClosed
-        ? 'Nothing has been closed yet.'
-        : wanted
-          ? html`Nothing is in that state. <a href="/requests">Show everything open</a>.`
-          : html`No requests yet. <a href="/requests/new">Start one</a>.`}</p>`
-    : html`<table>
-        <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">State</th><th align="left">Due</th><th align="left">Outstanding</th><th align="left">To check</th></tr></thead>
+    ? empty(
+        query
+          ? `Nothing matches “${query}”`
+          : showingClosed
+            ? 'Nothing has been closed yet'
+            : wanted
+              ? 'Nothing is in that state'
+              : 'No requests yet',
+        query
+          ? html`The search looks at the client, the request and the address. <a href="${href({ q: '' })}">Clear it</a> to see everything again.`
+          : showingClosed
+            ? 'When a year is finished with, close the request: the record, the files and the client’s link all stay exactly as they are.'
+            : wanted
+              ? html`<a href="/requests">Show everything open</a>.`
+              : html`Start one and send the client a link — it takes a minute, and the client needs no account.`,
+        query || showingClosed || wanted ? null : html`<a class="btn primary" href="/requests/new">New request</a>`,
+      )
+    : html`<div class="scroll"><table class="board">
+        <colgroup>
+          <col class="c-client"><col class="c-request"><col class="c-state">
+          <col class="c-due"><col class="c-out"><col class="c-check">
+        </colgroup>
+        <thead>
+          <tr>
+            <th align="left">Client</th>
+            <th align="left">Request</th>
+            <th align="left">State</th>
+            <th align="left">Due</th>
+            <th align="right">Outstanding</th>
+            <th align="right">To check</th>
+          </tr>
+        </thead>
         <tbody>
           ${rows.map((row) => html`<tr>
-            <td>${row.client_name}</td>
-            <td><a href="/requests/${row.id}">${row.title}</a></td>
-            <td><a href="/requests?state=${row.progress.state}">${REQUEST_STATE_WORDS[row.progress.state]}</a></td>
+            <td><span class="cell-t">${row.client_name}</span></td>
+            <td>
+              <a class="cell-t" href="/requests/${row.id}">${row.title}</a>
+              <a class="cell-s" href="/requests/new?from=${row.id}">Duplicate</a>
+            </td>
+            <td><a href="/requests?state=${row.progress.state}">${stateBadge(row.progress.state)}</a></td>
             <td>${dueCell(row)}</td>
-            <td>${row.progress.outstanding === 0 ? html`<strong>none</strong>` : row.progress.outstanding}</td>
-            <td>${row.progress.toCheck === 0 ? html`<span class="note">—</span>` : row.progress.toCheck}</td>
+            <td align="right">${row.progress.outstanding === 0
+              ? html`<span class="muted">—</span>`
+              : html`<strong>${row.progress.outstanding}</strong>`}</td>
+            <td align="right">${row.progress.toCheck === 0
+              ? html`<span class="muted">—</span>`
+              : html`<strong>${row.progress.toCheck}</strong>`}</td>
           </tr>`)}
         </tbody>
-      </table>`;
+      </table></div>`;
 
   return sendPage(response, 200, page({
     title: showingClosed ? 'Closed requests' : 'Requests',
     practitioner,
+    here: '/requests',
     body: html`
-      <h1>${showingClosed ? 'Closed requests' : 'Requests'}</h1>
-      <p>
-        ${showingClosed
-          ? html`<a href="/requests">Open requests</a>`
-          : html`Open &middot; <a href="/requests?closed=1">closed (${closed})</a>`}
-      </p>
+      <div class="page-head">
+        <div class="titles">
+          <h1>${showingClosed ? 'Closed requests' : 'Requests'}</h1>
+          <p class="sub">${showingClosed
+            ? 'Closed is a status, not a deletion — the record, the files and the client’s link all stay as they are.'
+            : 'Each request is a short list of documents the client owes you, with a tick as each one arrives.'}</p>
+        </div>
+        <div class="do">
+          ${showingClosed ? '' : html`<a class="btn primary" href="/requests/new">New request</a>`}
+        </div>
+      </div>
+      <div class="bar">
+        <div class="seg">
+          <a href="${href({ closed: '' })}"${showingClosed ? '' : raw(' aria-current="page"')}>Open</a>
+          <a href="${href({ closed: '1' })}"${showingClosed ? raw(' aria-current="page"') : ''}>closed (${closed})</a>
+        </div>
+        ${html`<form class="search" method="get" action="/requests">
+              ${showingClosed ? html`<input type="hidden" name="closed" value="1">` : ''}
+              ${wanted ? html`<input type="hidden" name="state" value="${wanted}">` : ''}
+              ${sort !== 'state' ? html`<input type="hidden" name="sort" value="${sort}">` : ''}
+              <input type="search" name="q" value="${query}" placeholder="Client, request or address"
+                aria-label="Search requests">
+              <button type="submit">Search</button>
+              ${query
+                ? html`<a class="clear" href="${href({ q: '' })}">Clear</a>`
+                : ''}
+            </form>`}
+      </div>
+      ${rows.length > 1 || wanted || query
+        ? html`<p class="note">${rows.length} ${rows.length === 1 ? 'request' : 'requests'}${query
+            ? html` matching “${query}”`
+            : ''}${wanted ? html` · filtered to <a href="${href({ state: '' })}">everything</a>` : ''}
+            ${showingClosed
+              ? ''
+              : html` · <a href="${href({ sort: sort === 'due' ? '' : 'due' })}">${sort === 'due' ? 'by whose turn it is' : 'by due date'}</a>
+                  · <a href="${href({ sort: sort === 'client' ? '' : 'client' })}">${sort === 'client' ? 'by whose turn it is' : 'by client'}</a>`}
+            · <a class="clear" href="/requests.csv${href({}).replace('/requests', '')}">Download as CSV</a>${showingClosed
+              ? ''
+              : html` · at the end of a season, <a href="/requests/close">close several at once</a>`}</p>`
+        : html`<p class="note">${showingClosed
+            ? ''
+            : html`At the end of a season, <a href="/requests/close">close several at once</a>. `}Start the whole
+            year from one list with <a href="/ask-everyone">ask everyone at once</a>.</p>`}
       ${showingClosed || all.length === 0
         ? ''
-        : html`<p class="note">
+        : html`<div class="tiles">
             ${(counts['to-check'] ?? 0) > 0
-              ? html`<a href="/requests?state=to-check"><strong>${counts['to-check']}</strong> with files to check</a> &middot; `
+              ? tile(counts['to-check'], 'with files to check', {
+                  href: '/requests?state=to-check',
+                  tone: 'attn',
+                  current: wanted === 'to-check',
+                })
               : ''}
-            <a href="/requests?state=waiting">${counts.waiting ?? 0} waiting on clients</a> &middot;
-            <a href="/requests?state=ready">${counts.ready ?? 0} ready to work on</a> &middot;
-            <a href="/requests">all ${all.length}</a>
-          </p>`}
+            ${(counts.answered ?? 0) > 0
+              ? tile(counts.answered, 'with an answer to read', {
+                  href: '/requests?state=answered',
+                  tone: 'attn',
+                  current: wanted === 'answered',
+                })
+              : ''}
+            ${tile(counts.waiting ?? 0, 'waiting on clients', {
+              href: '/requests?state=waiting',
+              current: wanted === 'waiting',
+            })}
+            ${tile(counts.ready ?? 0, 'ready to work on', {
+              href: '/requests?state=ready',
+              current: wanted === 'ready',
+            })}
+            ${tile(all.length, showingClosed ? 'closed in total' : 'open in total', { href: '/requests' })}
+          </div>`}
       ${table}
-      <p><a href="/requests/new">New request</a>${showingClosed || all.length === 0
+      ${showingClosed || all.length === 0
         ? ''
-        : html` &middot; <a href="/chase">chase everyone outstanding</a>`}</p>`,
+        : html`<p class="note">Something missing? <a href="/chase">chase everyone outstanding</a> — everyone, in one list.</p>`}`,
   }));
 }
-function requestForm({ error = null, values = {} } = {}) {
+/**
+ * The form a request is made from.
+ *
+ * `clients` is the practice's existing names, offered as an autocomplete list rather than as a select
+ * box. A datalist keeps the field free text — a new client is still typed, not created somewhere else
+ * first — while making the names that already exist visible at the moment the match is decided. That is
+ * where a typo becomes a duplicate client, so that is where the choice belongs.
+ *
+ * `forClient` is the client a request is definitely for, carried in a hidden field. Hidden rather than
+ * inferred from the name on submit, because it was already decided on the previous page: re-deciding it
+ * by matching a name would mean a rename here silently produced a second client.
+ */
+function requestForm({ error = null, values = {}, clients = [], forClient = null } = {}) {
   return html`
     <h1>New request</h1>
     ${error ? html`<p class="error">${error}</p>` : ''}
-    <form method="post" action="/requests">
-      <label for="client">Client</label>
-      <input id="client" name="client" required value="${values.client ?? ''}">
-      <label for="client_email">Client email <span class="note">(optional, for the reminder text)</span></label>
-      <input id="client_email" name="client_email" type="email" value="${values.client_email ?? ''}">
-      <label for="title">What is this for?</label>
-      <input id="title" name="title" required value="${values.title ?? ''}" placeholder="2025 return">
-      <label for="due">Due <span class="note">(optional)</span></label>
-      <input id="due" name="due" type="date" value="${values.due ?? ''}">
-      <label for="items">What do you need? <span class="note">one document per line</span></label>
-      <textarea id="items" name="items" rows="8" required placeholder="Bank statements for all accounts, 2025&#10;Signed engagement letter&#10;Photo ID">${values.items ?? ''}</textarea>
-      <button type="submit">Create the request</button>
+    <form method="post" action="/requests" class="card">
+      ${forClient ? html`<input type="hidden" name="client_id" value="${forClient}">` : ''}
+      <div class="field">
+        <label for="client">Client</label>
+        <input id="client" name="client" required value="${values.client ?? ''}"
+          list="client-names" autocomplete="off">
+        ${clients.length > 0
+          ? html`<datalist id="client-names">
+              ${clients.map((client) => html`<option value="${client.name}">${client.email ?? ''}</option>`)}
+            </datalist>
+            <p class="form-hint">One of the ${clients.length} this practice already has, or a new one.
+            A name that matches an existing client is theirs — with their address on it.</p>`
+          : ''}
+      </div>
+      <div class="field">
+        <label for="client_email">Client email <span class="note">(optional, for the reminder text)</span></label>
+        <input id="client_email" name="client_email" type="email" value="${values.client_email ?? ''}">
+        <p class="form-hint">Saved on the client, so the chase uses it from now on — typing it here also
+        fixes it for them.</p>
+      </div>
+      <div class="field">
+        <label for="title">What is this for?</label>
+        <input id="title" name="title" required value="${values.title ?? ''}" placeholder="2025 return">
+      </div>
+      <div class="field">
+        <label for="due">Due <span class="note">(optional)</span></label>
+        <input id="due" name="due" type="date" value="${values.due ?? ''}">
+      </div>
+      <div class="field">
+        <label for="client_note">A note for your client <span class="note">(optional — shown at the top of their page)</span></label>
+        <textarea id="client_note" name="client_note" rows="3" maxlength="2000"
+          placeholder="Hi Sarah, here is the list for your 2026 corporate tax filing. Please upload these by Friday.">${values.client_note ?? ''}</textarea>
+      </div>
+      <div class="field">
+        <label for="items">What do you need? <span class="note">one document per line</span></label>
+        <textarea id="items" name="items" rows="8" required placeholder="Bank statements for all accounts, 2025&#10;Signed engagement letter&#10;Photo ID">${values.items ?? ''}</textarea>
+      </div>
+      <button type="submit" class="primary">Create the request</button>
     </form>`;
 }
 
 function newRequestForm({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
 
-  // `?from=<request id>` fills the form in from a request that already exists.
+  // Four ways in, and they compose:
   //
-  // This is the smallest honest version of a template, and it is aimed at the biggest repeat cost in
-  // the research: the same list, rebuilt from scratch every January. It *fills the form in* rather than
-  // creating the request outright, so the practice sees and adjusts the list before it goes anywhere —
-  // which is also why it needs no stored template, no schedule and no name for itself.
+  // - `?from=<request id>` fills the form in from a request that already exists.
+  // - `?for=<client id>` is "this is for them", so the client is filled in and carried.
+  // - `?like=last` fills the checklist from that client's most recent request.
+  // - `?template=<id>` fills the checklist and the note from a saved list.
+  //
+  // The first and the last are two versions of the same idea, and the difference is *where the list lives*.
+  // Duplicating a request is right when the thing you are copying is one specific job; a template is right when
+  // the list is the practice's standard and no single request is its home. Both fill the form in rather than
+  // creating anything outright, so the practice sees and adjusts the list before it goes anywhere.
+  //
+  // What carries over is the title, the checklist and the note to the client — the note pre-filled rather
+  // than dropped, because "please upload these by Friday" is usually still true next year and easier to edit
+  // than to rewrite. The client does not carry over *from a request*: a duplicate exists for "next year" or
+  // "another client with the same paperwork", and pre-filling last year's client is how a return goes to the
+  // wrong person. Coming from a client's own page is the opposite case — there the client is the one thing
+  // that is certainly right.
   const from = url?.searchParams?.get('from');
   const source = from ? requestFor(db, practiceId, from) : null;
 
+  const forId = url?.searchParams?.get('for');
+  const forClient = forId ? clientFor(db, practiceId, forId) : null;
+  const likeLast = url?.searchParams?.get('like') === 'last';
+  const previous = forClient && likeLast ? previousChecklistFor(db, practiceId, forClient.id) : null;
+
+  const templateId = url?.searchParams?.get('template');
+  const template = templateId ? templateFor(db, practiceId, templateId) : null;
+
+  const clients = clientSummaries(db, practiceId).map((row) => ({ name: row.name, email: row.email }));
+
   const values = source
     ? {
-        client: source.client_name,
-        client_email: source.client_email ?? '',
-        title: '',
+        client: '',
+        client_email: '',
+        title: source.title,
         due: '',
+        client_note: source.client_note ?? '',
         items: itemsOf(db, source.id)
           .filter((item) => !item.withdrawn)
           .map((item) => (item.note ? `${item.label} — ${item.note}` : item.label))
           .join('\n'),
       }
-    : {};
+    : template
+      ? {
+          client: forClient?.name ?? '',
+          client_email: forClient?.email ?? '',
+          title: forClient ? '' : template.name,
+          due: '',
+          client_note: template.note ?? '',
+          items: templateItemLines(template),
+        }
+      : forClient
+        ? {
+            client: forClient.name,
+            client_email: forClient.email ?? '',
+            title: previous?.title ?? '',
+            items: (previous?.items ?? []).join('\n'),
+          }
+        : {};
 
   return sendPage(response, 200, page({
     title: 'New request',
     practitioner,
-    banner: source
-      ? html`<p class="note">Filled in from <a href="/requests/${source.id}">${source.title}</a> for
-          ${source.client_name}. Change anything you like — nothing is created until you press the
-          button, and the earlier request is not touched.</p>`
-      : null,
-    body: requestForm({ values }),
+    here: source || forClient ? null : '/requests',
+    banner: template
+      ? html`<p class="note">Starting from <a href="/templates/${template.id}">${template.name}</a> —
+          ${template.items.length} ${template.items.length === 1 ? 'document' : 'documents'} filled in below.
+          Edit anything you like: the template itself is not changed, and nothing is created until you press the
+          button.</p>`
+      : source
+      ? html`<p class="note">Duplicating <a href="/requests/${source.id}">${source.title}</a> — the
+          checklist below is copied from it. Choose the client and, if you want one, a due date:
+          nothing is created until you press the button, and the earlier request is not touched.</p>`
+      : forClient
+        ? html`<p class="note">For <a href="/clients/${forClient.id}">${forClient.name}</a> — the client
+            is already chosen, so nothing here can file it against the wrong one.${previous && previous.items.length > 0
+              ? html` Their last request's checklist is filled in below; change whatever is different
+                  this year.`
+              : ''}</p>`
+        : null,
+    body: requestForm({ values, clients, forClient: forClient?.id ?? null }),
   }));
 }
 
@@ -743,11 +1405,25 @@ async function createRequestPage({ db, request, response, practitioner, practice
   const fields = formFields(await readBody(request));
   const clientName = field(fields, 'client');
   const clientEmail = field(fields, 'client_email');
+  const carriedClientId = field(fields, 'client_id');
   const title = field(fields, 'title');
   const due = field(fields, 'due');
+  const clientNote = field(fields, 'client_note')?.trim() || null;
   const rawItems = typeof fields.items === 'string' ? fields.items : '';
   const items = parseItems(rawItems);
-  const values = { client: clientName ?? '', client_email: clientEmail ?? '', title: title ?? '', due: due ?? '', items: rawItems };
+  const values = {
+    client: clientName ?? '',
+    client_email: clientEmail ?? '',
+    title: title ?? '',
+    due: due ?? '',
+    client_note: clientNote ?? '',
+    items: rawItems,
+  };
+
+  // The client the form was opened for, if it came from a client's page and still belongs to this
+  // practice. Scoped by practice like every other read, so a hand-edited hidden field cannot borrow
+  // somebody else's client — it simply stops being found.
+  const carried = carriedClientId ? clientFor(db, practiceId, carriedClientId) : null;
 
   const problem = !clientName
     ? 'A client is required.'
@@ -755,17 +1431,50 @@ async function createRequestPage({ db, request, response, practitioner, practice
       ? 'A title is required.'
       : items.length === 0
         ? 'At least one document is required, one per line.'
-        : null;
+        : (clientNote?.length ?? 0) > 2000
+          ? 'The note for your client is longer than 2000 characters. Shorten it, or put the detail on the documents themselves.'
+          : null;
 
-  if (problem) {
-    return sendPage(response, 400, page({
-      title: 'New request',
-      practitioner,
-      body: requestForm({ error: problem, values }),
-    }));
+  const clients = clientSummaries(db, practiceId).map((row) => ({ name: row.name, email: row.email }));
+  const render = (error) => sendPage(response, 400, page({
+    title: 'New request',
+    practitioner,
+    body: requestForm({ error, values, clients, forClient: carried?.id ?? null }),
+  }));
+
+  if (problem) return render(problem);
+
+  // Two ways a request gets its client, and the difference is deliberate. Arriving from a client's own
+  // page, the client is already decided — so the row is used, and the name on the form is applied to it
+  // as a correction (a typo noticed at the last moment). Typing a name on a blank form is a match: an
+  // existing client of that name, or a new one.
+  let clientId;
+  if (carried) {
+    if (clientName.length > 200) return render('That name is longer than 200 characters.');
+    const clash = db
+      .prepare('SELECT id FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE AND id <> ?')
+      .get(practiceId, clientName, carried.id);
+    if (clash) {
+      return render(
+        `There is already a client called ${clientName}. Rename one of them on the clients page — two records with one name is how a request ends up filed against the wrong one.`,
+      );
+    }
+    updateClient(db, {
+      practiceId,
+      clientId: carried.id,
+      name: clientName,
+      email: clientEmail || carried.email,
+    });
+    clientId = carried.id;
+  } else {
+    clientId = findOrCreateClient(db, {
+      practiceId,
+      createdBy: practitioner.id,
+      name: clientName,
+      email: clientEmail,
+    });
   }
 
-  const clientId = findOrCreateClient(db, { practiceId, createdBy: practitioner.id, name: clientName, email: clientEmail });
   const requestId = createRequest(db, {
     practiceId,
     createdBy: practitioner.id,
@@ -773,6 +1482,7 @@ async function createRequestPage({ db, request, response, practitioner, practice
     title,
     dueAt: due,
     items,
+    clientNote,
   });
   return redirect(response, `/requests/${requestId}`);
 }
@@ -787,6 +1497,7 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   // only in the history below.
   const sent = new URL(request.url, 'http://localhost').searchParams.get('sent');
   const sentWithoutLink = new URL(request.url, 'http://localhost').searchParams.get('nolink') === '1';
+  const emailed = new URL(request.url, 'http://localhost').searchParams.get('emailed');
 
   const allItems = itemsOf(db, found.id);
   const live = allItems.filter((item) => !item.withdrawn);
@@ -805,6 +1516,14 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   // Computed from the same function the list uses, so the page and the board cannot disagree.
   const progress = requestProgress(db, found.id);
   const events = history(db, found.id);
+
+  // The confirmation line, when the practice has just arrived from a send. Two of them, because "we asked
+  // for it" and "we chased them for it" are different acts and the page should say which just happened.
+  const emailedNotice = emailed
+    ? html`<p class="success"><strong>Request sent.</strong> Its identifier is <code>${emailed}</code> — if
+        the client says it never arrived, this is what to quote to your mail provider. The link inside it
+        works for 30 days and can be revoked from this page.</p>`
+    : null;
 
   // The confirmation line, when the practice has just arrived from a send.
   const sentNotice = sent
@@ -839,29 +1558,51 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
       <button type="submit">Stop asking</button>
     </form>`;
 
+  // The practice's own words about a document, and — behind a disclosure — the ability to correct them. A
+  // disclosure rather than a second always-visible form: renaming is rare, and a row with three inputs in it
+  // is a row nobody can read.
+  const labelCell = (item) => html`
+    <span class="cell-t">${item.label}</span>
+    ${item.note ? html`<span class="cell-s">${item.note}</span>` : ''}
+    ${found.closed_at
+      ? ''
+      : html`<details class="rename">
+          <summary>Wrong words?</summary>
+          <form method="post" action="/requests/${found.id}/items/${item.id}/relabel" class="stack">
+            <input type="text" name="label" value="${item.label}" maxlength="200" required
+              aria-label="What this document is called">
+            <input type="text" name="note" value="${item.note ?? ''}" maxlength="500"
+              placeholder="a note for the client (optional)" aria-label="A note for the client">
+            <div class="row tight">
+              <button type="submit">Save</button>
+            </div>
+            <span class="status"></span>
+          </form>
+        </details>`}`;
+
   const rows = live.map((item) => html`<tr>
-    <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
+    <td>${labelCell(item)}</td>
     <td>${item.needsAttention
-      ? html`<strong>needs attention</strong>${item.attentionNote ? html`<br><span class="note">${item.attentionNote}</span>` : ''}`
+      ? html`${badge('needs attention', TONES.wrong)}${item.attentionNote ? html`<span class="cell-s">${item.attentionNote}</span>` : ''}`
       : !item.received && item.clientSays
-        ? html`<strong>client says:</strong> <span class="note">${item.clientSays}</span>`
+        ? html`${badge('client says:', TONES.waiting)}<span class="cell-s">${item.clientSays}</span>`
         : item.received
           ? item.checked
-            ? html`<strong>checked</strong>`
-            : html`<strong>to check</strong> <span class="note">nobody has looked at this yet</span>`
-          : 'outstanding'}</td>
+            ? badge('checked', TONES.done)
+            : html`${badge('to check', TONES.todo)}<span class="cell-s">nobody has looked at this yet</span>`
+          : badge('outstanding', TONES.waiting)}</td>
     <td>${filesOf(item).length === 0
-      ? html`<span class="note">—</span>`
+      ? html`<span class="muted">—</span>`
       : filesOf(item).map((file) => html`<div class="file">
           <span class="name">${file.filename}</span>
-          <span class="note">${file.uploaded_at}</span>
+          <span class="note">${file.uploaded_at.slice(0, 10)}</span>
           <button type="button" class="save" disabled
                   data-url="/requests/${found.id}/files/${file.id}"
                   data-name="${file.filename}">Save</button>
           <span class="status note"></span>
           ${file.client_note ? html`<div class="note">they said: ${file.client_note}</div>` : ''}
         </div>`)}</td>
-    <td>${found.closed_at ? html`<span class="note">closed</span>` : controlsFor(item)}</td>
+    <td>${found.closed_at ? html`<span class="muted">closed</span>` : controlsFor(item)}</td>
   </tr>`);
 
   // The wrapped keys travel in the page because the decryption happens here. They leak nothing — the
@@ -874,11 +1615,32 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   return sendPage(response, 200, page({
     title: found.title,
     practitioner,
+    here: '/requests',
     body: html`
-      <h1>${found.title} <span class="note">for ${found.client_name}</span></h1>
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/requests">Requests</a>${found.closed_at ? html` · closed` : ''}</p>
+          <h1>${found.title}</h1>
+          <p class="sub">For ${found.client_name}${found.due_at ? html` · needed by ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}</p>
+        </div>
+        <div class="do">
+          ${found.closed_at || itemsOf(db, found.id).filter((item) => !item.withdrawn).length === 0
+            ? ''
+            : html`<form method="post" action="/requests/${found.id}/send" class="inline">
+                <button type="submit" class="primary">Email this request</button>
+              </form>`}
+          <a class="btn" href="/requests/${found.id}/edit">Edit</a>
+          <a class="btn" href="/requests/new?from=${found.id}">Duplicate</a>
+        </div>
+      </div>
+      ${emailedNotice}
+      ${found.client_note ? html`<div class="greeting">${found.client_note}</div>` : ''}
       ${sentNotice}
-      ${found.closed_at ? html`<p class="note"><strong>Closed.</strong></p>` : ''}
-      <p>${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
+      <p class="count">${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
+      ${found.closed_at
+        ? html`<p class="info"><strong>Closed.</strong> Nothing has been deleted — the client’s link still
+            works, and reopening puts it back on the list exactly as it was.</p>`
+        : ''}
       ${found.closed_at || progress.items === 0
         ? ''
         : progress.state === 'ready'
@@ -892,19 +1654,35 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
                 at ${progress.toCheck === 1 ? 'it' : 'them'} yet. "Received" is not "ready" — do this before
                 chasing anything else, because what is already here is the thing a client is least likely
                 to send twice.</p>`
-            : html`<p class="note">Waiting on the client for ${progress.outstanding} of
-                ${progress.items} ${progress.items === 1 ? 'document' : 'documents'}.
-                ${progress.clientSaid > 0
-                  ? html`${progress.clientSaid} ${progress.clientSaid === 1 ? 'has' : 'have'} an answer
-                      from the client — see the list below.`
-                  : ''}</p>`}
+            : progress.state === 'answered'
+              ? html`<p class="warning"><strong>The client has answered.</strong> ${progress.clientSaid}
+                  ${progress.clientSaid === 1 ? 'document has' : 'documents have'} an answer from them —
+                  see the list below. They are waiting on a decision: if the answer is fine, take the
+                  document off the list; if it is not, that is a conversation rather than another
+                  reminder.</p>`
+              : html`<p class="note">Waiting on the client for ${progress.outstanding} of
+                  ${progress.items} ${progress.items === 1 ? 'document' : 'documents'}.</p>`}
       ${attention.length > 0
         ? html`<p class="warning"><strong>${attention.length === 1 ? 'One document needs attention' : `${attention.length} documents need attention`}:</strong>
             ${attention.map((item) => item.label).join(', ')}. The client's page says what is wrong with
             each one, and the next reminder asks for them again.</p>`
         : ''}
-      <p class="note"><a href="/requests/new?from=${found.id}">Start another request like this one</a> —
-      for next year, or for another client with the same paperwork.</p>
+      <p class="note"><a href="/requests/new?from=${found.id}">Duplicate this request</a> — the title and
+      checklist are copied into a new draft; you choose the client and the due date. For next year,
+      or for another client with the same paperwork.</p>
+      ${live.length > 0
+        ? html`<details class="rename">
+            <summary>Keep this list for next time</summary>
+            <form method="post" action="/requests/${found.id}/save-as-template" class="stack">
+              <label for="template-name">What should the list be called?</label>
+              <input id="template-name" name="name" maxlength="${MAX_TEMPLATE_NAME}" value="${found.title}">
+              <div class="row tight"><button type="submit">Save as a template</button></div>
+            </form>
+            <p class="note">A template is a starting point you can use for one client or for everyone at once.
+            It copies what is on this request now; the request itself is not changed, and changing the template
+            later will not change this.</p>
+          </details>`
+        : ''}
       ${keys.length > 0 && received > 0
         ? html`<div class="unlock">
             <label for="passphrase">Your passphrase, to open what has arrived</label>
@@ -914,92 +1692,1222 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
             keeps the keys in this tab so that saving several files does not mean typing it again.</p>
           </div>`
         : ''}
-      <table>
-        <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Files</th><th align="left">What you can say</th></tr></thead>
+      <div class="scroll"><table class="items">
+        <colgroup>
+          <col class="c-doc"><col class="c-state"><col class="c-files"><col class="c-say">
+        </colgroup>
+        <thead>
+          <tr>
+            <th align="left">Document</th>
+            <th align="left">State</th>
+            <th align="left">Files</th>
+            <th align="left">What you can say</th>
+          </tr>
+        </thead>
         <tbody>${rows}</tbody>
-      </table>
+      </table></div>
       ${!found.closed_at
-        ? html`<form method="post" action="/requests/${found.id}/items">
+        ? html`<form method="post" action="/requests/${found.id}/items" class="card">
             <label for="new-items">Remembered something else? <span class="note">one document per line</span></label>
             <textarea id="new-items" name="items" rows="3" placeholder="The 2024 statements as well"></textarea>
             <button type="submit">Add to this request</button>
           </form>`
         : ''}
       ${withdrawn.length > 0
-        ? html`<h2>No longer being asked for</h2>
+        ? html`<section class="card"><h2>No longer being asked for</h2>
             <ul>${withdrawn.map((item) => html`<li>${item.label}
               <form method="post" action="/requests/${found.id}/items/${item.id}/restore" class="inline">
                 <button type="submit">Ask for it again</button>
               </form></li>`)}</ul>
             <p class="note">Withdrawn rather than deleted: the client's page stops asking, and the
-            record keeps saying it was once asked for.</p>`
+            record keeps saying it was once asked for.</p></section>`
         : ''}
-      <h2>What has happened</h2>
-      <ul>
-        ${events.map((event) => html`<li><code>${event.kind}</code> <span class="note">${event.at}${event.detail ? ` — ${event.detail}` : ''}</span></li>`)}
-      </ul>
-      <h2>The link for this client</h2>
-      ${links.length === 0
-        ? html`<p class="note">No link has been created yet.</p>`
-        : html`<ul>
-            ${links.map((link) => html`<li>
-              created ${link.created_at}, expires ${link.expires_at}
-              ${link.revoked_at
-                ? html`<strong> — revoked</strong>`
-                : html` <form method="post" action="/requests/${found.id}/revoke" style="display:inline">
-                    <input type="hidden" name="token_id" value="${link.id}">
-                    <button type="submit">Revoke</button>
-                  </form>`}
-            </li>`)}
-          </ul>`}
-      <form method="post" action="/requests/${found.id}/link">
-        <label for="days">A new link, valid for</label>
-        <select id="days" name="days">
-          <option value="7">7 days</option>
-          <option value="30" selected>30 days</option>
-          <option value="90">90 days</option>
-        </select>
-        <button type="submit">Create a link</button>
-      </form>
-      <h2>Chase this client</h2>
-      ${outstanding.length > 0
-        ? html`<p>${outstanding.length} still outstanding:
-              ${outstanding.map((item) => item.label).join(', ')}.</p>
-            <form method="post" action="/requests/${found.id}/remind">
-              <label for="remind-days">The reminder's link, valid for</label>
-              <select id="remind-days" name="days">
-                <option value="7">7 days</option>
-                <option value="30" selected>30 days</option>
-                <option value="90">90 days</option>
-              </select>
-              <button type="submit">Draft a reminder</button>
-            </form>`
-        : html`<p><strong>Everything asked for has arrived.</strong></p>`}
-      <h2>The file itself</h2>
-      ${found.closed_at
-        ? html`<p>Closed ${found.closed_at}. It stays on the list of closed requests, and
-              nothing has been deleted.</p>
-            <form method="post" action="/requests/${found.id}/reopen">
-              <button type="submit">Reopen it</button>
-            </form>`
-        : html`<p class="note">Closing is a status, not a deletion: the record, the files and the
-              client's link all stay exactly as they are.</p>
-            <form method="post" action="/requests/${found.id}/close">
-              <button type="submit">Close this request</button>
-            </form>`}
+      <section class="card">
+        <h2>The link for this client</h2>
+        ${links.length === 0
+          ? html`<p class="note">No link has been created yet. A link is how the client sends anything —
+              they need no account, and it can be revoked at any time.</p>`
+          : html`<ul class="plain">
+              ${links.map((link) => html`<li>
+                <span class="note">created ${link.created_at}, expires ${link.expires_at}</span>
+                ${link.revoked_at
+                  ? html` ${badge('revoked', TONES.done_for)}`
+                  : html` <form method="post" action="/requests/${found.id}/revoke" class="inline">
+                      <input type="hidden" name="token_id" value="${link.id}">
+                      <button type="submit">Revoke</button>
+                    </form>`}
+              </li>`)}
+            </ul>`}
+        <form method="post" action="/requests/${found.id}/link" class="inline">
+          <label for="days">A new link, valid for
+            <select id="days" name="days">
+              <option value="7">7 days</option>
+              <option value="30" selected>30 days</option>
+              <option value="90">90 days</option>
+            </select>
+          </label>
+          <button type="submit">Create a link</button>
+        </form>
+      </section>
+      <section class="card">
+        <h2>Chase this client</h2>
+        ${outstanding.length > 0
+          ? html`<p>${outstanding.length} still outstanding:
+                ${outstanding.map((item) => item.label).join(', ')}.</p>
+              <form method="post" action="/requests/${found.id}/remind" class="inline">
+                <label for="remind-days">The reminder's link, valid for
+                  <select id="remind-days" name="days">
+                    <option value="7">7 days</option>
+                    <option value="30" selected>30 days</option>
+                    <option value="90">90 days</option>
+                  </select>
+                </label>
+                <button type="submit">Draft a reminder</button>
+              </form>`
+          : html`<p><strong>Everything asked for has arrived.</strong> There is nothing to chase.</p>`}
+      </section>
+      <section class="card">
+        <h2>What has happened</h2>
+        <ul class="plain">
+          ${events.map((event) => html`<li><code>${event.kind}</code> <span class="note">${event.at}${event.detail ? ` — ${event.detail}` : ''}</span></li>`)}
+        </ul>
+      </section>
+      <section class="card">
+        <h2>The file itself</h2>
+        ${found.closed_at
+          ? html`<p>Closed ${found.closed_at}. It stays on the list of closed requests, and
+                nothing has been deleted.</p>
+              <div class="actions">
+                <form method="post" action="/requests/${found.id}/reopen"><button type="submit">Reopen it</button></form>
+              </div>`
+          : html`<p class="note">Closing is a status, not a deletion: the record, the files and the
+                client's link all stay exactly as they are.</p>
+              <div class="actions">
+                <form method="post" action="/requests/${found.id}/close"><button type="submit">Close this request</button></form>
+              </div>`}
+      </section>
       ${keys.length > 0 ? jsonTag('key-records', { keys: keys.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey })) }) : ''}
       ${received > 0 ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
   }));
 }
 
 /**
- * Create a link, and show it once.
+ * The board as a spreadsheet.
  *
- * It cannot be shown again, and that is not an oversight: only a digest of the token is
- * stored, so the plain token exists in this process for the length of one response. A
- * practice that loses it creates another, which is the correct answer and also the honest
- * one.
+ * This exists because of what the request actually is: an accountant reconciling a season works in a
+ * spreadsheet, and a page that cannot be got out of the tool is a page they retype. It honours the same
+ * filters as the page it comes from — same tab, same state, same search — because an export that ignores
+ * the filter somebody just applied is an export they have to filter again by hand.
+ *
+ * What it carries is deliberately not everything: the counts that answer "what is outstanding" and the
+ * dates that answer "what is late", in the order the screen shows them. Not the client's documents, not
+ * the history, not anything the practice would not want in a file they might email to a colleague.
  */
+function requestsCsv({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const showingClosed = url.searchParams.get('closed') === '1';
+  const wanted = url.searchParams.get('state');
+  const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+  const sort = url.searchParams.get('sort') ?? 'state';
+
+  const rows = requestsFor(db, practiceId, { scope: showingClosed ? 'closed' : 'open' })
+    .filter((row) => !wanted || row.progress.state === wanted)
+    .filter((row) =>
+      query
+        ? [row.client_name, row.title, row.client_email ?? ''].join(' ').toLowerCase().includes(query)
+        : true,
+    )
+    .sort(REQUEST_ORDERS[sort] ?? REQUEST_ORDERS.state)
+    .map((row) => [
+      row.client_name,
+      row.client_email ?? '',
+      row.title,
+      REQUEST_STATE_WORDS[row.progress.state] ?? row.progress.state,
+      row.progress.items,
+      row.progress.received,
+      row.progress.outstanding,
+      row.progress.toCheck,
+      row.due_at ?? '',
+      row.created_at.slice(0, 10),
+      row.closed_at ? row.closed_at.slice(0, 10) : '',
+    ]);
+
+  return sendCsv(response, showingClosed ? 'tickmark-closed-requests.csv' : 'tickmark-requests.csv', [
+    ['Client', 'Address', 'Request', 'State', 'Documents', 'Received', 'Outstanding', 'To check', 'Due', 'Asked', 'Closed'],
+    ...rows,
+  ]);
+}
+
+// ---------------------------------------------------------------------------------
+// Asking everyone at once
+// ---------------------------------------------------------------------------------
+
+/**
+ * The one action that makes fifty clients possible.
+ *
+ * The research this product was built from is blunt about where a practice breaks: *manual tracking breaks
+ * down past 50 clients*, and a season's document-gathering is 150–175 hours of following up. Built one at a
+ * time, sending the same standard request to sixty clients is an afternoon of typing — which is how firms
+ * quietly stop doing it, and why the incumbents sell "bulk send" as a headline feature.
+ *
+ * Three rules, and they are the chase's three, because a second set of rules for the same job is a second
+ * chance to get it wrong:
+ *
+ * 1. **The page is the preview.** Every client is listed with whether they can be written to and why not, so
+ *    nothing happens that the practice did not see first. That is why there is no "are you sure?" step.
+ * 2. **A failure never stops the run and is never hidden.** One dead mailbox must not stop the other fifty.
+ * 3. **The run bounds itself in time**, and says where it stopped. Requests it did not reach exist, with their
+ *    links issued, and can be sent individually from their own pages — nothing is lost, it is only late.
+ *
+ * What it deliberately does not do: merge clients, or guess who *should* get a list. The practice ticks names.
+ */
+function askEveryonePage({ db, response, practitioner, practiceId, url, mailer }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const templates = templatesOf(db, practiceId);
+  const clients = clientsForBulkSend(db, practiceId);
+  const reachable = clients.filter((client) => client.email);
+  const chosen = templateFor(db, practiceId, url.searchParams.get('template') ?? '');
+
+  // Arriving from the "due to be asked" list, those clients are ticked already. The page is still the preview —
+  // every name and address is on it, and the counting is done by a person — but the sixty ticks a season-start
+  // needs have been made by the software, which is the whole point of having worked out who is due.
+  const dueIds = url.searchParams.get('due') === '1'
+    ? new Set(clientsDueForAsking(db, practiceId, { timezone: practiceFor(db, practiceId).timezone }).map((row) => row.id))
+    : new Set();
+  const dueReachable = clients.filter((client) => dueIds.has(client.id) && client.email).length;
+
+  return sendPage(response, 200, page({
+    title: 'Ask everyone at once',
+    practitioner,
+    here: '/templates',
+    // Two notices, both of them true, so both are shown: a page with no mail server still needs to say who is
+    // ticked and why, and a page full of ticked clients still needs to say that nothing can be sent.
+    banner: html`
+      ${!mailer
+        ? html`<p class="warning"><strong>This installation has no mail server configured</strong>, so nothing can
+            be sent from here. The requests would be made, but not delivered — see
+            <a href="/admin/test-email">the mail test page</a>.</p>`
+        : ''}
+      ${dueReachable > 0
+        ? html`<p class="info"><strong>${dueReachable}
+            ${dueReachable === 1 ? 'client is' : 'clients are'} ticked because the year has come round</strong> —
+            nothing is open for them and they were last asked in this month of an earlier year. Untick anybody you
+            do not want to write to; nothing is sent until you press the button.</p>`
+        : ''}`,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/templates">Templates</a></p>
+          <h1>Ask everyone at once</h1>
+          <p class="sub">One list, one deadline, one action — a request per client, each with its own link, all sent
+          while you get on with something else.</p>
+        </div>
+      </div>
+
+      ${templates.length === 0
+        ? empty(
+            'No template to send',
+            'This works from a saved list, so that sixty clients are asked for the same set of documents rather than sixty slightly different ones.',
+            html`<a class="btn primary" href="/templates">Make a template</a>`,
+          )
+        : reachable.length === 0
+          ? empty(
+              'No client can be emailed yet',
+              'Every client on your list is missing an email address, and this action is entirely about writing to people.',
+              html`<a class="btn primary" href="/clients">Go to clients</a>`,
+            )
+          : html`<form method="post" action="/ask-everyone" class="card">
+              <h2>The list and the deadline</h2>
+              <label for="template_id">Which list?</label>
+              <select id="template_id" name="template_id" required>
+                ${templates.map((template) => html`<option value="${template.id}"${chosen?.id === template.id ? ' selected' : ''}>${template.name} (${template.item_count} documents)</option>`)}
+              </select>
+
+              <label for="title">What is it for?</label>
+              <input id="title" name="title" maxlength="200" required
+                value="${chosen ? chosen.name : ''}" placeholder="2026 tax return">
+
+              <div class="row">
+                <div class="grow">
+                  <label for="due">Needed by <span class="note">(optional)</span></label>
+                  <input id="due" name="due" type="date">
+                </div>
+                <div class="grow">
+                  <label for="days">The link works for</label>
+                  <select id="days" name="days">
+                    <option value="30">30 days</option>
+                    <option value="60" selected>60 days</option>
+                    <option value="120">120 days</option>
+                    <option value="365">a year</option>
+                  </select>
+                </div>
+              </div>
+
+              <label for="client_note">A note for all of them <span class="note">(optional — it appears at the top of each client's page)</span></label>
+              <textarea id="client_note" name="client_note" rows="3"
+                placeholder="Here is the list for your 2026 filing. Please send these by the end of the month.">${chosen?.note ?? ''}</textarea>
+              <p class="note">The same words go to everyone, so leave out anything only true of one client — any
+              request can be edited afterwards.</p>
+
+              <h2>Who to ask</h2>
+              <p class="note">${reachable.length} of ${clients.length}
+                ${clients.length === 1 ? 'client' : 'clients'} can be emailed.</p>
+              <div class="pick">
+                ${clients.map((client) => html`<label class="${client.email ? '' : 'off'}">
+                  <input type="checkbox" name="client_id" value="${client.id}"${client.email ? '' : raw(' disabled')}${dueIds.has(client.id) ? raw(' checked') : ''}>
+                  <span>
+                    <span class="what">${client.name}</span>
+                    <span class="who">${client.email
+                      ? html`${client.email}${client.open_requests > 0 ? html` · ${client.open_requests} already open` : ''}${dueIds.has(client.id) ? html` · due for this year’s ask` : ''}`
+                      : html`no email address — add one on their page first`}</span>
+                  </span>
+                </label>`)}
+              </div>
+
+              <div class="actions">
+                <button type="submit" class="primary">Ask the ticked clients</button>
+                ${mailer ? html`<button type="submit" name="everyone" value="1">Ask everyone who can be emailed</button>` : ''}
+                <a class="btn ghost" href="/requests">Cancel</a>
+              </div>
+            </form>`}
+    `,
+  }));
+}
+
+/**
+ * Make a request for each chosen client and send each one its own link.
+ *
+ * **Creation and sending are separated on purpose.** Making sixty requests is a fast database operation that
+ * either happens or does not; sending sixty emails is sixty network round-trips, any of which can hang. Done
+ * interleaved, a run that died at the thirtieth client would leave thirty clients in a state nobody could
+ * describe. So every request exists before the first email is attempted, the run bounds itself in time, and
+ * what it did not reach is reported as unsent *and finishable* rather than as lost.
+ */
+async function askEveryone({ db, request, response, practitioner, practiceId, mailer, chaseBudgetMs = CHASE_BUDGET_MS }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+
+  const template = templateFor(db, practiceId, field(fields, 'template_id') ?? '');
+  const title = (field(fields, 'title') ?? '').trim();
+  const due = (field(fields, 'due') ?? '').trim();
+  const clientNote = (field(fields, 'client_note') ?? '').trim() || null;
+  const days = Math.min(Math.max(Number(field(fields, 'days', '60')) || 60, 1), 365);
+
+  if (!template) return fail(response, 400, 'Pick the list to send.', practitioner);
+  if (template.items.length === 0) {
+    return fail(response, 400, `${template.name} has no documents on it, so there would be nothing to ask for.`, practitioner);
+  }
+  if (title.length === 0) {
+    return fail(response, 400, 'A title is required — it is what the client sees at the top of their page.', practitioner);
+  }
+  if (title.length > 200) return fail(response, 400, 'That title is longer than 200 characters.', practitioner);
+  if ((clientNote?.length ?? 0) > 2000) {
+    return fail(response, 400, 'That note is longer than 2000 characters.', practitioner);
+  }
+  if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+    return fail(response, 400, 'That due date is not a date a browser would send.', practitioner);
+  }
+
+  // Who was asked for. The second button means exactly what it says — everyone who can be emailed — and both
+  // paths end at the same list, so there is one thing to reason about afterwards.
+  const all = clientsForBulkSend(db, practiceId);
+  const asked = field(fields, 'everyone') === '1';
+  const ticked = Array.isArray(fields.client_id) ? fields.client_id : fields.client_id ? [fields.client_id] : [];
+  const wanted = asked
+    ? all.filter((client) => client.email)
+    : all.filter((client) => ticked.includes(client.id) && client.email);
+
+  // Who could not be written to. When the practice ticked names, it is the ticked ones without an address; when
+  // they asked for everyone, it is *every* client without one — because an "ask everyone" that quietly skips the
+  // people it cannot reach is the exact omission this page exists to prevent, and the report has to name them for
+  // the practice to be able to go and fix it.
+  const withoutAddress = all.filter((client) => !client.email && (asked || ticked.includes(client.id)));
+  if (wanted.length === 0) {
+    return fail(
+      response,
+      400,
+      ticked.length === 0
+        ? 'Tick at least one client, or use the button that asks everyone who can be emailed.'
+        : 'Every client you ticked is missing an email address, so there is nowhere to send to.',
+      practitioner,
+    );
+  }
+  if (!mailer) {
+    return fail(
+      response,
+      400,
+      'This installation has no mail server configured, so there is nothing this could send. Nothing was made — the requests would exist with nobody told about them.',
+      practitioner,
+    );
+  }
+  const items = template.items.map((item) => item.label);
+  const origin = originOf(request);
+  const practiceName = practiceFor(db, practiceId).name;
+
+  // Every request first, each with its own link issued here rather than inside the send loop: a request that was
+  // made is then one its client can already use, whatever the email does.
+  const made = wanted.map((client) => {
+    const requestId = createRequest(db, {
+      practiceId,
+      createdBy: practitioner.id,
+      clientId: client.id,
+      title,
+      dueAt: due || null,
+      clientNote,
+      items,
+    });
+    const token = newToken();
+    issueToken(db, {
+      requestId,
+      tokenHash: hashToken(token),
+      expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    // The template's per-document notes, which `createRequest` takes only labels for — carried here so a list
+    // that says "the 2025 statement, not the 2024 one" goes on saying it on all sixty requests.
+    const fresh = itemsOf(db, requestId);
+    for (const [index, item] of template.items.entries()) {
+      if (item.note && fresh[index]) {
+        db.prepare('UPDATE request_item SET note = ? WHERE id = ?').run(item.note, fresh[index].id);
+      }
+    }
+
+    return { client, requestId, token };
+  });
+
+  const results = [];
+  const startedAt = Date.now();
+  for (const [index, row] of made.entries()) {
+    if (Date.now() - startedAt > chaseBudgetMs) {
+      for (const rest of made.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
+      break;
+    }
+    results.push(
+      await sendOneOpening(db, row, { origin, title, dueAt: due || null, clientNote, items }, mailer, practiceName),
+    );
+  }
+
+  return sendPage(response, 200, askEveryoneReportPage({
+    practitioner,
+    template,
+    title,
+    results,
+    withoutAddress,
+    elapsedMs: Date.now() - startedAt,
+  }));
+}
+
+/**
+ * One client's opening ask, sent.
+ *
+ * It goes through `openingDraft` — the same wording the single-request page drafts — so "here is what we need"
+ * has exactly one home, and a practice that improves it improves it on every request rather than on most.
+ */
+async function sendOneOpening(db, { client, requestId, token }, { origin, title, dueAt, clientNote, items }, mailer, practiceName) {
+  const message = openingDraft({
+    clientName: client.name,
+    title,
+    dueAt,
+    items,
+    note: clientNote,
+    link: `${origin}/r/${token}`,
+    practiceName,
+  });
+
+  try {
+    const { messageId } = await sendMail(mailer, { to: client.email, subject: message.subject, body: message.body });
+    recordEvent(db, { requestId, kind: 'request.sent', detail: `${client.email} — ${messageId}` });
+    return { row: { client, requestId }, outcome: 'sent', to: client.email, messageId };
+  } catch (error) {
+    // Recorded against the request it belongs to, so that client's history says the ask failed rather than
+    // showing nothing ever happened.
+    recordEvent(db, { requestId, kind: 'reminder.failed', detail: `opening ask: ${error.message}` });
+    return { row: { client, requestId }, outcome: 'failed', to: client.email, error: error.message };
+  }
+}
+
+/**
+ * What happened, per client, for the bulk ask.
+ *
+ * The same shape as the chase's report and for the same reason: a bulk action whose result is "done" teaches a
+ * practice to distrust it, and the first time a message quietly did not arrive they would go back to sending
+ * them one at a time — which is the whole thing this feature exists to stop.
+ *
+ * The row for a request that was not reached says the important part out loud: **it exists.** Its link works,
+ * its client is simply not holding it yet, and it can be sent from its own page.
+ */
+function askEveryoneReportPage({ practitioner, template, title, results, withoutAddress, elapsedMs }) {
+  const sent = results.filter((entry) => entry.outcome === 'sent');
+  const failed = results.filter((entry) => entry.outcome === 'failed');
+  const later = results.filter((entry) => entry.outcome === 'not-attempted');
+  const seconds = Math.round(elapsedMs / 1000);
+
+  const outcomeOf = (entry) => (entry.outcome === 'sent'
+    ? html`<strong>sent</strong> <span class="note">${entry.messageId}</span>`
+    : entry.outcome === 'failed'
+      ? html`<strong class="error">not sent</strong> <span class="note">${entry.error}</span>`
+      : html`<span class="note">not sent — the run was out of time</span>`);
+
+  return page({
+    title: 'What happened',
+    practitioner,
+    here: '/templates',
+    banner: later.length > 0
+      ? html`<p class="warning"><strong>${later.length}
+          ${later.length === 1 ? 'request was' : 'requests were'} made but not emailed</strong>, because the run
+          reached its time budget. Nothing is lost: each one exists, its link works, and you can send it from the
+          request itself — or leave it, and the chase will include it.</p>`
+      : null,
+    body: html`
+      <h1>${results.length} ${results.length === 1 ? 'client' : 'clients'} asked</h1>
+      <p>“${title}” from <strong>${template.name}</strong> — ${sent.length} sent, ${failed.length} failed,
+      ${later.length} not sent${withoutAddress.length > 0
+        ? html`, ${withoutAddress.length} with no email address`
+        : ''} in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.</p>
+
+      ${failed.length > 0
+        ? html`<p class="error"><strong>${failed.length}
+            ${failed.length === 1 ? 'message was' : 'messages were'} not sent.</strong> The request exists and its
+            link works, so the client can still be given it — open the request and use “Email this request”, or
+            reply to the failure in your mail server's log first.</p>`
+        : ''}
+      ${withoutAddress.length > 0
+        ? html`<p class="note"><strong>${withoutAddress.length}
+            ${withoutAddress.length === 1 ? 'client was' : 'clients were'} not asked</strong> because they have no
+            email address. Nothing was made for them: ${withoutAddress
+              .map((client) => client.name)
+              .join(', ')} — add an address on <a href="/clients">the clients page</a> and ask again.</p>`
+        : ''}
+
+      <div class="scroll"><table>
+        <colgroup><col style="width:26%"><col style="width:32%"><col style="width:42%"></colgroup>
+        <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr></thead>
+        <tbody>
+          ${results.map((entry) => html`<tr>
+            <td><span class="cell-t">${entry.row.client.name}</span></td>
+            <td><a href="/requests/${entry.row.requestId}">${title}</a></td>
+            <td>${outcomeOf(entry)}</td>
+          </tr>`)}
+          ${withoutAddress.map((client) => html`<tr>
+            <td><span class="cell-t">${client.name}</span></td>
+            <td><span class="muted">—</span></td>
+            <td>${badge('no email address on this client', TONES.wrong)}</td>
+          </tr>`)}
+        </tbody>
+      </table></div>
+
+      <p class="note"><a href="/requests">Back to the board</a> &middot;
+      <a href="/templates">Templates</a> &middot; <a href="/chase">the chase list</a></p>`,
+  });
+}
+
+// ---------------------------------------------------------------------------------
+// Templates — the lists a practice uses every year
+// ---------------------------------------------------------------------------------
+
+const MAX_TEMPLATE_NAME = 120;
+
+/**
+ * Every request in this product used to be built from nothing, which is fine the first time and absurd the
+ * fifty-first: the same forty document names, typed again, for the fifty-first client.
+ *
+ * A template is that list given a name and kept. It is a *starting point* rather than a record — a request
+ * copies its items at the moment it is made, and nothing ever refers back — which is why this is the one
+ * thing in the product that can be deleted outright. Deleting a template discards a draft; it cannot change
+ * what any client was ever asked for.
+ *
+ * Templates are made here, or from a request that already has the right list on it, which is how the first
+ * one usually appears: nobody retypes forty lines in order to stop retyping forty lines.
+ */
+function templatesPage({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const templates = templatesOf(db, practiceId);
+  const made = url.searchParams.get('made');
+  const removed = url.searchParams.get('removed');
+  const reachable = clientSummaries(db, practiceId).filter((client) => client.email).length;
+
+  return sendPage(response, 200, page({
+    title: 'Templates',
+    practitioner,
+    here: '/templates',
+    banner: made
+      ? html`<p class="success"><strong>Saved.</strong> Use it for one client, or ask everyone at once.</p>`
+      : removed
+        ? html`<p class="success"><strong>Deleted.</strong> Requests already made from it are untouched — they
+            copied what they needed at the time.</p>`
+        : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/requests">Requests</a></p>
+          <h1>Lists you use again</h1>
+          <p class="sub">A checklist kept under a name, so the same request is not typed out for every client.</p>
+        </div>
+        <div class="do">
+          ${reachable > 0
+            ? html`<a class="btn primary" href="/ask-everyone">Ask everyone at once</a>`
+            : html`<a class="btn" href="/clients">Add a client first</a>`}
+        </div>
+      </div>
+
+      ${templates.length === 0
+        ? empty('No templates yet', 'Make one below — or open a request and save its list, which is less typing if the list already exists.')
+        : html`<div class="scroll"><table>
+            <thead><tr>
+              <th style="width: 34%">Name</th>
+              <th style="width: 10%">Documents</th>
+              <th style="width: 30%">Standing note</th>
+              <th class="num" style="width: 26%">Use it</th>
+            </tr></thead>
+            <tbody>
+              ${templates.map((template) => html`<tr>
+                <td><a class="cell-t" href="/templates/${template.id}">${template.name}</a></td>
+                <td><span class="badge off">${template.item_count}</span></td>
+                <td>${template.note ? html`<span class="cell-s">${template.note}</span>` : html`<span class="muted">—</span>`}</td>
+                <td class="num">
+                  <a class="btn sm" href="/requests/new?template=${template.id}">One client</a>
+                  <a class="btn sm" href="/ask-everyone?template=${template.id}">Everyone</a>
+                </td>
+              </tr>`)}
+            </tbody>
+          </table></div>`}
+
+      ${section('Save a new list', html`
+        <form method="post" action="/templates" class="card">
+          <label for="name">What is it called?</label>
+          <input id="name" name="name" maxlength="${MAX_TEMPLATE_NAME}" required
+            placeholder="Sole trader — annual accounts">
+          <label for="items">The documents, one per line</label>
+          <textarea id="items" name="items" rows="8" required
+            placeholder="Photo ID&#10;Bank statements, all accounts&#10;Last year's return"></textarea>
+          <label for="note">A standing note to the client <span class="note">(optional — editable per client)</span></label>
+          <input id="note" name="note" maxlength="2000" placeholder="Please send these by the end of the month.">
+          <div class="actions"><button type="submit" class="primary">Save this list</button></div>
+        </form>`)}
+    `,
+  }));
+}
+
+/** Make a template from a typed list. */
+async function createTemplatePage({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const name = (field(fields, 'name') ?? '').trim();
+  const note = (field(fields, 'note') ?? '').trim() || null;
+  const items = parseItems(field(fields, 'items') ?? '');
+
+  if (name.length === 0) return fail(response, 400, 'A template needs a name so it can be found again.', practitioner);
+  if (name.length > MAX_TEMPLATE_NAME) {
+    return fail(response, 400, `That name is longer than ${MAX_TEMPLATE_NAME} characters.`, practitioner);
+  }
+  if (items.length === 0) return fail(response, 400, 'A template needs at least one document, one per line.', practitioner);
+
+  const id = createTemplate(db, { practiceId, createdBy: practitioner.id, name, note, items });
+  return redirect(response, `/templates/${id}`);
+}
+
+/** One template: what is on it, what it is called, and how to get rid of it. */
+function templatePage({ db, response, practitioner, practiceId, params, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = templateFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no list at that address.', practitioner);
+  const added = url.searchParams.get('added');
+  const reachable = clientSummaries(db, practiceId).filter((client) => client.email).length;
+
+  return sendPage(response, 200, page({
+    title: found.name,
+    practitioner,
+    here: '/templates',
+    banner: added === null
+      ? null
+      : added === '0'
+        ? html`<p class="warning">Everything on that list was already on this one, so nothing was added.</p>`
+        : html`<p class="success">${added} ${added === '1' ? 'document' : 'documents'} added.</p>`,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/templates">Templates</a></p>
+          <h1>${found.name}</h1>
+          <p class="sub">${found.items.length}
+            ${found.items.length === 1 ? 'document' : 'documents'}, kept to be used again</p>
+        </div>
+        <div class="do">
+          <a class="btn" href="/requests/new?template=${found.id}">Use for one client</a>
+          ${reachable > 0 ? html`<a class="btn primary" href="/ask-everyone?template=${found.id}">Ask everyone</a>` : ''}
+        </div>
+      </div>
+
+      ${section('What it asks for', html`
+        ${found.items.length === 0
+          ? empty('Nothing on it yet', 'Add the documents below, one per line.')
+          : html`<div class="scroll"><table>
+              <thead><tr><th style="width: 78%">Document</th><th class="num" style="width: 22%">Remove</th></tr></thead>
+              <tbody>
+                ${found.items.map((item) => html`<tr>
+                  <td><span class="cell-t">${item.label}</span>${item.note ? html`<span class="cell-s">${item.note}</span>` : ''}</td>
+                  <td class="num">
+                    <form method="post" action="/templates/${found.id}/items/${item.id}/remove" class="inline">
+                      <button type="submit" class="sm danger">Remove</button>
+                    </form>
+                  </td>
+                </tr>`)}
+              </tbody>
+            </table></div>`}
+        <form method="post" action="/templates/${found.id}/items" class="stack">
+          <label for="items">Add documents, one per line</label>
+          <textarea id="items" name="items" rows="4" placeholder="Payroll summary&#10;VAT returns"></textarea>
+          <div class="actions"><button type="submit">Add them</button></div>
+        </form>`)}
+
+      ${section('Its name and standing note', html`
+        <form method="post" action="/templates/${found.id}">
+          <label for="name">Name</label>
+          <input id="name" name="name" value="${found.name}" maxlength="${MAX_TEMPLATE_NAME}" required>
+          <label for="note">A standing note to the client <span class="note">(a starting point, editable per client)</span></label>
+          <input id="note" name="note" value="${found.note ?? ''}" maxlength="2000"
+            placeholder="Please send these by the end of the month.">
+          <div class="actions"><button type="submit" class="primary">Save</button></div>
+        </form>
+        <form method="post" action="/templates/${found.id}/delete">
+          <p class="note">Deleting a template does not touch a single request made from it — those copied what
+          they needed when they were made.</p>
+          <div class="actions"><button type="submit" class="danger">Delete this template</button></div>
+        </form>`)}
+    `,
+  }));
+}
+
+/** Rename a template, or change its standing note. */
+async function saveTemplate({ db, request, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = templateFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no list at that address.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const name = (field(fields, 'name') ?? '').trim();
+  if (name.length === 0) return fail(response, 400, 'A template needs a name.', practitioner);
+  if (name.length > MAX_TEMPLATE_NAME) {
+    return fail(response, 400, `That name is longer than ${MAX_TEMPLATE_NAME} characters.`, practitioner);
+  }
+  if ((field(fields, 'note') ?? '').length > 2000) {
+    return fail(response, 400, 'That note is longer than 2000 characters.', practitioner);
+  }
+
+  renameTemplate(db, practiceId, found.id, { name, note: field(fields, 'note') ?? '' });
+  return redirect(response, `/templates/${found.id}`);
+}
+
+/** Grow a template's list. */
+async function addTemplateItemsPage({ db, request, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = templateFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no list at that address.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const labels = parseItems(field(fields, 'items') ?? '');
+  const added = addTemplateItems(db, { templateId: found.id, labels });
+  return redirect(response, `/templates/${found.id}?added=${added}`);
+}
+
+/** Take one document off a template. The row goes; nothing points at it. */
+function removeTemplateItemPage({ db, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  if (!removeTemplateItem(db, practiceId, params[0], params[1])) {
+    return fail(response, 404, 'There is no such document on that list.', practitioner);
+  }
+  return redirect(response, `/templates/${params[0]}`);
+}
+
+/** Delete a template outright — the one place in the product that really removes a row. */
+function deleteTemplatePage({ db, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  if (!deleteTemplate(db, practiceId, params[0])) {
+    return fail(response, 404, 'There is no list at that address.', practitioner);
+  }
+  return redirect(response, '/templates?removed=1');
+}
+
+/**
+ * Save the list already on a request as a template.
+ *
+ * This is how the first template usually appears. A practice that has just built a good checklist by hand has
+ * no reason to type it out again in another page, and a template that has to be retyped is a template nobody
+ * makes.
+ */
+async function saveAsTemplate({ db, request, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const items = itemsOf(db, found.id).filter((item) => !item.withdrawn);
+  if (items.length === 0) {
+    return fail(response, 400, 'There is nothing on this request to save.', practitioner);
+  }
+
+  const fields = formFields(await readBody(request));
+  const typed = (field(fields, 'name') ?? '').trim();
+  const id = createTemplate(db, {
+    practiceId,
+    createdBy: practitioner.id,
+    // The request's own title is the obvious name, and it is what the practice would have typed anyway.
+    name: (typed || found.title).slice(0, MAX_TEMPLATE_NAME),
+    note: found.client_note,
+    items: items.map((item) => item.label),
+  });
+
+  // The notes on individual documents come across too — they are as much a part of the list as the labels are,
+  // and a template that quietly dropped them would ask for the right documents with none of the guidance.
+  for (const item of items) {
+    if (!item.note) continue;
+    const made = templateItemsOf(db, id).find((row) => row.label === item.label);
+    if (made) db.prepare('UPDATE template_item SET note = ? WHERE id = ?').run(item.note, made.id);
+  }
+
+  return redirect(response, `/templates/${id}?made=1`);
+}
+
+/**
+ * Closing a season, rather than one request at a time.
+ *
+ * Everything else in this product can be done in a batch — chase everyone, filter the board, export the list —
+ * and closing was the last one-at-a-time operation in the year's cycle, which is exactly the moment when there
+ * are forty of them and no patience left.
+ *
+ * **The software suggests; the practice decides.** The ones with nothing outstanding are ticked already,
+ * because a request where every document has arrived and been checked is finished by the product's own
+ * definition. The rest are listed unticked with what is still missing, because "close the year" is not the
+ * same as "abandon what is outstanding" and the difference should be a deliberate tick rather than a
+ * side-effect of pressing a button.
+ */
+function closeSeveralPage({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const open = requestsFor(db, practiceId, { scope: 'open' });
+  const finished = open.filter((row) => row.progress.state === 'ready');
+  const rest = open.filter((row) => row.progress.state !== 'ready');
+  const justClosed = url.searchParams.get('closed');
+  const nothingDone = url.searchParams.get('nothing') === '1';
+
+  const pick = (row) => html`<label>
+    <input type="checkbox" name="request_id" value="${row.id}"${row.progress.state === 'ready' ? ' checked' : ''}>
+    <span>
+      <span class="what">${row.title}</span>
+      <span class="who">${row.client_name} · ${badge(
+        REQUEST_STATE_WORDS[row.progress.state],
+        stateTone(row.progress.state),
+      )}${
+        row.progress.state === 'ready'
+          ? ''
+          : html` ${row.progress.outstanding} still outstanding, ${row.progress.toCheck} to check`
+      }</span>
+    </span>
+  </label>`;
+
+  return sendPage(response, 200, page({
+    title: 'Close several requests',
+    practitioner,
+    here: '/requests',
+    banner: justClosed
+      ? html`<p class="success"><strong>${justClosed} closed.</strong> Nothing was deleted — they are on the
+          closed tab, the clients' links still work, and any of them can be reopened from its own page.</p>`
+      : nothingDone
+        ? html`<p class="warning"><strong>Nothing was ticked</strong>, so nothing was closed. That is worth
+            saying rather than doing something surprising.</p>`
+        : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/requests">Requests</a></p>
+          <h1>Close several at once</h1>
+          <p class="sub">The end of a season, done in one go. Closing is a status, not a deletion: the record,
+          the files and each client's link all stay exactly as they are.</p>
+        </div>
+      </div>
+      ${open.length === 0
+        ? empty('Nothing is open', 'Every request is already closed.', html`<a class="btn" href="/requests">Back to the board</a>`)
+        : html`<form method="post" action="/requests/close" class="card">
+            <h2>Tick the ones that are finished</h2>
+            ${finished.length > 0
+              ? html`<p class="note">${finished.length}
+                  ${finished.length === 1 ? 'request has' : 'requests have'} nothing outstanding, so
+                  ${finished.length === 1 ? 'it is' : 'they are'} ticked already.</p>`
+              : ''}
+            <div class="pick">${finished.map(pick)}</div>
+            ${rest.length > 0
+              ? html`<h3>Still owed something</h3>
+                  <p class="note">Closing these stops the chase for them. If a document is on its way, leave
+                  the request open — it can always be closed later.</p>
+                  <div class="pick">${rest.map(pick)}</div>`
+              : ''}
+            <div class="actions">
+              <button type="submit" class="primary">Close the ticked requests</button>
+              <a class="btn ghost" href="/requests">Cancel</a>
+            </div>
+          </form>`}`,
+  }));
+}
+
+/** Close whichever requests were ticked, and report how many rather than doing it quietly. */
+async function closeSeveral({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const ticked = Array.isArray(fields.request_id) ? fields.request_id : fields.request_id ? [fields.request_id] : [];
+
+  let closed = 0;
+  for (const id of ticked) {
+    // One at a time through the single-request path, so each request records its own event and the bulk
+    // route cannot drift from the individual one. `closeRequest` refuses one already closed, which is why
+    // the count is what the function returns rather than the length of the list.
+    if (closeRequest(db, practiceId, id)) closed += 1;
+  }
+
+  return redirect(response, closed > 0 ? `/requests/close?closed=${closed}` : '/requests/close?nothing=1');
+}
+
+/**
+ * The practice's clients: who they work for, and what each one still owes.
+ *
+ * Until this page existed a client was only reachable *through* one of their requests, which meant the
+ * answer to "who do I work for, and who is late?" was a request board read sideways. A practice has
+ * clients; requests are what it does about them. The order of those two facts had stopped matching the
+ * order of the screens.
+ *
+ * The address column is not decoration either: a client with no address is a client the chase cannot
+ * write to, and the only way to notice that was to reach the chase and find them listed as
+ * unreachable. Here it is a state, on the row, with a place to fix it.
+ */
+function listClients({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const query = (url.searchParams.get('q') ?? '').trim();
+  const everyone = clientSummaries(db, practiceId);
+  const needle = query.toLowerCase();
+  const timezone = practiceFor(db, practiceId).timezone;
+  // Who is due is computed for the *whole* practice, not for what is on screen: the tile counts the work, and a
+  // count that changed when somebody typed in the search box would be a count nobody could act on.
+  const due = clientsDueForAsking(db, practiceId, { timezone });
+  const dueIds = new Set(due.map((row) => row.id));
+  const onlyDue = url.searchParams.get('due') === '1';
+
+  const searched = needle
+    ? everyone.filter((row) => `${row.name} ${row.email ?? ''}`.toLowerCase().includes(needle))
+    : everyone;
+  const rows = onlyDue ? searched.filter((row) => dueIds.has(row.id)) : searched;
+  const owing = rows.filter((row) => row.progress.outstanding > 0);
+  const noAddress = rows.filter((row) => !row.email);
+  const justSaved = url.searchParams.get('saved');
+
+  const table = rows.length === 0
+    ? empty(
+        query
+          ? `Nothing matches “${query}”`
+          : onlyDue
+            ? 'Nobody is due an ask this month'
+            : 'No clients yet',
+        query
+          ? html`The search looks at the name and the address. <a href="/clients">Clear it</a> to see everyone again.`
+          : onlyDue
+            ? html`This list is the clients nothing is open for whose last ask was in this month of an earlier
+                year. Either nobody is on an annual cycle that comes round now, or everybody has already been
+                asked. <a href="/clients">Show everyone</a>.`
+            : 'A client appears here the first time you ask them for something — type a name on a new request and they are kept.',
+        query || onlyDue ? null : html`<a class="btn primary" href="/requests/new">New request</a>`,
+      )
+    : html`<div class="scroll"><table class="clients">
+        <colgroup>
+          <col class="c-name"><col class="c-mail"><col class="c-open">
+          <col class="c-out"><col class="c-reminded"><col class="c-do">
+        </colgroup>
+        <thead>
+          <tr>
+            <th align="left">Client</th>
+            <th align="left">Address</th>
+            <th align="right">Open</th>
+            <th align="right">Outstanding</th>
+            <th align="left">Last written to</th>
+            <th align="left"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => html`<tr>
+            <td>
+              <a class="cell-t" href="/clients/${row.id}">${row.name}</a>
+              ${dueIds.has(row.id)
+                ? html`<span class="cell-s">last asked ${dateIn(timezone, new Date(row.last_request_at))}</span>`
+                : row.closed_requests > 0
+                  ? html`<span class="cell-s">${row.open_requests} open · ${row.closed_requests} closed</span>`
+                  : ''}
+            </td>
+            <td>${row.email
+              ? row.email
+              : html`${badge('no address', TONES.wrong)}`}</td>
+            <td align="right">${row.open_requests === 0
+              ? html`<span class="muted">—</span>`
+              : row.open_requests}</td>
+            <td align="right">${row.progress.outstanding === 0
+              ? html`<span class="muted">—</span>`
+              : html`<strong>${row.progress.outstanding}</strong>`}</td>
+            <td>${row.last_reminded_at
+              ? html`<span class="muted">${row.last_reminded_at.slice(0, 10)}</span>`
+              : html`<span class="muted">never</span>`}</td>
+            <td>
+              <a class="btn sm" href="/requests/new?for=${row.id}">New request</a>
+            </td>
+          </tr>`)}
+        </tbody>
+      </table></div>`;
+
+  return sendPage(response, 200, page({
+    title: 'Clients',
+    practitioner,
+    here: '/clients',
+    banner: justSaved
+      ? html`<p class="success"><strong>Saved.</strong> ${justSaved} is what this practice will call them
+          from now on, and every request of theirs moves with the record.</p>`
+      : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <h1>Clients</h1>
+          <p class="sub">Everyone this practice asks for documents, and what each of them still owes.</p>
+        </div>
+        <div class="do">
+          <a class="btn primary" href="/requests/new">New request</a>
+        </div>
+      </div>
+      <div class="bar">
+        ${everyone.length === 0
+          ? ''
+          : html`<form class="search" method="get" action="/clients">
+              <input type="search" name="q" value="${query}" placeholder="Name or address"
+                aria-label="Search clients">
+              <button type="submit">Search</button>
+              ${query ? html`<a class="clear" href="/clients">Clear</a>` : ''}
+            </form>`}
+      </div>
+      ${query
+        ? html`<p class="note">${rows.length} ${rows.length === 1 ? 'client' : 'clients'} matching
+            “${query}” · <a href="/clients.csv${query ? `?q=${encodeURIComponent(query)}` : ''}">Download as CSV</a></p>`
+        : everyone.length > 0
+          ? html`<p class="note"><a href="/clients.csv">Download as CSV</a> — everyone, with what each of
+              them still owes.</p>`
+          : ''}
+      ${rows.length === 0
+        ? ''
+        : html`<div class="tiles">
+            ${tile(rows.length, rows.length === 1 ? 'client' : 'clients')}
+            ${due.length > 0
+              ? tile(due.length, 'due to be asked', {
+                  href: '/clients?due=1',
+                  tone: 'attn',
+                  current: onlyDue,
+                })
+              : tile(0, 'due to be asked')}
+            ${owing.length > 0
+              ? tile(owing.length, 'still owe something', { href: '/chase', tone: 'attn' })
+              : tile(0, 'still owe something')}
+            ${noAddress.length > 0
+              ? tile(noAddress.length, 'with no address', { tone: 'warn' })
+              : tile(0, 'missing an address')}
+          </div>`}
+      ${onlyDue && rows.length > 0
+        ? html`<div class="card">
+            <h2>The year coming round</h2>
+            <p>These ${rows.length === 1 ? 'is a client' : 'are clients'} nothing is open for, whose last ask was in
+            <strong>${monthIn(timezone)}</strong> of an earlier year — so this is the month they were asked last
+            time. That is the whole rule: no cycle length to configure, and the list empties itself as you ask each
+            one, because an open request takes them off it.</p>
+            <p class="note">Nothing here has been sent, and nothing will be without you pressing a button: the next
+            step shows every client and every address before anything leaves the building.</p>
+            <div class="actions">
+              <a class="btn primary" href="/ask-everyone?due=1">Ask them all again</a>
+              <a class="btn" href="/clients">Show everyone</a>
+            </div>
+          </div>`
+        : ''}
+      ${noAddress.length > 0
+        ? html`<p class="note">A client with no address is left out of every reminder — open one and add
+            it. The chase names them rather than dropping them quietly, but an address is faster.</p>`
+        : ''}
+      ${table}`,
+  }));
+}
+
+/**
+ * The directory as a spreadsheet: who the practice works for, and what each one owes.
+ *
+ * Same reasoning as the board's export, and the same filters: a practice reconciling a season works in a
+ * spreadsheet, and the list they want to sort by their own column is the one with the counts on it.
+ */
+function clientsCsv({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+  const rows = clientSummaries(db, practiceId)
+    .filter((row) => (query ? `${row.name} ${row.email ?? ''}`.toLowerCase().includes(query) : true))
+    .map((row) => [
+      row.name,
+      row.email ?? '',
+      row.open_requests,
+      row.closed_requests,
+      row.progress.outstanding,
+      row.last_reminded_at ? row.last_reminded_at.slice(0, 10) : '',
+      row.created_at.slice(0, 10),
+    ]);
+
+  return sendCsv(response, 'tickmark-clients.csv', [
+    ['Client', 'Address', 'Open requests', 'Closed requests', 'Outstanding', 'Last written to', 'First asked'],
+    ...rows,
+  ]);
+}
+
+/**
+ * Save a client's name and address.
+ *
+ * The name is required because a client with no name cannot be found in the list, and the address is
+ * optional because plenty of clients are only ever chased by phone — but clearing it is a decision
+ * made here, on purpose, which is why an empty field on *this* form clears it while an empty field on
+ * a request form does not.
+ *
+ * A name that is already taken by another client is refused rather than merged. Two records with one
+ * name is how a request ends up filed against the wrong one, and merging is a decision about which
+ * history survives — not something to do silently because somebody typed a name that matched.
+ */
+async function saveClient({ db, request, response, practitioner, params, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = clientFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no client at that address.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const name = (field(fields, 'name') ?? '').trim();
+  const email = (field(fields, 'email') ?? '').trim();
+  if (!name) return fail(response, 400, 'A client needs a name.', practitioner);
+  if (name.length > 200) return fail(response, 400, 'That name is longer than 200 characters.', practitioner);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return fail(response, 400, 'That does not look like an email address.', practitioner);
+  }
+
+  const clash = db
+    .prepare('SELECT id FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE AND id <> ?')
+    .get(practiceId, name, found.id);
+  if (clash) {
+    return fail(
+      response,
+      400,
+      `There is already a client called ${name}. Two records with one name is how a request ends up filed against the wrong one — rename this one, or use the other.`,
+      practitioner,
+    );
+  }
+
+  updateClient(db, { practiceId, clientId: found.id, name, email: email || null });
+  return redirect(response, `/clients/${found.id}?saved=1`);
+}
+
+/**
+ * One client: who they are, everything asked of them, and the two things a practice does about them.
+ *
+ * The reuse is the point of the page. "The same as last year" is the year-two workflow, and it is why
+ * the new-request button carries the client with it and offers their most recent checklist — the
+ * biggest repeat cost in the research was the same list rebuilt from scratch every January.
+ */
+function viewClient({ db, response, practitioner, params, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = clientFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no client at that address.', practitioner);
+
+  const requests = requestsForClient(db, practiceId, found.id);
+  const open = requests.filter((row) => !row.closed_at);
+  const closed = requests.filter((row) => row.closed_at);
+  const wanted = open.reduce((total, row) => total + outstandingOf(db, row.id).length, 0);
+  const previous = previousChecklistFor(db, practiceId, found.id);
+  const justSaved = url.searchParams.get('saved');
+
+  const rowFor = (request) => html`<tr>
+    <td><a class="cell-t" href="/requests/${request.id}">${request.title}</a></td>
+    <td>${request.closed_at
+      ? badge('closed', TONES.done_for)
+      : badge(REQUEST_STATE_WORDS[request.progress.state], stateTone(request.progress.state))}</td>
+    <td align="right">${request.progress.received} / ${request.progress.items}</td>
+    <td>${request.due_at ?? html`<span class="muted">no date</span>`}</td>
+    <td><span class="muted">${request.created_at.slice(0, 10)}</span></td>
+  </tr>`;
+
+  return sendPage(response, 200, page({
+    title: found.name,
+    practitioner,
+    here: '/clients',
+    banner: justSaved ? html`<p class="success"><strong>Saved.</strong></p>` : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/clients">Clients</a></p>
+          <h1>${found.name}</h1>
+          <p class="sub">${found.email ?? 'No address yet — reminders cannot be sent to them'}</p>
+        </div>
+        <div class="do">
+          <a class="btn primary" href="/requests/new?for=${found.id}">New request</a>
+        </div>
+      </div>
+      ${requests.length > 0
+        ? html`<div class="tiles">
+            ${tile(open.length, open.length === 1 ? 'open request' : 'open requests')}
+            ${tile(wanted, 'still outstanding', { tone: wanted > 0 ? 'attn' : null })}
+            ${tile(closed.length, closed.length === 1 ? 'closed request' : 'closed requests')}
+          </div>`
+        : ''}
+      ${requests.length === 0
+        ? empty(
+            `${found.name} has nothing outstanding`,
+            'Ask them for something and everything they send appears here, with the requests they have had before.',
+            html`<a class="btn primary" href="/requests/new?for=${found.id}">Ask for documents</a>`,
+          )
+        : html`<section class="card">
+            <h2>Everything asked of them</h2>
+            <div class="scroll"><table class="items">
+              <colgroup>
+                <col class="c-title"><col class="c-state"><col class="c-received">
+                <col class="c-due"><col class="c-asked">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th align="left">Request</th>
+                  <th align="left">State</th>
+                  <th align="right">Received</th>
+                  <th align="left">Due</th>
+                  <th align="left">Asked</th>
+                </tr>
+              </thead>
+              <tbody>${requests.map(rowFor)}</tbody>
+            </table></div>
+          </section>`}
+      <section class="card">
+        <h2>Their details</h2>
+        <form method="post" action="/clients/${found.id}">
+          <div class="field">
+            <label for="name">What this practice calls them</label>
+            <input id="name" name="name" required maxlength="200" value="${found.name}">
+            <p class="form-hint">Fixing a typo here moves every request of theirs with it — which is why
+            a client typed twice by mistake is a thing you can repair rather than live with.</p>
+          </div>
+          <div class="field">
+            <label for="email">Their address <span class="note">for reminders</span></label>
+            <input id="email" name="email" type="email" value="${found.email ?? ''}">
+            <p class="form-hint">Leave it empty to remove the address: reminders then name them as
+            unreachable rather than being sent nowhere.</p>
+          </div>
+          <button type="submit">Save</button>
+        </form>
+      </section>
+      ${previous.items.length > 0
+        ? html`<section class="card">
+            <h2>Last time they were asked</h2>
+            <p class="note">${previous.title ?? 'A previous request'} asked for
+            ${previous.items.length} ${previous.items.length === 1 ? 'document' : 'documents'}:</p>
+            <ul class="plain">${previous.items.map((label) => html`<li>${label}</li>`)}</ul>
+            <div class="actions">
+              <a class="btn" href="/requests/new?for=${found.id}&amp;like=last">Start one like this</a>
+            </div>
+          </section>`
+        : ''}`,
+  }));
+}
 /**
  * Serve one stored envelope to the practice that owns it.
  *
@@ -1044,7 +2952,7 @@ async function serveEnvelope({ db, response, practitioner, params, practiceId })
   return response.end(bytes);
 }
 
-async function issueLink({ db, request, response, practitioner, params, practiceId }) {
+async function issueLink({ db, request, response, practitioner, params, practiceId, onLinkIssued }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   // Ownership first, key second. A request belonging to somebody else must be *not found*
@@ -1067,6 +2975,11 @@ async function issueLink({ db, request, response, practitioner, params, practice
     tokenHash: hashToken(token),
     expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
   });
+
+  // Optional, injected, and a no-op single-tenant: where else would a link live but in the file
+  // that issued it? In SaaS mode the entry passes the registry's recorder, so a client's link can
+  // find its practice without a host header. The core route never learns why.
+  onLinkIssued?.({ practiceId, token, requestId: found.id });
 
   return sendPage(response, 200, page({
     title: found.title,
@@ -1095,16 +3008,6 @@ async function revokeLink({ db, request, response, practitioner, params, practic
   return redirect(response, `/requests/${found.id}`);
 }
 
-const outstandingOf = (db, requestId) => {
-  // An item the practice has flagged stays on the list even though a file came in: what arrived is not
-  // usable, so the next reminder has to ask again. A withdrawn item leaves the list entirely. Now read
-  // from the item's own `received` flag rather than from a separate set of uploads — one query, one
-  // answer about what counts as arrived.
-  return itemsOf(db, requestId).filter(
-    (item) => !item.withdrawn && (!item.received || item.needsAttention),
-  );
-};
-
 /**
  * The reminder for one request: the words, and the list they were built from.
  *
@@ -1112,7 +3015,7 @@ const outstandingOf = (db, requestId) => {
  * implementations of "what does a reminder say" would be two things free to disagree — and the place
  * the disagreement would show up is a client's inbox.
  */
-function messageFor({ db, found, origin, token }) {
+function messageFor({ db, found, origin, token, practiceName = null }) {
   const items = itemsOf(db, found.id);
   const outstanding = outstandingOf(db, found.id);
 
@@ -1123,6 +3026,7 @@ function messageFor({ db, found, origin, token }) {
       clientName: found.client_name,
       title: found.title,
       dueAt: found.due_at,
+      practiceName,
       outstanding: outstanding.filter((item) => !item.needsAttention).map((item) => item.label),
       again: outstanding
         .filter((item) => item.needsAttention)
@@ -1195,7 +3099,13 @@ async function draftReminder({ db, request, response, practitioner, params, mail
     detail: `${outstanding.length} still outstanding`,
   });
 
-  const message = messageFor({ db, found, origin: originOf(request), token });
+  const message = messageFor({
+    db,
+    found,
+    origin: originOf(request),
+    token,
+    practiceName: practiceFor(db, practiceId).name,
+  });
 
   return sendPage(response, 200, reminderPage({
     mailer,
@@ -1209,6 +3119,233 @@ async function draftReminder({ db, request, response, practitioner, params, mail
 }
 
 /**
+ * Change a request after it exists.
+ *
+ * The gap this closes is not a missing feature so much as a missing operation: a title could be set once and
+ * never corrected, and a due date could be set once and never moved. Both happen constantly — deadlines are
+ * the most changeable fact in an accountant's week — and the only fix was to close the request and start
+ * again, which throws away the link the client already has and the record of what they already sent.
+ *
+ * The client can be corrected here too. "This was filed against the wrong client" is a correction like any
+ * other, and it carries the same rule as everywhere else: a name that matches an existing client moves the
+ * request to *them* rather than creating a second record.
+ */
+function editRequestForm({ db, response, practitioner, params, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const clients = clientSummaries(db, practiceId).map((row) => ({ name: row.name, email: row.email }));
+  const saved = url.searchParams.get('saved');
+
+  return sendPage(response, 200, page({
+    title: `Edit ${found.title}`,
+    practitioner,
+    here: '/requests',
+    banner: saved
+      ? html`<p class="success"><strong>Saved.</strong> ${saved === 'nothing' ? 'Nothing had changed.' : saved}</p>`
+      : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/requests">Requests</a> · <a href="/requests/${found.id}">${found.title}</a></p>
+          <h1>Edit this request</h1>
+          <p class="sub">The client's link does not change, and neither does anything they have already sent.</p>
+        </div>
+      </div>
+      <form method="post" action="/requests/${found.id}/edit" class="card narrow">
+        <input type="hidden" name="client_id" value="${found.client_id}">
+        <div class="field">
+          <label for="client">Client</label>
+          <input id="client" name="client" required value="${found.client_name}" list="client-names"
+            autocomplete="off">
+          ${clients.length > 0
+            ? html`<datalist id="client-names">
+                ${clients.map((client) => html`<option value="${client.name}">${client.email ?? ''}</option>`)}
+              </datalist>
+              <p class="form-hint">Choosing another of the practice's clients moves the request to them —
+              nothing is copied, and nothing is left behind.</p>`
+            : ''}
+        </div>
+        <div class="field">
+          <label for="title">What is this for?</label>
+          <input id="title" name="title" required value="${found.title}" maxlength="200">
+        </div>
+        <div class="field">
+          <label for="due">Due <span class="note">(optional — clear it to remove the date)</span></label>
+          <input id="due" name="due" type="date" value="${found.due_at ?? ''}">
+        </div>
+        <div class="field">
+          <label for="client_note">A note for your client <span class="note">(optional — shown at the top of their page)</span></label>
+          <textarea id="client_note" name="client_note" rows="4" maxlength="2000">${found.client_note ?? ''}</textarea>
+        </div>
+        <button type="submit">Save the changes</button>
+      </form>
+      <p class="note">To change the list itself — adding a document, or stopping asking for one — use the
+      request's own page. The record keeps what was asked for and when.</p>`,
+  }));
+}
+
+/** Save an edit, and record what actually changed rather than that something did. */
+async function saveRequest({ db, request, response, practitioner, params, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const fields = formFields(await readBody(request));
+  const name = (field(fields, 'client') ?? '').trim();
+  const title = (field(fields, 'title') ?? '').trim();
+  const due = (field(fields, 'due') ?? '').trim();
+  const note = (field(fields, 'client_note') ?? '').trim();
+  const carriedClientId = field(fields, 'client_id');
+
+  if (!name) return fail(response, 400, 'A client is required.', practitioner);
+  if (!title) return fail(response, 400, 'A title is required.', practitioner);
+  if (title.length > 200) return fail(response, 400, 'That title is longer than 200 characters.', practitioner);
+  if (note.length > 2000) {
+    return fail(response, 400, 'The note for your client is longer than 2000 characters.', practitioner);
+  }
+  if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+    return fail(response, 400, 'That is not a date a browser would send.', practitioner);
+  }
+
+  // The client named on the form decides which record the request belongs to: the same name is the same
+  // client, and a name typed differently on purpose is only a *new* client when it matches none of them.
+  const carried = carriedClientId ? clientFor(db, practiceId, carriedClientId) : null;
+  let clientId = carried?.id ?? null;
+  if (!clientId) {
+    clientId = findOrCreateClient(db, { practiceId, createdBy: practitioner.id, name });
+  } else if (name !== carried.name) {
+    const clash = db
+      .prepare('SELECT id FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE AND id <> ?')
+      .get(practiceId, name, carried.id);
+    if (clash) return fail(response, 400, `There is already a client called ${name}.`, practitioner);
+    updateClient(db, { practiceId, clientId: carried.id, name, email: carried.email });
+  }
+
+  const { changes } = updateRequest(db, {
+    practiceId,
+    requestId: found.id,
+    clientId,
+    title,
+    dueAt: due || null,
+    clientNote: note || null,
+  });
+
+  return redirect(
+    response,
+    `/requests/${found.id}/edit?saved=${encodeURIComponent(changes.length === 0 ? 'nothing' : changes.join(', '))}`,
+  );
+}
+
+/**
+ * Ask for the documents, by email.
+ *
+ * The gap this closes is small on paper and large in practice: the practice could already make a link and
+ * already send mail, so the only way to ask for something was to copy a link out of one page and paste it
+ * into another program. That step is where a practice decides the tool is a spreadsheet with extra steps.
+ *
+ * Like the reminder, it **issues a fresh link** rather than reusing one: a link cannot be recovered from the
+ * server by design, and the practice may be sending to a client who never received the first one. It is
+ * recorded as `request.sent` rather than as a reminder, because the record should say what actually
+ * happened — "we asked for this on the 3rd" and "we chased them on the 20th" are different sentences.
+ */
+async function draftOpening({ db, request, response, practitioner, params, mailer, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+  if (!practitioner.hasKey) return redirect(response, '/setup');
+
+  const items = itemsOf(db, found.id).filter((item) => !item.withdrawn);
+  if (items.length === 0) return redirect(response, `/requests/${found.id}`);
+
+  const fields = formFields(await readBody(request));
+  const days = Math.min(Math.max(Number(field(fields, 'days', '30')) || 30, 1), 365);
+
+  const token = newToken();
+  issueToken(db, {
+    requestId: found.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+  });
+
+  return sendPage(response, 200, reminderPage({
+    mailer,
+    practitioner,
+    found,
+    opening: true,
+    action: `/requests/${found.id}/send-request`,
+    days,
+    outstanding: items.length,
+    total: items.length,
+    draft: openingDraft({
+      clientName: found.client_name,
+      title: found.title,
+      dueAt: found.due_at,
+      items: items.map((item) => item.label),
+      note: found.client_note,
+      link: `${originOf(request)}/r/${token}`,
+      practiceName: practiceFor(db, practiceId).name,
+    }),
+  }));
+}
+
+/**
+ * Send the request that is on the screen.
+ *
+ * Identical in shape to sending a reminder, and for the same reasons: the text comes from the form, because
+ * the practice may have edited it and their words are what their client should receive; and a failure keeps
+ * the text and reports the relay's own words, because a send that loses what somebody typed is worse than a
+ * send that fails.
+ */
+async function sendOpening({ db, request, response, practitioner, params, mailer, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+  if (!mailer) {
+    return fail(response, 400, 'This installation has no mail server configured, so nothing can be sent.', practitioner);
+  }
+  if (!found.client_email) {
+    return fail(response, 400, `There is no email address for ${found.client_name}, so there is nowhere to send it.`, practitioner);
+  }
+
+  const fields = formFields(await readBody(request));
+  const subject = field(fields, 'subject') ?? openingDraft({
+    clientName: found.client_name,
+    title: found.title,
+    dueAt: found.due_at,
+    items: itemsOf(db, found.id).filter((item) => !item.withdrawn).map((item) => item.label),
+    note: found.client_note,
+    link: '',
+  }).subject;
+  const body = typeof fields.message === 'string' ? fields.message : '';
+
+  try {
+    const messageId = await sendMail(mailer, { to: found.client_email, subject, body });
+    recordEvent(db, {
+      requestId: found.id,
+      kind: 'request.sent',
+      detail: `${found.client_email} — ${messageId}`,
+    });
+    return redirect(response, `/requests/${found.id}?emailed=${encodeURIComponent(messageId)}`);
+  } catch (error) {
+    if (!(error instanceof MailError)) throw error;
+    return sendPage(response, 200, reminderPage({
+      mailer,
+      practitioner,
+      found,
+      opening: true,
+      action: `/requests/${found.id}/send-request`,
+      days: 30,
+      outstanding: outstandingOf(db, found.id).length,
+      total: itemsOf(db, found.id).length,
+      draft: { subject, body },
+      error: error.message,
+    }));
+  }
+}
+
+/**
  * The reminder, as a page the practice can edit before it goes anywhere.
  *
  * The fields are **editable**, which is the honest reading of "a draft": what is in them is what gets
@@ -1219,8 +3356,20 @@ async function draftReminder({ db, request, response, practitioner, params, mail
  * when it cannot, the page says what is missing rather than showing a button that fails. Same rule as
  * everywhere else here: no control that cannot do what it says.
  */
-function reminderPage({ mailer, practitioner, found, draft, days, outstanding, total, error = null }) {
+function reminderPage({
+  mailer,
+  practitioner,
+  found,
+  draft,
+  days,
+  outstanding,
+  total,
+  error = null,
+  opening = false,
+  action = null,
+}) {
   const canSend = Boolean(mailer) && Boolean(found.client_email);
+  const sendTo = action ?? `/requests/${found.id}/send-reminder`;
 
   const whyNot = !mailer
     ? html`<p class="note">Tickmark cannot send this by itself, because this installation has no mail
@@ -1233,7 +3382,7 @@ function reminderPage({ mailer, practitioner, found, draft, days, outstanding, t
       : '';
 
   return page({
-    title: `A reminder for ${found.client_name}`,
+    title: `${opening ? 'Ask' : 'A reminder for'} ${opening ? found.client_name : ''}`.trim(),
     practitioner,
     banner: error
       ? html`<p class="error"><strong>Not sent.</strong> ${error}<br>Nothing you typed is lost — it is
@@ -1244,21 +3393,34 @@ function reminderPage({ mailer, practitioner, found, draft, days, outstanding, t
         : html`<p class="warning">Tickmark does not send this. Copy it into whatever you send mail with,
             to <strong>${found.client_email ?? 'the client'}</strong>.</p>`,
     body: html`
-      <h1>A reminder for ${found.client_name}</h1>
-      <p>${outstanding} of ${total} still outstanding. The link in the message is new, it works for
-      ${days} days, and <strong>it is not recoverable</strong> — if you lose it, draft the reminder
-      again.</p>
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/requests">Requests</a> · <a href="/requests/${found.id}">${found.title}</a></p>
+          <h1>${opening ? `Ask ${found.client_name} for these` : `A reminder for ${found.client_name}`}</h1>
+          <p class="sub">${opening
+            ? html`${total} ${total === 1 ? 'document is' : 'documents are'} being asked for. The link in the
+                message is new, it works for ${days} days, and <strong>it is not recoverable</strong> — if you
+                lose it, start this again.`
+            : html`${outstanding} of ${total} still outstanding. The link in the message is new, it
+                works for ${days} days, and <strong>it is not recoverable</strong> — if you lose it, draft the
+                reminder again.`}</p>
+        </div>
+      </div>
       ${whyNot}
-      <form method="post" action="/requests/${found.id}/send-reminder">
-        <label for="subject">Subject</label>
-        <textarea id="subject" name="subject" rows="2">${draft.subject}</textarea>
-        <label for="message">Message <span class="note">what you see is what gets sent</span></label>
-        <textarea id="message" name="message" rows="18" onclick="this.focus(); this.select();">${draft.body}</textarea>
+      <form method="post" action="${sendTo}" class="card">
+        <div class="field">
+          <label for="subject">Subject</label>
+          <textarea id="subject" name="subject" rows="2">${draft.subject}</textarea>
+        </div>
+        <div class="field">
+          <label for="message">Message <span class="note">what you see is what gets sent</span></label>
+          <textarea id="message" name="message" rows="18" onclick="this.focus(); this.select();">${draft.body}</textarea>
+        </div>
         ${canSend
           ? html`<button type="submit">Send it to ${found.client_email}</button>`
           : html`<button type="submit" disabled>Send it</button>`}
       </form>
-      <p><a href="/requests/${found.id}">Back to the request</a></p>`,
+      <p class="note"><a href="/requests/${found.id}">Back to the request</a></p>`,
   });
 }
 
@@ -1427,30 +3589,46 @@ function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
   const justSaved = saved && /^\d+$/.test(saved) ? saved : null;
 
   const table = rows.length === 0
-    ? html`<p>Nothing is outstanding for anyone. <a href="/requests">The board</a> has the full picture.</p>`
-    : html`<table>
-        <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outstanding</th><th align="left">To send to</th><th align="left">Last</th></tr></thead>
+    ? empty(
+        'Nothing is outstanding for anyone.',
+        html`<a href="/requests">The board</a> has the full picture.`,
+      )
+    : html`<div class="scroll"><table class="chase">
+        <colgroup>
+          <col style="width:17%"><col style="width:24%"><col style="width:29%">
+          <col style="width:18%"><col style="width:12%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th align="left">Client</th>
+            <th align="left">Request</th>
+            <th align="left">Outstanding</th>
+            <th align="left">To send to</th>
+            <th align="left">Last</th>
+          </tr>
+        </thead>
         <tbody>
           ${rows.map((row) => html`<tr>
-            <td>${row.client_name}</td>
-            <td><a href="/requests/${row.id}">${row.title}</a></td>
+            <td><span class="cell-t">${row.client_name}</span></td>
+            <td><a class="cell-t" href="/requests/${row.id}">${row.title}</a></td>
             <td>${row.outstanding.map((item) => item.label).join(', ')}
               ${row.outstanding.some((item) => item.clientSays)
-                ? html`<div class="note">the client has already answered about some of these — the message
-                    repeats that back rather than asking again</div>`
+                ? html`<span class="cell-s">the client has already answered about some of these — the message
+                    repeats that back rather than asking again</span>`
                 : ''}</td>
-            <td>${row.client_email ?? html`<span class="error">no email address on this client</span>`}</td>
+            <td>${row.client_email ?? html`<span class="badge bad">no email address on this client</span>`}</td>
             <td>${row.lastRemindedAt
-              ? html`<span class="note">reminded ${agoWords(row.lastRemindedAt, now())}</span>`
-              : html`<span class="note">never reminded</span>`}
-              ${held.includes(row) ? html`<br><span class="warning">held back — inside your cadence</span>` : ''}</td>
+              ? html`<span class="cell-s">reminded ${agoWords(row.lastRemindedAt, now())}</span>`
+              : html`<span class="cell-s muted">never reminded</span>`}
+              ${held.includes(row) ? html`${badge('held back — inside your cadence', TONES.waiting)}` : ''}</td>
           </tr>`)}
         </tbody>
-      </table>`;
+      </table></div>`;
 
   return sendPage(response, 200, page({
     title: 'Chase everyone',
     practitioner,
+    here: '/chase',
     banner: !mailer
       ? html`<p class="warning">Tickmark has no mail server configured, so nothing can be sent. Set
           <code>TICKMARK_SMTP_URL</code> and <code>TICKMARK_MAIL_FROM</code> and restart it — or open a
@@ -1471,47 +3649,54 @@ function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
                   left out for want of an email address.`
               : ''}</p>`,
     body: html`
-      <h1>Chase everyone who owes you something</h1>
-      <p class="note">${rows.length} ${rows.length === 1 ? 'request has' : 'requests have'} something
-      outstanding. Each one is sent the ordinary reminder for its own list, with its own link. To change
-      the words for one client, open that request and draft it there.</p>
+      <div class="page-head">
+        <div class="titles">
+          <h1>Chase everyone who owes you something</h1>
+          <p class="sub">${rows.length} ${rows.length === 1 ? 'request has' : 'requests have'} something
+          outstanding. Each one is sent the ordinary reminder for its own list, with its own link.</p>
+        </div>
+      </div>
       ${table}
       ${rows.length === 0
         ? ''
-        : html`<form method="post" action="/chase">
-            ${mailer && sendable.length > 0
-              ? html`<button type="submit">Send ${sendable.length}
-                  ${sendable.length === 1 ? 'reminder' : 'reminders'}</button>`
-              : html`<button type="submit" disabled>Send${mailer ? '' : ' (no mail server)'}</button>`}
-          </form>`}
+        : html`<div class="actions">
+            <form method="post" action="/chase">
+              ${mailer && sendable.length > 0
+                ? html`<button type="submit" class="primary">Send ${sendable.length}
+                    ${sendable.length === 1 ? 'reminder' : 'reminders'}</button>`
+                : html`<button type="submit" disabled>Send${mailer ? '' : ' (no mail server)'}</button>`}
+            </form>
+          </div>`}
 
-      <h2>How often to chase</h2>
-      <form method="post" action="/chase/cadence" class="inline">
-        <label>Do not write to the same client more often than every
-          <input name="days" type="number" min="0" max="${MAX_CADENCE_DAYS}" value="${cadenceDays}"
-            aria-label="Cadence in days" required> days</label>
-        <button type="submit">Save</button>
-      </form>
-      ${justSaved
-        ? html`<p class="success">Your cadence is now ${justSaved}
-            ${justSaved === '0' ? 'days — no limit' : `day${justSaved === '1' ? '' : 's'}`}.</p>`
-        : ''}
-      <p class="note"><strong>0 means no limit, and that is where this starts.</strong> How often it is
-      acceptable to chase a client is your judgement about your clients, not a number this should pick for
-      you — which is why there is no default. Any number of days holds a repeat back: even 1 day stops the
-      same client being written to twice in one afternoon, which is the accident worth preventing.
-      <strong>It applies to this page only.</strong> Opening one request and sending that reminder by hand
-      is never held back, because there you are looking at that client.</p>
+      <section class="card">
+        <h2>How often to chase</h2>
+        <form method="post" action="/chase/cadence" class="inline">
+          <label>Do not write to the same client more often than every
+            <input name="days" type="number" min="0" max="${MAX_CADENCE_DAYS}" value="${cadenceDays}"
+              aria-label="Cadence in days" required> days</label>
+          <button type="submit">Save</button>
+        </form>
+        ${justSaved
+          ? html`<p class="success">Your cadence is now ${justSaved}
+              ${justSaved === '0' ? 'days — no limit' : `day${justSaved === '1' ? '' : 's'}`}.</p>`
+          : ''}
+        <p class="note"><strong>0 means no limit, and that is where this starts.</strong> How often it is
+        acceptable to chase a client is your judgement about your clients, not a number this should pick for
+        you — which is why there is no default. Any number of days holds a repeat back: even 1 day stops the
+        same client being written to twice in one afternoon, which is the accident worth preventing.
+        <strong>It applies to this page only.</strong> Opening one request and sending that reminder by hand
+        is never held back, because there you are looking at that client.</p>
 
-      <p class="note">The run stops after ${Math.round(CHASE_BUDGET_MS / 60000)} minutes and reports where
-      it got to, so that a slow relay cannot leave half the messages sent with no record of which.
-      ${cadenceDays > 0
-        ? html`Clients inside your cadence are named in the report rather than dropped quietly.`
-        : html`<strong>With no cadence set, it has no memory of who it has already written to:</strong>
-            pressing the button twice reminds everyone still outstanding twice — which is why the last
-            column above is there, why each request keeps its own history, and why the setting above
-            exists.`}</p>
-      <p><a href="/requests">Back to the board</a></p>`,
+        <p class="note">The run stops after ${Math.round(CHASE_BUDGET_MS / 60000)} minutes and reports where
+        it got to, so that a slow relay cannot leave half the messages sent with no record of which.
+        ${cadenceDays > 0
+          ? html`Clients inside your cadence are named in the report rather than dropped quietly.`
+          : html`<strong>With no cadence set, it has no memory of who it has already written to:</strong>
+              pressing the button twice reminds everyone still outstanding twice — which is why the last
+              column above is there, why each request keeps its own history, and why the setting above
+              exists.`}</p>
+      </section>
+      <p class="note"><a href="/requests">Back to the board</a></p>`,
   }));
 }
 
@@ -1574,7 +3759,7 @@ async function sendAllReminders({ db, request, response, practitioner, practiceI
       for (const rest of sendable.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
       break;
     }
-    results.push(await sendOneReminder(db, row, origin, mailer));
+    results.push(await sendOneReminder(db, row, origin, mailer, practiceFor(db, practiceId).name));
   }
 
   return sendPage(
@@ -1592,7 +3777,7 @@ async function sendAllReminders({ db, request, response, practitioner, practiceI
 }
 
 /** One request's reminder, sent. Its own function so that the loop above reads as a loop. */
-async function sendOneReminder(db, row, origin, mailer) {
+async function sendOneReminder(db, row, origin, mailer, practiceName = null) {
   const token = newToken();
   issueToken(db, {
     requestId: row.id,
@@ -1600,7 +3785,7 @@ async function sendOneReminder(db, row, origin, mailer) {
     expiresAt: new Date(Date.now() + REMINDER_DAYS * 24 * 60 * 60 * 1000).toISOString(),
   });
 
-  const message = messageFor({ db, found: row, origin, token });
+  const message = messageFor({ db, found: row, origin, token, practiceName });
   const hasLink = /\/r\/[A-Za-z0-9_-]{20,}/.test(message.body);
 
   try {
@@ -1622,6 +3807,111 @@ async function sendOneReminder(db, row, origin, mailer) {
       detail: `to ${row.client_email} — ${error.message}`,
     });
     return { row, outcome: 'failed', to: row.client_email, reason: error.message };
+  }
+}
+
+/**
+ * The mail setup's test bench (see docs/mail.md).
+ *
+ * Setting a relay up is the one piece of onboarding that involves someone else's machine, and the
+ * failure modes — the password, the port, the firewall, the certificate — are exactly the things a
+ * non-technical operator cannot tell apart. So the page sends one real message the way a reminder is
+ * sent, and on a failure shows the relay's own reply next to one sentence that names which of those
+ * four it was. It changes nothing: no reminder is marked sent, no link is issued, nothing is recorded.
+ */
+function testEmailPage({ practitioner, mailer, error = null, sent = null, to = '' }) {
+  return page({
+    title: 'Test email',
+    practitioner,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <h1>Test the mail setup</h1>
+          <p class="sub">One real message through the same code a reminder uses, so a success here is a
+          relay a reminder will work with.</p>
+        </div>
+      </div>
+      ${mailer
+        ? html`<p class="info">Sending from <strong>${mailer.describe()}</strong>, as
+              <strong>${mailer.from}</strong>.</p>`
+        : html`<p class="warning"><strong>Sending is not configured.</strong> Set
+              <code>TICKMARK_SMTP_URL</code> and <code>TICKMARK_MAIL_FROM</code> (see
+              <code>docs/mail.md</code>) and restart. Until then Tickmark drafts reminders and does
+              not send them.</p>`}
+      ${error
+        ? html`<p class="error"><strong>Not sent.</strong> ${error.message}</p>
+            ${MAIL_STEP_ADVICE.find(([step]) => error.step.startsWith(step))?.[1]
+              ? html`<p class="note">${MAIL_STEP_ADVICE.find(([step]) => error.step.startsWith(step))[1]}</p>`
+              : ''}`
+        : ''}
+      ${sent
+        ? html`<p class="success"><strong>Sent.</strong> The relay accepted the message for
+              <strong>${sent.recipient}</strong> (<code>${sent.messageId}</code>). Acceptance is not
+              delivery — check that it arrived, and that it did not land in spam.</p>`
+        : ''}
+      ${mailer
+        ? html`<form method="post" action="/admin/test-email" class="card narrow">
+              <div class="field">
+                <label for="email">Send a test message to</label>
+                <input id="email" name="email" type="email" required value="${to}">
+              </div>
+              <button type="submit">Send the test message</button>
+            </form>
+            <p class="note">A plain-text message, sent through the same code a reminder uses — so a
+            success here is a relay a reminder will work with. A failure names the step that failed and
+            the relay's own reply, which is what says whether it is the address, the password, the port
+            or the firewall.</p>`
+        : ''}`,
+  });
+}
+
+/**
+ * One sentence per way the conversation can fail, matched by the step `sendMail` names.
+ *
+ * The SMTP reply itself is always shown too — `550 5.1.1 no such user` is quotable to a mail provider
+ * — because a canned sentence is a starting point and the server's words are the evidence.
+ */
+const MAIL_STEP_ADVICE = [
+  ['connection', 'The relay could not be reached. Check the host and the port, and whether a firewall is in the way — this is where a wrong port or a blocked one shows up.'],
+  ['timeout', 'The relay did not answer in time. Usually a wrong port, or a firewall that drops the connection rather than refusing it.'],
+  ['starttls', 'The encrypted connection failed. Usually a certificate this machine does not trust (see TICKMARK_SMTP_CA_FILE in docs/mail.md), or a TLS-only relay spoken to on the wrong port.'],
+  ['authentication', 'The relay refused the credentials — the username or the password is wrong, or the relay does not accept them.'],
+  ['configuration', 'The settings themselves are wrong — TICKMARK_SMTP_URL or TICKMARK_MAIL_FROM (see docs/mail.md), or the recipient address.'],
+  ['the server greeting', 'The relay answered, but not as an SMTP server. Check the host and port — this is what a web server or a firewall page looks like when an SMTP client dials it.'],
+];
+
+function testEmailForm({ response, practitioner, mailer }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  return sendPage(response, 200, testEmailPage({ practitioner, mailer }));
+}
+
+async function testEmailSend({ request, response, practitioner, mailer }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const to = field(fields, 'email') ?? '';
+
+  if (!mailer) {
+    return sendPage(response, 400, testEmailPage({ practitioner, mailer, to }));
+  }
+
+  try {
+    const sent = await sendMail(mailer, {
+      to,
+      subject: 'Tickmark test message',
+      body: [
+        'This is a test message from Tickmark, sent from the mail setup page.',
+        '',
+        `Relay: ${mailer.describe()}`,
+        '',
+        'If you are reading this, the relay accepted the message. Check that it arrived in the mailbox — acceptance is not delivery.',
+      ].join('\n'),
+    });
+    return sendPage(response, 200, testEmailPage({ practitioner, mailer, to, sent }));
+  } catch (error) {
+    // Anything that is not a MailError is a bug in this process, not in the relay — that one is
+    // worth a stack trace in the log rather than a sentence in the browser.
+    if (!(error instanceof MailError)) throw error;
+    return sendPage(response, 400, testEmailPage({ practitioner, mailer, to, error }));
   }
 }
 
@@ -1679,28 +3969,31 @@ function chaseReportPage({ practitioner, results, skipped, held = [], cadenceDay
             <a href="/chase">the chase list</a>.</p>`
         : ''}
       ${results.length + skipped.length + held.length === 0
-        ? html`<p>There was nothing to send.</p>`
-        : html`<table>
-            <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr></thead>
+        ? empty('There was nothing to send.', 'Nobody owed anything that this run could write to.')
+        : html`<div class="scroll"><table>
+            <colgroup><col style="width:22%"><col style="width:34%"><col style="width:44%"></colgroup>
+            <thead>
+              <tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr>
+            </thead>
             <tbody>
               ${results.map((entry) => html`<tr>
-                <td>${entry.row.client_name}</td>
+                <td><span class="cell-t">${entry.row.client_name}</span></td>
                 <td><a href="/requests/${entry.row.id}">${entry.row.title}</a></td>
                 <td>${outcomeOf(entry)}</td>
               </tr>`)}
               ${held.map((row) => html`<tr>
-                <td>${row.client_name}</td>
+                <td><span class="cell-t">${row.client_name}</span></td>
                 <td><a href="/requests/${row.id}">${row.title}</a></td>
-                <td><span class="note">held back by your cadence — reminded ${agoWords(row.lastRemindedAt, now())}</span></td>
+                <td>${badge(`held back by your cadence — reminded ${agoWords(row.lastRemindedAt, now())}`, TONES.waiting)}</td>
               </tr>`)}
               ${skipped.map((row) => html`<tr>
-                <td>${row.client_name}</td>
+                <td><span class="cell-t">${row.client_name}</span></td>
                 <td><a href="/requests/${row.id}">${row.title}</a></td>
-                <td><span class="note">no email address on this client</span></td>
+                <td>${badge('no email address on this client', TONES.wrong)}</td>
               </tr>`)}
             </tbody>
-          </table>`}
-      <p><a href="/requests">Back to the board</a> &middot; <a href="/chase">the chase list</a></p>`,
+          </table></div>`}
+      <p class="note"><a href="/requests">Back to the board</a> &middot; <a href="/chase">the chase list</a></p>`,
   });
 }
 
@@ -1927,6 +4220,11 @@ const ITEM_ACTIONS = {
     setItemAttention(db, practiceId, requestId, itemId, { note }),
   'clear-attention': ({ db, practiceId, requestId, itemId }) =>
     clearItemAttention(db, practiceId, requestId, itemId),
+  'relabel': ({ db, practiceId, requestId, itemId, fields }) =>
+    setItemLabel(db, practiceId, requestId, itemId, {
+      label: field(fields, 'label') ?? '',
+      note: field(fields, 'note') ?? '',
+    }),
   // The practice saying "I have looked at this", and taking it back. Both are recorded, because the
   // second is how a mistake gets corrected and the history should show that it was.
   check: ({ db, practiceId, requestId, itemId }) =>
@@ -1948,7 +4246,14 @@ async function changeItemPage({ db, request, response, practitioner, params, pra
   }
 
   const fields = formFields(await readBody(request));
-  const changed = change({ db, practiceId, requestId, itemId, note: field(fields, 'attention_note') });
+  const changed = change({
+    db,
+    practiceId,
+    requestId,
+    itemId,
+    fields,
+    note: field(fields, 'attention_note'),
+  });
   if (!changed) {
     return fail(
       response,
@@ -1964,11 +4269,12 @@ async function changeItemPage({ db, request, response, practitioner, params, pra
  * The client's page. No account, no session — the token in the path is the whole of the
  * authorization, which is why it is 256 random bits and why only its digest is stored.
  */
-function clientPage({ db, response, params }) {
+function clientPage({ db, response, params, maxUploadBytes }) {
   const found = tokenLookup(db, params[0]);
 
   if (found.state === 'expired') {
     return sendPage(response, 410, page({
+      signIn: false,
       title: 'This link has expired',
       body: html`<h1>This link has expired</h1>
         <p>Ask the practice to send a new one — they can make one in a moment.</p>`,
@@ -1976,6 +4282,7 @@ function clientPage({ db, response, params }) {
   }
   if (found.state === 'revoked') {
     return sendPage(response, 410, page({
+      signIn: false,
       title: 'This link has been cancelled',
       body: html`<h1>This link has been cancelled</h1>
         <p>Ask whoever sent it to you for a new one.</p>`,
@@ -1983,6 +4290,7 @@ function clientPage({ db, response, params }) {
   }
   if (found.state === 'unknown') {
     return sendPage(response, 404, page({
+      signIn: false,
       title: 'No such link',
       body: html`<h1>No such link</h1>
         <p>Check the address you were sent: it may have wrapped across two lines in an
@@ -1991,13 +4299,30 @@ function clientPage({ db, response, params }) {
   }
 
   const open = found.request;
+  // Who is asking. A client who has never heard of Tickmark and has just been emailed a link by an unknown
+  // address needs the practice's name in front of them before the list — otherwise the page they land on
+  // says "Documents requested" and never says by whom, which is exactly what a phishing page says.
+  const practice = practiceFor(db, open.practice_id);
   // Withdrawn items are not asked for. They stay visible to the practice — the request page shows them
   // — but a client asked again for something the practice has stopped wanting is a client who stops
   // trusting the list.
   const items = itemsOf(db, open.id).filter((item) => !item.withdrawn);
 
+  // What the client has already sent, by name and date. This is a **receipt**, and it is here because of
+  // the question it answers: "did you get it?" is the phone call this page exists to prevent, and the
+  // person best placed to answer it is the one holding the link. They chose the filenames, so showing
+  // them back is not a disclosure — it is their own message returning to them.
+  const sent = new Map();
+  for (const upload of uploadsOf(db, open.id)) {
+    const list = sent.get(upload.request_item_id) ?? [];
+    list.push(upload);
+    sent.set(upload.request_item_id, list);
+  }
+  const received = items.filter((item) => (sent.get(item.id) ?? []).length > 0).length;
+
   if (!open.practice_public_key) {
     return sendPage(response, 503, page({
+      signIn: false,
       title: 'This link is not ready',
       body: html`<h1>This link is not ready</h1>
         <p>The practice has not finished setting up its encryption key, so there is nothing to
@@ -2006,52 +4331,76 @@ function clientPage({ db, response, params }) {
   }
 
   const rows = items.map((item) => html`<tr>
-    <td>${item.label}${item.note ? html`<br><span class="note">${item.note}</span>` : ''}</td>
+    <td>
+      <span class="cell-t">${item.label}</span>
+      ${item.note ? html`<span class="cell-s">${item.note}</span>` : ''}
+      ${(sent.get(item.id) ?? []).map((upload) => html`<span class="cell-s">you sent
+        <strong>${upload.filename}</strong> on ${dateIn(practice?.timezone, new Date(upload.uploaded_at))}</span>`)}
+    </td>
     <td>${item.needsAttention
-      ? html`<strong>please send this again</strong>${item.attentionNote ? html`<br><span class="note">${item.attentionNote}</span>` : ''}`
-      : item.received
-        ? html`<strong>received</strong>`
+      ? html`${badge('please send this again', TONES.wrong)}${item.attentionNote ? html`<span class="cell-s">${item.attentionNote}</span>` : ''}`
+      : (sent.get(item.id) ?? []).length > 0
+        ? badge('received', TONES.done)
         : item.clientSays
-          ? html`<strong>you said:</strong> <span class="note">${item.clientSays}</span>`
-          : 'still needed'}</td>
+          ? html`${badge('you said:', TONES.waiting)}<span class="cell-s">${item.clientSays}</span>`
+          : badge('still needed', TONES.waiting)}</td>
     <td>
       <form class="upload" method="post" action="/r/${params[0]}/items/${item.id}">
         <input type="file" name="file" required>
         <input type="text" name="note" placeholder="anything we should know? (optional)" maxlength="500">
-        <button type="submit">Send</button>
-        <div class="status note"></div>
+        <div class="row">
+          <button type="submit">Send</button>
+          <span class="status"></span>
+        </div>
       </form>
       ${item.received
         ? ''
-        : html`<form method="post" action="/r/${params[0]}/items/${item.id}/says" class="inline">
+        : html`<form method="post" action="/r/${params[0]}/items/${item.id}/says" class="inline says">
             ${Object.entries(CLIENT_SAYS).map(([value, words]) => html`
-              <button type="submit" name="says" value="${value}">${words}</button> `)}
+              <button type="submit" name="says" value="${value}" class="ghost sm">${words}</button>`)}
           </form>`}
     </td>
   </tr>`);
 
   return sendPage(response, 200, page({
-    title: open.title,
+    title: `${practice?.name ?? 'Documents requested'} — ${open.title}`,
+    // No sign-in link: a client has no account, and offering one is offering a door that is not
+    // theirs. The practice's pages keep their own header, because there the link is the point.
+    signIn: false,
     banner: html`<p class="note"><strong>What you send is encrypted in this browser before it
       leaves it.</strong> Only the practice can open it. What the server can still see is the
       name of the file, which document it answers, and when it arrived — so name files the way
       you would name an envelope, not the way you would name a letter.</p>`,
     body: html`
-      <h1>${open.title}</h1>
-      <p>${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
-      <table>
-        <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <p class="note">If you cannot send one of these, say so with the buttons beside it — the practice
-      would rather know than keep asking. Neither button takes it off the list; that is their call.</p>
-      ${items.length === 0
-        ? html`<p>Nothing is being asked of you at the moment. Add the practice's address to your
-            contacts, in case they ask for something later.</p>`
-        : ''}
-      <p class="note">Nothing here needs an account. Come back to this page with the same
-      link to send the rest — the list shows what has already arrived.</p>
+      <div class="client">
+        <p class="eyebrow">${practice?.name ?? 'Documents requested'}</p>
+        <h1>${open.title}</h1>
+        <p class="who">${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
+        ${open.client_note ? html`<div class="greeting">${open.client_note}</div>` : ''}
+        ${items.length === 0
+          ? ''
+          : received === items.length
+            ? html`<p class="success"><strong>Thank you — everything asked for has arrived.</strong>
+                ${items.length === 1 ? 'The document you sent is' : `All ${items.length} documents are`}
+                with the practice. If they need anything else they will be in touch, and this page stays
+                here if you want to check what you sent.</p>`
+            : html`<p class="count">You have sent ${received} of ${items.length}
+                ${items.length === 1 ? 'document' : 'documents'}.</p>`}
+        <div class="scroll"><table>
+          <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        <p class="note">If you cannot send one of these, say so with the buttons beside it — the practice
+        would rather know than keep asking. Neither button takes it off the list; that is their call.</p>
+        ${items.length === 0
+          ? html`<p>Nothing is being asked of you at the moment. Add the practice's address to your
+              contacts, in case they ask for something later.</p>`
+          : ''}
+        <p class="note">Nothing here needs an account. Come back to this page with the same
+        link to send the rest — the list shows what has already arrived.</p>
+      </div>
       ${jsonTag('practice-key', { keyId: open.practice_key_id, publicKey: JSON.parse(open.practice_public_key) })}
+      ${jsonTag('upload-limit', { maxBytes: maxUploadBytes })}
       ${raw('<script type="module" src="/assets/upload.js"></script>')}`,
   }));
 }
@@ -2063,7 +4412,7 @@ function clientPage({ db, response, params }) {
  * will send this later". The item stays on the list either way — whether to stop asking is the
  * practice's decision — and the client can take it back by saying nothing again.
  */
-async function clientSays({ db, request, response, params }) {
+async function clientSays({ db, request, response, params, mailer }) {
   const [token, itemId] = params;
   const found = tokenLookup(db, token);
   if (found.state !== 'open') {
@@ -2083,7 +4432,21 @@ async function clientSays({ db, request, response, params }) {
   // stuck on the practice's list with no way to withdraw it from the side that said it.
   const same = item.client_says === CLIENT_SAYS[asked];
   setClientSays(db, found.request.practice_id, found.request.id, itemId, same ? null : CLIENT_SAYS[asked]);
-  return redirect(response, `/r/${token}`);
+  redirect(response, `/r/${token}`);
+
+  // After the client has their answer back, and never before it — the same rule as an upload, for the same
+  // reason. Clearing an answer ("actually, I will send it") is as much news as giving one, so both notify: the
+  // practice needs to know the document is coming, not that their last reminder is still standing.
+  //
+  // No event is recorded for the client's words here: `setClientSays` already writes `item.client-said` or
+  // `item.client-said-cleared`, so the record is the client's sentence and this is only the practice being told
+  // about it. Two events for one action would be one event too many.
+  await notifyPracticeOfChange({
+    db,
+    requestRow: found.request,
+    mailer,
+    origin: originOf(request),
+  });
 }
 
 /**
@@ -2095,7 +4458,7 @@ async function clientSays({ db, request, response, params }) {
  * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
  * starts joining the filename into a path.
  */
-async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes }) {
+async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, mailer }) {
   const [token, itemId] = params;
   const found = tokenLookup(db, token);
   if (found.state !== 'open') {
@@ -2173,9 +4536,18 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     at: now(),
   });
 
-  return sendJson(response, 201, { ok: true, received: item.label, bytes: body.length, envelope: ENVELOPE_VERSION });
-}
+  sendJson(response, 201, { ok: true, received: item.label, bytes: body.length, envelope: ENVELOPE_VERSION });
 
+  // After the client has their answer, and never before it. Awaiting this here would put the practice's mail
+  // server in the path of somebody else's upload: a relay that has gone quiet would turn a client's successful
+  // file into a spinner, and a relay that refuses would turn it into an error that is not their fault.
+  await notifyPracticeOfChange({
+    db,
+    requestRow: found.request,
+    mailer,
+    origin: originOf(request),
+  });
+}
 // ---------------------------------------------------------------------------------
 // The practice's key
 // ---------------------------------------------------------------------------------
@@ -2223,7 +4595,7 @@ function keyProblem(publicKeyJson, wrapped) {
   return publicKeyProblem(publicKeyJson) ?? wrappedKeyProblem(wrapped);
 }
 
-function setupForm({ db, response, practitioner }) {
+function setupForm({ db, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const existing = practiceKeys(db, practiceId, practitioner.id);
   const first = existing.length === 0;
@@ -2231,11 +4603,22 @@ function setupForm({ db, response, practitioner }) {
     title: first ? 'Set up encryption' : 'Add a new key',
     practitioner,
     body: html`
-      <h1>${first ? 'One passphrase, and then clients can send you files' : 'A new key, for files that arrive from now on'}</h1>
-      <p>Tickmark makes a key pair in this browser. The public half is kept here; the private half
-      never leaves your browser except wrapped under a passphrase, which is never sent either. That
-      is what makes the promise real rather than polite: whoever runs this server — including you —
-      can hold a client's documents without being able to read them.</p>
+      <div class="hero">
+        <p class="eyebrow">${first ? 'Step one of one' : 'Keys'}</p>
+        <h1>${first ? 'One passphrase, and then clients can send you files' : 'A new key, for files that arrive from now on'}</h1>
+        <p class="lead">Tickmark makes a key pair in this browser. The public half is kept here; the private half
+        never leaves your browser except wrapped under a passphrase, which is never sent either. That
+        is what makes the promise real rather than polite: whoever runs this server — including you —
+        can hold a client's documents without being able to read them.</p>
+      </div>
+      ${first
+        ? html`<div class="danger">
+              <p><strong>WARNING: Tickmark uses zero-knowledge encryption. If you lose this
+              passphrase, your saved documents cannot be recovered by anyone.</strong></p>
+              <p>Please save it immediately in a secure password manager (e.g., 1Password,
+              Bitwarden).</p>
+            </div>`
+        : ''}
       ${first
         ? ''
         : html`<p class="warning"><strong>A new key does not re-encrypt anything.</strong> Files your
@@ -2243,15 +4626,25 @@ function setupForm({ db, response, practitioner }) {
             being able to open them. A new key changes what happens to the <em>next</em> file — so it
             is the right response to a key being exposed, and it is not an undo for a copy somebody
             has already taken.</p>`}
-      <form id="setup" method="post" action="/setup">
-        <label for="passphrase">Passphrase</label>
-        <input id="passphrase" name="passphrase" type="password" required autocomplete="new-password">
-        <label for="again">The same passphrase again</label>
-        <input id="again" name="again" type="password" required autocomplete="new-password">
-        <button type="submit">Make the key</button>
+      <form id="setup" method="post" action="/setup" class="card narrow">
+        <div class="field">
+          <label for="passphrase">Passphrase</label>
+          <input id="passphrase" name="passphrase" type="password" required autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="again">The same passphrase again</label>
+          <input id="again" name="again" type="password" required autocomplete="new-password">
+        </div>
+        ${first
+          ? html`<label for="saved-passphrase" class="check">
+              <input id="saved-passphrase" type="checkbox">
+              <span>I have saved this passphrase in a secure password manager (or somewhere else safe).</span>
+            </label>`
+          : ''}
+        <button type="submit" ${first ? 'disabled' : ''}>Make the key</button>
         <div class="status note"></div>
       </form>
-      <p class="warning"><strong>Nothing can recover this passphrase and nothing can reset it.</strong>
+      <p class="note">Nothing can recover this passphrase and nothing can reset it.
       If you lose it, the files clients send you become unreadable — by you, by anyone. Write it
       down somewhere that is not this server.</p>
       ${raw('<script type="module" src="/assets/setup.js"></script>')}`,
@@ -2291,7 +4684,7 @@ async function saveKeys({ db, request, response, practitioner, practiceId }) {
  * returns a token rather than by a form post that returns a page — the secret has to stay in the page
  * that generated it, and a navigation would throw it away.
  */
-function membersPage({ db, response, practitioner, practiceId, url }) {
+function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const members = membersOf(db, practiceId);
@@ -2303,41 +4696,76 @@ function membersPage({ db, response, practitioner, practiceId, url }) {
   const holders = newest ? new Set(wrappingHoldersOf(db, newest.id)) : new Set();
   const practice = practiceFor(db, practiceId);
   const justRemoved = url.searchParams.get('removed');
+  const saved = url.searchParams.get('saved');
 
   return sendPage(response, 200, page({
     title: 'Members',
     practitioner,
+    here: '/members',
     banner: justRemoved
       ? html`<p class="warning"><strong>${justRemoved} was removed.</strong> Their key copies are gone and
           their sessions have ended, so they cannot sign in again. Anything they already downloaded is
           still theirs — removal changes what happens next, not what has already happened.</p>`
-      : null,
+      : saved === 'notify'
+        ? html`<p class="success">Saved. ${practice.notifyOnUpload
+            ? html`You will be told when a client sends something.`
+            : html`You will not be emailed about what clients send. The board still shows it, of course.`}</p>`
+        : null,
     body: html`
-      <h1>${practice.name}</h1>
-      <p class="note">${members.length === 1 ? 'One person' : `${members.length} people`} in this practice.
-        The name is yours to change — it is the first thing a new member sees.</p>
-      <form method="post" action="/members/name" class="inline">
-        <input name="name" value="${practice.name}" maxlength="${MAX_PRACTICE_NAME}"
-          aria-label="Practice name" required>
-        <button type="submit">Rename</button>
+      <div class="page-head">
+        <div class="titles">
+          <h1>${practice.name}</h1>
+          <p class="sub">${members.length === 1 ? 'One person' : `${members.length} people`} in this practice.
+            The name is yours to change — it is the first thing a new member sees.</p>
+        </div>
+        <div class="do">
+          <form method="post" action="/members/name" class="inline">
+            <input name="name" value="${practice.name}" maxlength="${MAX_PRACTICE_NAME}"
+              aria-label="Practice name" required>
+            <select name="timezone" aria-label="Where the practice is">
+              <option value="">UTC${practice.timezone ? '' : ' (current)'}</option>
+              ${COMMON_ZONES.map((zone) => html`<option value="${zone}"${practice.timezone === zone ? ' selected' : ''}>${zone}</option>`)}
+            </select>
+            <button type="submit">Save</button>
+          </form>
+        </div>
+      </div>
+      <p class="note">The name is what a client sees on every letter and on the page they upload to. The zone is
+      where the practice is, and it decides one thing: whether a request is overdue yet. Everything stored is
+      in UTC; this is the calendar those dates are read on.</p>
+      <form method="post" action="/members/notify" class="card">
+        <label class="check">
+          <input type="checkbox" name="notify" value="1"${practice.notifyOnUpload ? raw(' checked') : ''}>
+          <span><strong>Email me when a client sends something</strong></span>
+        </label>
+        <p class="note">One message per request per day, at most, to whoever made the request — what arrived, what
+        has not, and whether anything needs sending again. ${mailer
+          ? ''
+          : html`<strong>This installation has no mail server configured, so nothing can be sent until one is.</strong> `}
+        The message names the documents, never the filenames: an email is a copy that leaves the building, and the
+        request page shows the real names.</p>
+        <div class="actions"><button type="submit">Save</button></div>
       </form>
-      <table>
-        <thead><tr><th>Email</th><th>Joined</th><th>Can open the newest files?</th><th></th></tr></thead>
+      <div class="scroll"><table class="members">
+        <colgroup><col style="width:34%"><col style="width:14%"><col style="width:34%"><col style="width:18%"></colgroup>
+        <thead>
+          <tr><th align="left">Email</th><th align="left">Joined</th><th align="left">Can open the newest files?</th><th align="left"></th></tr>
+        </thead>
         <tbody>
           ${members.map((person) => html`<tr>
-            <td>${person.email}${person.id === practitioner.id ? html` <span class="note">(you)</span>` : ''}</td>
-            <td>${person.created_at.slice(0, 10)}</td>
+            <td><span class="cell-t">${person.email}</span>${person.id === practitioner.id ? html`<span class="cell-s">you</span>` : ''}</td>
+            <td><span class="muted">${person.created_at.slice(0, 10)}</span></td>
             <td>${newest
               ? holders.has(person.id)
-                ? html`yes`
-                : html`<span class="warning">no — they hold no copy of the newest key</span>`
-              : html`<span class="note">this practice has no key yet</span>`}</td>
+                ? badge('yes', TONES.done)
+                : badge('no — they hold no copy of the newest key', TONES.wrong)
+              : html`<span class="muted">this practice has no key yet</span>`}</td>
             <td>${person.id === practitioner.id
-              ? html`<span class="note">you cannot remove yourself</span>`
+              ? html`<span class="muted">you cannot remove yourself</span>`
               : html`<a href="/members/${person.id}/remove">Remove</a>`}</td>
           </tr>`)}
         </tbody>
-      </table>
+      </table></div>
       <p class="note">Removing somebody ends their access from then on. It does not take back a key they
         already have, and it does not change anything they have already downloaded — the page that asks
         says so in full before it does anything.</p>
@@ -2347,30 +4775,39 @@ function membersPage({ db, response, practitioner, practiceId, url }) {
         : html`<h2>Removed</h2>
             <p class="note">No longer members. Their names stay in the records, because the requests they
               made and the files they uploaded say who did what. Someone still here can invite them back.</p>
-            <table>
-              <thead><tr><th>Email</th><th>Joined</th><th>Removed</th></tr></thead>
+            <h2>Removed</h2>
+            <p class="note">No longer members. Their names stay in the records, because the requests they
+              made and the files they uploaded say who did what. Someone still here can invite them back.</p>
+            <div class="scroll"><table>
+              <thead><tr><th align="left">Email</th><th align="left">Joined</th><th align="left">Removed</th></tr></thead>
               <tbody>
                 ${removed.map((person) => html`<tr>
-                  <td>${person.email}</td>
-                  <td>${person.created_at.slice(0, 10)}</td>
-                  <td>${person.removed_at.slice(0, 10)}</td>
+                  <td><span class="cell-t">${person.email}</span></td>
+                  <td><span class="muted">${person.created_at.slice(0, 10)}</span></td>
+                  <td><span class="muted">${person.removed_at.slice(0, 10)}</span></td>
                 </tr>`)}
               </tbody>
-            </table>`}
+            </table></div>`}
 
       ${!newest
-        ? html`<p class="note">This practice has no key, so there is nothing to invite anyone to.
-            <a href="/setup">Make one first</a>.</p>`
+        ? html`<section class="card">
+            <h2>Invite someone</h2>
+            <p class="note">This practice has no key, so there is nothing to invite anyone to.
+              <a href="/setup">Make one first</a>.</p>
+          </section>`
         : !mine
-          ? html`<p class="warning">You hold no copy of this practice's newest key, so you cannot invite
-              anyone — an invitation carries a copy of <em>your</em> key, and handing over something you
-              cannot read would be a strange thing to do. Someone who does hold a copy can invite you.</p>`
-          : html`
+          ? html`<section class="card">
+              <h2>Invite someone</h2>
+              <p class="warning">You hold no copy of this practice's newest key, so you cannot invite
+                anyone — an invitation carries a copy of <em>your</em> key, and handing over something you
+                cannot read would be a strange thing to do. Someone who does hold a copy can invite you.</p>
+            </section>`
+          : html`<section class="card">
             <h2>Invite someone</h2>
             <p class="warning"><strong>Whoever opens the link gets the key.</strong> It is not addressed to
               a particular person, it works once, and it stops working after ${INVITE_DAYS} days. Send it
               the way you would send a password, not the way you would send a link.</p>
-            <form id="invite-form">
+            <form id="invite-form" class="inline">
               <label for="passphrase">Your passphrase <span class="note">used in this browser, sent nowhere</span></label>
               <input id="passphrase" name="passphrase" type="password" autocomplete="current-password">
               <button type="submit">Create an invitation</button>
@@ -2378,21 +4815,23 @@ function membersPage({ db, response, practitioner, practiceId, url }) {
             <p class="status" id="invite-status"></p>
             <p id="invite-link" hidden></p>
             <script type="application/json" id="invite-key">${raw(JSON.stringify({ keyId: newest.id, wrapped: mine }))}</script>
-            ${raw('<script type="module" src="/assets/members.js"></script>')}`}
+            ${raw('<script type="module" src="/assets/members.js"></script>')}
+          </section>`}
 
       ${invites.length > 0
-        ? html`<h2>Invitations</h2>
-            <table>
-              <thead><tr><th>Sent by</th><th>When</th><th>Outcome</th></tr></thead>
+        ? html`<section class="card">
+            <h2>Invitations</h2>
+            <div class="scroll"><table>
+              <thead><tr><th align="left">Sent by</th><th align="left">When</th><th align="left">Outcome</th></tr></thead>
               <tbody>
                 ${invites.map((row) => html`<tr>
-                  <td>${row.created_by_email}</td>
-                  <td>${row.created_at.slice(0, 10)}</td>
+                  <td><span class="cell-t">${row.created_by_email}</span></td>
+                  <td><span class="muted">${row.created_at.slice(0, 10)}</span></td>
                   <td>${row.used_at
                     ? html`accepted by ${row.used_by_email} on ${row.used_at.slice(0, 10)}`
                     : row.expires_at <= new Date().toISOString()
-                      ? html`<span class="note">expired, and was never accepted</span>`
-                      : html`<span class="note">not accepted yet</span>`}</td>
+                      ? html`${badge('expired, and was never accepted', TONES.done_for)}`
+                      : html`${badge('not accepted yet', TONES.waiting)}`}</td>
                 </tr>`)}
               </tbody>
             </table>`
@@ -2660,10 +5099,19 @@ function removeMemberAction({ db, response, practitioner, practiceId, params }) 
   return redirect(response, `/members?removed=${encodeURIComponent(result.email)}`);
 }
 
+/** The practice's decision about being told when a client sends something. */
+async function setNotifyPage({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  setPracticeNotify(db, practiceId, field(fields, 'notify') === '1');
+  return redirect(response, '/members?saved=notify');
+}
+
 async function renamePracticePage({ db, request, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const name = (field(fields, 'name') ?? '').trim();
+  const timezone = field(fields, 'timezone');
 
   if (name.length === 0) {
     return fail(response, 400, 'A practice needs a name. It can be anything — it is only shown to you and to the people you invite.', practitioner);
@@ -2672,7 +5120,15 @@ async function renamePracticePage({ db, request, response, practitioner, practic
     return fail(response, 400, `That name is longer than ${MAX_PRACTICE_NAME} characters, which is more than a heading can hold.`, practitioner);
   }
 
+  // The zone is refused rather than silently ignored, because a practice that picks a zone and finds their
+  // overdue dates unchanged has no way to tell whether it was saved. The form offers a list; this catches a
+  // hand-posted value, and the fallback in `clock.js` stays the safety net it was meant to be.
+  if (timezone !== undefined && !knownZone(timezone)) {
+    return fail(response, 400, `"${timezone}" is not a time zone this server knows. Pick one from the list.`, practitioner);
+  }
+
   renamePractice(db, practiceId, name);
+  if (timezone !== undefined) setPracticeTimezone(db, practiceId, timezone);
   return redirect(response, '/members');
 }
 
@@ -2696,7 +5152,7 @@ function keysPage({ db, response, practitioner, practiceId, url }) {
    */
   const retiredRows = retired.map((key) => html`<tr>
     <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
-    <td>retired ${(key.deletedAt ?? '').slice(0, 10)} — its copies were destroyed, so it opens nothing</td>
+    <td>${badge('retired', TONES.done_for)} ${(key.deletedAt ?? '').slice(0, 10)} — its copies were destroyed, so it opens nothing</td>
   </tr>`);
 
   const rows = live.map((key) => {
@@ -2704,8 +5160,8 @@ function keysPage({ db, response, practitioner, practiceId, url }) {
     return html`<tr>
       <td>${key.createdAt.slice(0, 19).replace('T', ' ')}</td>
       <td>${key === current
-        ? html`<strong>current</strong> — new files are encrypted to this one`
-        : 'older — opens the files sent while it was current'}</td>
+        ? html`${badge(html`<strong>current</strong>`, TONES.done)} new files are encrypted to this one`
+        : html`<span class="muted">older — opens the files sent while it was current</span>`}</td>
       <td>${holds}</td>
       <td>
         <form class="passphrase" data-key-id="${key.id}" method="post" action="/keys/${key.id}/passphrase">
@@ -2737,6 +5193,7 @@ function keysPage({ db, response, practitioner, practiceId, url }) {
   return sendPage(response, 200, page({
     title: 'Keys',
     practitioner,
+    here: '/keys',
     banner: live.length === 0
       ? html`<p class="warning">This practice has no key yet, so it cannot be sent files.
           <a href="/setup">Make one</a>.</p>`
@@ -2746,13 +5203,31 @@ function keysPage({ db, response, practitioner, practiceId, url }) {
             you kept or backed up cannot be opened any more.</p>`
         : null,
     body: html`
-      <h1>Keys</h1>
+      <div class="page-head">
+        <div class="titles">
+          <h1>Keys</h1>
+          <p class="sub">Every file a client sends is sealed to one of these, in the client's own
+          browser. The server holds the wrapped copies and can open none of them.</p>
+        </div>
+        <div class="do">
+          <a class="btn" href="/setup">Make a new key</a>
+        </div>
+      </div>
       ${live.length === 0
-        ? ''
-        : html`<table>
-            <thead><tr><th align="left">Made</th><th align="left">What it is for</th><th align="left">Files</th><th align="left">Passphrase</th></tr></thead>
+        ? html`<p class="info">There is no key yet. <a href="/setup">Make one</a> and clients can start
+            sending.</p>`
+        : html`<div class="scroll"><table class="keys">
+            <colgroup><col style="width:15%"><col style="width:21%"><col style="width:9%"><col style="width:55%"></colgroup>
+            <thead>
+              <tr>
+                <th align="left">Made</th>
+                <th align="left">What it is for</th>
+                <th align="left">Files</th>
+                <th align="left">Passphrase</th>
+              </tr>
+            </thead>
             <tbody>${rows}</tbody>
-          </table>`}
+          </table></div>`}
       ${unaccounted > 0
         ? html`<p class="note">${unaccounted} file${unaccounted === 1 ? '' : 's'} arrived before Tickmark
             recorded which key was used, so which key opens ${unaccounted === 1 ? 'it' : 'them'} is not written
@@ -2760,27 +5235,32 @@ function keysPage({ db, response, practitioner, practiceId, url }) {
             means those files are not counted in the column above, and <strong>moving files to a new key
             cannot touch them</strong>, because the pass works from that count.</p>`
         : ''}
-      <p class="note"><strong>Moving files to a new key is what makes an old key retirable.</strong> This
-      browser fetches each file, opens it with the old key's passphrase, seals it to the current key, and
-      checks the round trip before anything is replaced — the server only ever handles bytes it cannot read.
-      If you close this page halfway through, nothing is lost: a file that has been moved is no longer sealed
-      to the old key, so the count above <em>is</em> the progress, and pressing the button again carries on
-      from where it stopped.</p>
-      <p class="note"><strong>Retiring a key cannot be undone, and it reaches further than this server.</strong>
-      It destroys the practice's copies, so the files here are fine once they have been moved — but
-      <em>any copy of a file still on the old key that you have kept or backed up</em> becomes unopenable,
-      because the key that opened it will not exist. Move everything first, then retire.</p>
-      <p><a href="/setup">Make a new key</a> — for files that arrive from now on. The ones you have
-      keep working.</p>
-      <p class="note">Changing a passphrase does not change the key, so nothing has to be
-      re-encrypted and no file becomes unopenable. Store the new one somewhere that is not this
-      server: a copy of a key without its passphrase is a file nobody can open.</p>
+      <section class="card">
+        <h2>Retiring an old key</h2>
+        <p class="note"><strong>Moving files to a new key is what makes an old key retirable.</strong> This
+        browser fetches each file, opens it with the old key's passphrase, seals it to the current key, and
+        checks the round trip before anything is replaced — the server only ever handles bytes it cannot read.
+        If you close this page halfway through, nothing is lost: a file that has been moved is no longer sealed
+        to the old key, so the count above <em>is</em> the progress, and pressing the button again carries on
+        from where it stopped.</p>
+        <p class="note"><strong>Retiring a key cannot be undone, and it reaches further than this server.</strong>
+        It destroys the practice's copies, so the files here are fine once they have been moved — but
+        <em>any copy of a file still on the old key that you have kept or backed up</em> becomes unopenable,
+        because the key that opened it will not exist. Move everything first, then retire.</p>
+        <p class="note">Changing a passphrase does not change the key, so nothing has to be
+        re-encrypted and no file becomes unopenable. Store the new one somewhere that is not this
+        server: a copy of a key without its passphrase is a file nobody can open.</p>
+      </section>
       ${retired.length > 0
-        ? html`<h2>Retired keys</h2>
-            <table><thead><tr><th align="left">Made</th><th align="left">What became of it</th></tr></thead>
-            <tbody>${retiredRows}</tbody></table>
+        ? html`<section class="card">
+            <h2>Retired keys</h2>
+            <div class="scroll"><table>
+              <thead><tr><th align="left">Made</th><th align="left">What became of it</th></tr></thead>
+              <tbody>${retiredRows}</tbody>
+            </table></div>
             <p class="note">Kept as a record rather than deleted: a key that vanished would take with it the
-            only evidence of what it opened.</p>`
+            only evidence of what it opened.</p>
+          </section>`
         : ''}
       ${live.length > 0
         ? jsonTag('key-records', {

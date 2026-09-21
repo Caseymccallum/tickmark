@@ -63,19 +63,23 @@ Suralink — and what they have that Tickmark does not:
 
 | Capability | Evidence | Tickmark |
 | --- | --- | --- |
-| **A review state** — "outstanding, in-review, completed" per client | Infile's own feature list | **No.** An item is received or it is not. Nothing says whether anybody has *looked*. |
-| **A ready-to-work signal** per client | Chronexa: "flip to ready when the document set is complete" | **No.** |
-| **Bulk send** — "the same organizer to your entire client list in one action" | Infile; and "breaks down past 50 clients" | **No.** One request at a time. |
-| **Templates and recurrence** — "monthly or quarterly cycles without rebuilding" | Infile | **No.** Every request is built from nothing. |
-| **Prior-year carry-forward** — "returning clients confirm, not retype" | Tidyflow | **No.** |
-| **The client can say why** — "Nothing to upload" / "I'll send this later" | Tidyflow | **No.** A client can send a file or say nothing. |
-| **Due dates surfaced**, overdue visible | Conto: "set hard internal deadlines, start in January not March" | **Partly.** A due date is stored and shown; nothing is ever overdue. |
+| **A review state** — "outstanding, in-review, completed" per client | Infile's own feature list | **Yes** (2c). An item is received *and* checked, and those are different words on screen. |
+| **A ready-to-work signal** per client | Chronexa: "flip to ready when the document set is complete" | **Yes** (2c). A request is *waiting*, *to check*, or *ready*, computed rather than stored. |
+| **Bulk send** — "the same organizer to your entire client list in one action" | Infile; and "breaks down past 50 clients" | **Yes** (2r). One list, one deadline, one action: a request per client, each with its own link, with a report naming every outcome. |
+| **Templates and recurrence** — "monthly or quarterly cycles without rebuilding" | Infile | **Templates, yes** (2q) — a named checklist kept and edited. **Recurrence, no** — but the *question it was standing in for* is answered: the clients page names who is due an ask (2u), and *ask everyone* makes the seasonal send one action. |
+| **Prior-year carry-forward** — "returning clients confirm, not retype" | Tidyflow | **Yes** (2i). A client's page offers last year's list; `?like=last` fills the form. |
+| **The client can say why** — "Nothing to upload" / "I'll send this later" | Tidyflow | **Yes** (2e). Two buttons, and the reason is recorded against the item. |
+| **Due dates surfaced**, overdue visible | Conto: "set hard internal deadlines, start in January not March" | **Yes** (2d, 2p). A due date is shown, overdue is computed on the practice's own calendar, and undated requests sort last. |
 | Passwordless client link; no account for the client | universal | **Yes** |
 | Encrypted so the operator cannot read it | **nobody in this set** | **Yes — the only row where Tickmark leads** |
+| Encrypted so the operator cannot read it | **nobody in this set** | **Yes — the only row where Tickmark leads** |
 
-That last row is worth pausing on. Every capability Tickmark lacks is a workflow feature; the one thing
-it has that none of them have is the one they cannot buy, because their architecture is a server that
-reads your clients' files.
+**Updated after Phase 2.** Every row above except recurrence is now built, and the reasons are in
+`docs/roadmap.md` under the phase that built it. The paragraph that used to follow this table said that every
+capability Tickmark lacked was a workflow feature and the one it had was the one nobody could buy; that is no
+longer true, and it is worth saying plainly rather than leaving a sentence that flatters the product standing
+next to a table that no longer supports it. It now does both — which is the position a product wants to be in,
+and it is the point at which "we have something they cannot copy" stops being a reason on its own.
 
 ## What this makes the product
 
@@ -112,12 +116,60 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   write to the same client again, defaulting to none. The design decision is the point — the number is the
   firm's, not this software's — and clients the cadence holds back are named in the report rather than
   dropped quietly.
+- **Clients as records** (2i, `docs/clients.md`): a directory of everyone the practice asks, with what each
+  one still owes and whether they can be written to at all; a client's own page with their history and their
+  details, editable, so a typo is a repair rather than a fork. This is where *"who do I work for, and who is
+  late?"* finally has an answer that is not the request board read sideways — and it fixed a real bug, in
+  which an address typed on a later request was silently discarded, leaving a client permanently
+  unreachable by the automated chase with nothing on screen to explain why.
+
+- **A client's own receipt** (2m): the client's page says how many documents they have sent, names each file
+  they sent and the day it arrived, and thanks them when the list is complete. It answers *"did you get it?"*
+  — the phone call a practice otherwise fields — without a call, from the one place the client already has.
+- **Finding things** (2l): search over client, request and address composed with the tab and state filter
+  already on screen; three orders (whose turn it is, due date, client); and both lists as CSV, honouring the
+  filters and the order on screen, because a practice reconciling a season works in a spreadsheet.
+- **A request that can change, and an ask that can be sent** (2n): a title, a due date, the note to the client
+  and the client itself are all editable after creation — because deadlines move constantly and the only fix
+  used to be to close the request and start again, losing the client's link — and the first ask can be emailed
+  from the request itself rather than by copying a link into another program. The record says which happened:
+  `request.edited` carries what changed, and `request.sent` is not `reminder.sent`.
+- **A practice the client can place** (2o): every letter is signed with the practice's current name, and the
+  portal a client lands on says which firm is asking — before this, an email asking a stranger for their bank
+  statements ended `Thanks,` and the page said "Tickmark", which is what a phishing attempt looks like.
+- **A cap on being guessed at** (2o): `/signin` is the only endpoint reachable without a link or an
+  invitation, and failures are now counted per account, expiring on their own. Per account rather than per
+  address, so one attacker cannot lock a practice out of its own software — see `src/ratelimit.js`.
+- **The four gaps a practice finds** (2p): a document's wording can be corrected without withdrawing it; a
+  season can be closed in one go, with the finished ones ticked and the unfinished ones left to a decision;
+  overdue dates are read on the practice's own calendar rather than Greenwich's; and a lost password is
+  replaced with `tools/reset-password.mjs`, which also ends that person's sessions.
+- **A list you keep, and asking everyone at once** (2q/2r): a checklist saved under a name and used for one
+  client or all of them, made either from the templates page or from a request that already has the right list
+  on it; and one action that makes a request per client — each with its own link, each emailed — with a page
+  that shows who can be written to before anything is sent and a report that names every outcome. This is the
+  gap the research called "bulk send", and the one that makes fifty clients possible.
+- **Being told what arrived** (2s): the only email in the product nobody presses a button to send. One message
+  per request per day — what has arrived, what has not, and whether anything needs sending again — to whoever
+  made the request, **sent after the client's own response** so that a mail server can never fail or delay
+  somebody else's upload. The practice can turn it off on the page where its name and timezone live.
+- **An answer as a state of its own** (2t): a client who says "I do not have this" is not a client who has gone
+  quiet, and the board now says so — a fourth state (*the client answered*), its own count and filter, and the
+  same notice to the practice, carrying the client's own words. Before this, a reply and a silence looked
+  identical on the one screen where the decision to chase is made.
+- **The year coming round** (2u): the clients page names who is *due an ask* — nothing open for them, last asked
+  in this month of an earlier year — and *ask everyone* arrives with them already ticked. No scheduler, no
+  automatic email, and no cycle length to configure: the rule reads the practice's own history, and asking
+  somebody takes them off the list.
 
 **Not built, and named rather than implied:**
 
-- **Recurring requests** on a schedule. Depends on a decision about what happens when the schedule fires
-  while the previous request is still open, and the research's cadence advice — "reminders escalate
-  politely on a schedule you control" — is not the same feature as a monthly cycle.
+- **Recurring requests** on a schedule — a request that makes *itself*, and emails a client, because a date came
+  round. Still not built, still for the same reason: a schedule raises a question nothing in the product answers,
+  namely what happens when it fires while last year's request is still open. **What 2u does instead** is answer
+  the question the schedule was standing in for: the practice is told who is *due* an ask, and the send is one
+  action they press. A robot that emails a client without a person reading the list first is not a thing this
+  product is going to grow.
 - **Reading the documents** — extraction, reconciliation, "is this the current year". That is the
   translation problem Chronexa names and it is an OCR-and-AI product. It would also mean sending a
   client's financial records to a third party, which makes this product's central claim false. **Named

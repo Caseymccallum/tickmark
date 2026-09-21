@@ -10,6 +10,16 @@
 import { encryptFile } from './tickmark-crypto.js';
 
 const keyElement = document.getElementById('practice-key');
+const limitElement = document.getElementById('upload-limit');
+
+// The practice's per-file ceiling, injected by the server. Nothing here is a security decision —
+// the server still refuses oversized uploads itself — but a client who finds out their 50 MB scan
+// will not go by watching a browser tab crash is a client who never sends anything. Tell them at
+// the moment they pick the file, in their own units, before any encrypting starts.
+const maxBytes = limitElement ? JSON.parse(limitElement.textContent).maxBytes : Number.POSITIVE_INFINITY;
+
+const readable = (bytes) =>
+  bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 
 if (keyElement) {
   // `{ keyId, publicKey }`. The id travels back with the upload so the server can record which key the
@@ -22,10 +32,45 @@ if (keyElement) {
   };
 
   for (const form of document.querySelectorAll('form.upload')) {
+    const fileInput = form.querySelector('input[type=file]');
+    const sendButton = form.querySelector('button[type=submit]');
+
+    // The moment a file is chosen, not the moment a button is pressed: a client who picked the
+    // wrong file should learn it while they are still looking at the picker, and the send button
+    // stays dead until they pick one that can actually be accepted.
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) {
+        sendButton.disabled = false;
+        say(form, '');
+        return;
+      }
+      if (file.size > maxBytes) {
+        say(
+          form,
+          `This file is too large (${readable(file.size)}). Your practice's maximum upload limit per file is ${readable(maxBytes)}.` +
+            ' Try exporting a smaller version — most scanners can make a smaller PDF.',
+        );
+        sendButton.disabled = true;
+        return;
+      }
+      sendButton.disabled = false;
+      say(form, '');
+    });
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const file = form.querySelector('input[type=file]').files[0];
+      const file = fileInput.files[0];
       if (!file) return;
+
+      // A backstop beside the change listener, for a form submitted without a change event.
+      if (file.size > maxBytes) {
+        say(
+          form,
+          `This file is too large (${readable(file.size)}). Your practice's maximum upload limit per file is ${readable(maxBytes)}.`,
+        );
+        return;
+      }
 
       try {
         say(form, `Encrypting ${file.name} (${Math.round(file.size / 1024)} KB)…`);

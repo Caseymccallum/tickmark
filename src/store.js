@@ -11,6 +11,9 @@ import { hashToken } from './crypto.js';
 // For `endAllSessions`, which lives beside the rest of the session SQL. Removing a member ends their
 // sessions, and a session that outlives the membership is a signed-in stranger.
 import { endAllSessions } from './auth.js';
+// For the one read that compares a stored timestamp against a calendar rather than against a number of days:
+// whether the year has come round for a client. Same reasoning as the overdue date in `src/app.js`.
+import { dateIn, monthIn } from './clock.js';
 
 /** Run `fn` in a transaction, rolling back on any throw. */
 export function inTransaction(db, fn) {
@@ -181,23 +184,387 @@ export function createClient(db, { practiceId, createdBy, name, email = null, at
  * Scoped by practice even though names are only unique within a practice: the second
  * half of that sentence is an assumption about the data, and the scope is a fact about
  * the query. Assumptions break; facts do not.
+ *
+ * **A name that matches updates the address and never creates a second row.** Both halves of that
+ * matter. The match is why typing "Northwind Ltd" on next year's request attaches to the client you
+ * already have instead of making a twin. The update is the fix for a bug that shipped: the first
+ * version returned early on a match and *discarded* the address, so a client created before anyone
+ * knew their email could never be given one — and since the chase reads the client's address, the
+ * symptom was "Tickmark will not write to this client" with nothing on screen to explain it. Suffix
+ * matching without the update would have made that permanent rather than merely confusing.
+ *
+ * An empty address does not erase one: a request form left blank says "I am not telling you", not
+ * "forget it". Clearing an address is an edit on the client's own page, where it can be meant.
  */
 export function findOrCreateClient(db, { practiceId, createdBy, name, email = null, at = now() }) {
   const existing = db
-    .prepare('SELECT id FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE')
+    .prepare('SELECT id, email FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE')
     .get(practiceId, name);
-  if (existing) return existing.id;
-  return createClient(db, { practiceId, createdBy, name, email, at });
+  if (!existing) return createClient(db, { practiceId, createdBy, name, email, at });
+
+  const wanted = email?.trim() || null;
+  if (wanted && wanted !== existing.email) {
+    db.prepare('UPDATE client SET email = ? WHERE id = ?').run(wanted, existing.id);
+  }
+  return existing.id;
 }
 
-/** A titled list of documents owed by one client, with its items, created atomically. */
-export function createRequest(db, { practiceId, createdBy, clientId, title, dueAt = null, items = [], at = now() }) {
+/** One client, scoped to the practice — the shape every client page starts from. */
+export function clientFor(db, practiceId, clientId) {
+  return (
+    db
+      .prepare('SELECT id, name, email, created_at FROM client WHERE id = ? AND practice_id = ?')
+      .get(clientId, practiceId) ?? null
+  );
+}
+
+/**
+ * The practice's clients, with what each one owes — one query for the directory, plus a small lookup
+ * per client for the count.
+ *
+ * The per-client count is a deliberate trade. The alternative is one query that recomputes "still
+ * wanted" in SQL, which would be a **second implementation of the rule the chase runs on** — and the
+ * failure mode of two implementations is a client chased for a document they already sent. A local
+ * SQLite file answers these in microseconds, so a directory of a few hundred clients costs a few
+ * milliseconds and buys one definition of the thing that matters.
+ *
+ * Ordered by name: this is a directory, and a directory is looked things up in.
+ */
+export function clientSummaries(db, practiceId) {
+  return db
+    .prepare(
+      `SELECT c.id, c.name, c.email, c.created_at,
+              (SELECT COUNT(*) FROM request r WHERE r.client_id = c.id AND r.closed_at IS NULL) AS open_requests,
+              (SELECT COUNT(*) FROM request r WHERE r.client_id = c.id AND r.closed_at IS NOT NULL) AS closed_requests,
+              (SELECT MAX(r.created_at) FROM request r WHERE r.client_id = c.id) AS last_request_at,
+              (SELECT MAX(e.at) FROM event e
+                 JOIN request r2 ON r2.id = e.request_id
+                WHERE r2.client_id = c.id AND e.kind = 'reminder.sent') AS last_reminded_at
+         FROM client c
+        WHERE c.practice_id = ?
+        ORDER BY c.name COLLATE NOCASE`,
+    )
+    .all(practiceId)
+    .map((row) => ({
+      ...row,
+      // Computed from the same function the board uses, so a client's page and the board cannot
+      // disagree about how much is outstanding — the failure mode that would make this list untrusted.
+      progress: { outstanding: outstandingForClient(db, practiceId, row.id) },
+    }));
+}
+
+/**
+ * The documents a practice still wants from one request — the list the chase and every reminder are
+ * built from.
+ *
+ * An item the practice has flagged stays on the list even though a file came in: what arrived is not
+ * usable, so the next reminder has to ask again. A withdrawn item leaves the list entirely. Read from
+ * the item's own `received` flag rather than from a separate set of uploads: one query, one answer
+ * about what counts as arrived.
+ *
+ * It lives here, beside the rest of the queries, because **two definitions of "still wanted" would be
+ * two things free to disagree** — and the failure would be a client chased for a document they already
+ * sent, which is the mistake this rule exists to prevent.
+ */
+/**
+ * Templates: the lists a practice uses over and over.
+ *
+ * These live in `store.js` with everything else that touches the database, and the routing below never
+ * writes SQL — the rule the whole product follows, and the one that makes the SaaS wrapper possible.
+ */
+
+export function templatesOf(db, practiceId) {
+  return db
+    .prepare(
+      `SELECT t.id, t.name, t.note, t.created_at,
+              (SELECT COUNT(*) FROM template_item i WHERE i.template_id = t.id) AS item_count
+         FROM template t
+        WHERE t.practice_id = ?
+        ORDER BY t.name COLLATE NOCASE`,
+    )
+    .all(practiceId);
+}
+
+export function templateFor(db, practiceId, templateId) {
+  const row = db
+    .prepare('SELECT id, name, note, created_at FROM template WHERE id = ? AND practice_id = ?')
+    .get(templateId, practiceId);
+  if (!row) return null;
+  return { ...row, items: templateItemsOf(db, templateId) };
+}
+
+export function templateItemsOf(db, templateId) {
+  return db
+    .prepare('SELECT id, label, note, position FROM template_item WHERE template_id = ? ORDER BY position, rowid')
+    .all(templateId);
+}
+
+export function createTemplate(db, { practiceId, createdBy, name, note = null, items = [], at = now() }) {
   return inTransaction(db, () => {
     const id = newId();
     db.prepare(
-      `INSERT INTO request (id, practice_id, practitioner_id, client_id, title, due_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, practiceId, createdBy, clientId, title, dueAt, at);
+      'INSERT INTO template (id, practice_id, name, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(id, practiceId, name, note, createdBy, at);
+    for (const label of items) addTemplateItem(db, { templateId: id, label });
+    return id;
+  });
+}
+
+export function addTemplateItem(db, { templateId, label, note = null }) {
+  const id = newId();
+  const position = db.prepare('SELECT COUNT(*) AS n FROM template_item WHERE template_id = ?').get(templateId).n;
+  db.prepare('INSERT INTO template_item (id, template_id, label, note, position) VALUES (?, ?, ?, ?, ?)').run(
+    id,
+    templateId,
+    label,
+    note,
+    position,
+  );
+  return id;
+}
+
+/**
+ * Add a typed list to a template, ignoring lines it already has.
+ *
+ * Case-insensitive on purpose, and the same rule as adding items to a request: a template whose list says
+ * "Bank statements" twice asks for it twice on every request made from it, and the practice would have to
+ * notice and repair each one. Returns how many were actually added so a page can say so.
+ */
+export function addTemplateItems(db, { templateId, labels }) {
+  return inTransaction(db, () => {
+    const seen = new Set(templateItemsOf(db, templateId).map((item) => item.label.toLowerCase()));
+    let added = 0;
+    for (const label of labels) {
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      addTemplateItem(db, { templateId, label });
+      added += 1;
+    }
+    return added;
+  });
+}
+
+export function renameTemplate(db, practiceId, templateId, { name, note = null }) {
+  const found = templateFor(db, practiceId, templateId);
+  if (!found) return false;
+  const wanted = (name ?? '').trim();
+  if (!wanted) return false;
+  const wantedNote = (note ?? '').trim() || null;
+  if (wanted === found.name && wantedNote === (found.note || null)) return false;
+  db.prepare('UPDATE template SET name = ?, note = ? WHERE id = ? AND practice_id = ?').run(
+    wanted,
+    wantedNote,
+    templateId,
+    practiceId,
+  );
+  return true;
+}
+
+export function removeTemplateItem(db, practiceId, templateId, itemId) {
+  const found = templateFor(db, practiceId, templateId);
+  if (!found) return false;
+  const item = found.items.find((candidate) => candidate.id === itemId);
+  if (!item) return false;
+  db.prepare('DELETE FROM template_item WHERE id = ?').run(itemId);
+  return true;
+}
+
+/** Delete a template. Nothing refers to it — requests copy what they need when they are made. */
+export function deleteTemplate(db, practiceId, templateId) {
+  return inTransaction(db, () => {
+    const found = templateFor(db, practiceId, templateId);
+    if (!found) return false;
+    db.prepare('DELETE FROM template_item WHERE template_id = ?').run(templateId);
+    db.prepare('DELETE FROM template WHERE id = ? AND practice_id = ?').run(templateId, practiceId);
+    return true;
+  });
+}
+
+/** Every client, with what they owe and whether they can be written to — the list bulk send picks from. */
+export function clientsForBulkSend(db, practiceId) {
+  return clientSummaries(db, practiceId);
+}
+
+/**
+ * The clients whose turn it is to be asked again — the year coming round.
+ *
+ * The research calls the annual repeat the biggest cost in a practice's year, and the capability it calls
+ * "recurrence" is the one thing on that list this product still does not do. This is not recurrence: nothing
+ * fires on a schedule, nothing is written to a client without a person pressing a button. What it is, is the
+ * practice being told **who is due** — which is the half of recurrence that a scheduler would have been standing
+ * in for. December comes round, and the question is "who did I do this for last year?", which is a question
+ * about the data that is already here.
+ *
+ * **The rule is the anniversary of the last ask, and it is read rather than configured.** A client is due when
+ * nothing is open for them and the last time they were asked was in this same month, in an earlier year. Three
+ * consequences, and all three are the reason for that shape:
+ *
+ * - **It discovers the practice's own cycle instead of assuming one.** A practice that asks in February sees its
+ *   list in February. Nothing needs a threshold, and there is no number here for anybody to disagree with.
+ * - **It empties itself.** Asking a client gives them an open request, and an open request takes them off the
+ *   list — so the list is a to-do list rather than a standing report.
+ * - **It cannot nag anybody.** This is a page the practice reads; it sends nothing. The bulk ask it links to
+ *   still shows every client and every address before anything leaves the building.
+ *
+ * What it deliberately does not do is guess about clients who were never asked: a client with no requests is
+ * somebody to start with, not somebody overdue, and mixing the two would make the list mean less.
+ *
+ * The honest limit is in the same breath: a practice on a quarterly or monthly cycle gives its clients
+ * four or twelve open requests a year, so the anniversary never comes round and this list stays empty. That is
+ * stated in `docs/roadmap.md` rather than papered over with a "cycle length" setting that would be wrong for
+ * whoever did not read it.
+ */
+export function clientsDueForAsking(db, practiceId, { timezone = null, now = new Date() } = {}) {
+  // The month *of the year* is what repeats — "September" — and the rule is that the year does not. Comparing
+  // whole `YYYY-MM` strings while also requiring the years to differ is a comparison that can never be true, and
+  // it is exactly the bug this function shipped with for one test run.
+  const month = monthIn(timezone, now);
+  const monthOfYear = month.slice(5);
+  const year = Number(month.slice(0, 4));
+
+  return clientSummaries(db, practiceId).filter((client) => {
+    // Being asked already is the answer to "should they be asked".
+    if (client.open_requests > 0) return false;
+    if (!client.last_request_at) return false;
+    const asked = dateIn(timezone, new Date(client.last_request_at));
+    return asked.slice(5, 7) === monthOfYear && Number(asked.slice(0, 4)) < year;
+  });
+}
+
+export function outstandingOf(db, requestId) {
+  return itemsOf(db, requestId).filter(
+    (item) => !item.withdrawn && (!item.received || item.needsAttention),
+  );
+}
+
+/** How many documents are still wanted from one client, across everything open. */
+export function outstandingForClient(db, practiceId, clientId) {
+  const requests = db
+    .prepare('SELECT id FROM request WHERE practice_id = ? AND client_id = ? AND closed_at IS NULL')
+    .all(practiceId, clientId);
+  return requests.reduce((total, request) => total + outstandingOf(db, request.id).length, 0);
+}
+
+/** Everything asked of one client, newest first, with the count each request is working from. */
+export function requestsForClient(db, practiceId, clientId) {
+  return db
+    .prepare(
+      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at, r.client_note
+         FROM request r
+        WHERE r.practice_id = ? AND r.client_id = ?
+        ORDER BY r.created_at DESC`,
+    )
+    .all(practiceId, clientId)
+    .map((row) => ({ ...row, progress: requestProgress(db, row.id) }));
+}
+
+/**
+ * Change a client's name or address.
+ *
+ * This is the repair for a typo, and it is the reason a duplicate client is not a disaster: the
+ * requests point at the row, so renaming moves the whole history with it. An empty string clears the
+ * address — on this page that is a decision, which is why it is spelled out in the form rather than
+ * inferred from a blank field on some other form.
+ */
+export function updateClient(db, { practiceId, clientId, name, email = null }) {
+  const before = clientFor(db, practiceId, clientId);
+  if (!before) return null;
+  const trimmed = email?.trim() || null;
+  if (before.name === name && before.email === trimmed) return before;
+  db.prepare('UPDATE client SET name = ?, email = ? WHERE id = ? AND practice_id = ?').run(
+    name,
+    trimmed,
+    clientId,
+    practiceId,
+  );
+  return { ...before, name, email: trimmed };
+}
+
+/** The checklist of a client's most recent request, for "the same as last time". */
+export function previousChecklistFor(db, practiceId, clientId) {
+  const latest = db
+    .prepare(
+      `SELECT id FROM request WHERE practice_id = ? AND client_id = ?
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(practiceId, clientId);
+  if (!latest) return { title: null, items: [] };
+  const request = requestFor(db, practiceId, latest.id);
+  return {
+    title: request?.title ?? null,
+    items: itemsOf(db, latest.id)
+      .filter((item) => !item.withdrawn)
+      .map((item) => (item.note ? `${item.label} — ${item.note}` : item.label)),
+  };
+}
+
+/**
+ * Change a request's title, due date, note to the client, or client.
+ *
+ * Returns the list of what actually changed, in words, because that list is the event's detail — and an
+ * event saying "edited" without saying what would be the least useful row in the record. An edit that
+ * changes nothing returns an empty list and writes no event: a form submitted twice is not history.
+ *
+ * `client_id` is deliberately part of this rather than its own act. "This was filed against the wrong
+ * client" is a correction like any other, and making it a separate operation would give it a separate page
+ * and a separate way to get it wrong.
+ */
+export function updateRequest(
+  db,
+  { practiceId, requestId, clientId = null, title, dueAt = null, clientNote = null, at = now() },
+) {
+  const before = requestFor(db, practiceId, requestId);
+  if (!before) return null;
+
+  const changes = [];
+  if (title !== undefined && title !== before.title) changes.push(`title → ${title}`);
+  if (dueAt !== undefined && (dueAt || null) !== (before.due_at || null)) {
+    changes.push(dueAt ? `due → ${dueAt}` : 'due date removed');
+  }
+  if (clientNote !== undefined && (clientNote || null) !== (before.client_note || null)) {
+    changes.push(clientNote ? 'the note to the client was rewritten' : 'the note to the client was removed');
+  }
+  let nextClientId = before.client_id;
+  if (clientId && clientId !== before.client_id) {
+    const client = clientFor(db, practiceId, clientId);
+    if (!client) return { moved: false, changes: [] };
+    nextClientId = client.id;
+    changes.push(`moved to ${client.name}`);
+  }
+
+  if (changes.length === 0) return { changes: [], before };
+
+  db.prepare(
+    `UPDATE request SET client_id = ?, title = ?, due_at = ?, client_note = ?
+      WHERE id = ? AND practice_id = ?`,
+  ).run(
+    nextClientId,
+    title ?? before.title,
+    dueAt !== undefined ? dueAt || null : before.due_at,
+    clientNote !== undefined ? clientNote || null : before.client_note,
+    requestId,
+    practiceId,
+  );
+
+  recordEvent(db, {
+    requestId,
+    kind: 'request.edited',
+    detail: changes.join(', '),
+    at,
+  });
+
+  return { changes, before };
+}
+
+/** A titled list of documents owed by one client, with its items, created atomically. */
+export function createRequest(db, { practiceId, createdBy, clientId, title, dueAt = null, items = [], clientNote = null, at = now() }) {
+  return inTransaction(db, () => {
+    const id = newId();
+    db.prepare(
+      `INSERT INTO request (id, practice_id, practitioner_id, client_id, title, due_at, client_note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, practiceId, createdBy, clientId, title, dueAt, clientNote, at);
     recordEvent(db, { requestId: id, kind: 'request.created', at });
     // Inside the transaction on purpose: a request that exists with none of its items
     // is a state the practice would have to notice and repair.
@@ -492,13 +859,28 @@ export function requestProgress(db, requestId) {
     clientSaid: items.filter((item) => item.clientSays).length,
   };
 
+  // The state, in the order the practice's attention actually goes, and `answered` is the one that was missing.
+  //
+  // Until it existed, a client who wrote "I do not have this" left the request reading *waiting on the client* —
+  // which is exactly what a client who has said nothing looks like. The item-level record has distinguished the
+  // two from the beginning (`client_says` is its own column, and the schema says why: "silence and a stated
+  // reason are different things in the list"), and the *list* went on treating them as one. The damage is not
+  // cosmetic: the chase writes to every request with something outstanding, so a practice could nag somebody
+  // about a document they had already explained they cannot supply — which the product's own reminder wording
+  // calls "the fastest way to make a client stop answering".
+  //
+  // Order: material nobody has looked at comes first, because that is the work. Then a client's answer, because
+  // somebody has to decide something and the client is waiting. Then simply waiting. Completion is last and
+  // final — an item the client answered is never received, so a request with an answer cannot be ready.
   const state = counts.items === 0
     ? 'ready'
     : counts.toCheck > 0
       ? 'to-check'
-      : counts.received < counts.items
-        ? 'waiting'
-        : 'ready';
+      : counts.clientSaid > 0
+        ? 'answered'
+        : counts.received < counts.items
+          ? 'waiting'
+          : 'ready';
 
   return { ...counts, state };
 }
@@ -513,14 +895,65 @@ export function practitionerByEmail(db, email) {
     .get(email);
 }
 
+/**
+ * Whether the practice wants to hear when a client sends something.
+ *
+ * Stored as 1 or 0 rather than null-or-not, because from here on the practice has made a decision and the
+ * decision is a row: the "null means yes" convenience belongs to the schema and the reader, not to this.
+ */
+export function setPracticeNotify(db, practiceId, wants) {
+  db.prepare('UPDATE practice SET notify_on_upload = ? WHERE id = ?').run(wants ? 1 : 0, practiceId);
+  return Boolean(wants);
+}
+
+/**
+ * When this request last produced a notice to the practice, or null.
+ *
+ * Read from the event log rather than from a column on the request, for the same reason the overdue answer is
+ * computed rather than stored: a stored flag is a second source of truth that can disagree with the record, and
+ * the record is what the practice reads. It costs one indexed query on `event(request_id, at)`.
+ *
+ * Covers every trigger — a file arriving and a client answering — because the rule being enforced is one message
+ * per request per day, and a rule that only counted one kind of trigger would let the other kind through.
+ */
+export function lastNoticeAt(db, requestId) {
+  const row = db
+    .prepare("SELECT at FROM event WHERE request_id = ? AND kind = 'notice.sent' ORDER BY at DESC LIMIT 1")
+    .get(requestId);
+  return row?.at ?? null;
+}
+
+/** The person who asked this client for these documents — the one the notification goes to. */
+export function requestOwner(db, requestId) {
+  return (
+    db
+      .prepare(
+        `SELECT p.id, p.email
+           FROM request r JOIN practitioner p ON p.id = r.practitioner_id
+          WHERE r.id = ?`,
+      )
+      .get(requestId) ?? null
+  );
+}
+
 /** The firm behind an id. Null if there is no such practice. */
 export function practiceFor(db, practiceId) {
-  const row = db.prepare('SELECT id, name, created_at, cadence_days FROM practice WHERE id = ?').get(practiceId);
+  const row = db
+    .prepare('SELECT id, name, created_at, cadence_days, timezone, notify_on_upload FROM practice WHERE id = ?')
+    .get(practiceId);
   if (!row) return null;
   // The "null reads as 0" mapping happens here and nowhere else. Null means "written before the column
   // existed", and every practice like that had no cadence — so every caller gets a number, and no caller
   // has to remember which column is nullable for which reason.
-  return { ...row, cadenceDays: row.cadence_days ?? 0 };
+  //
+  // `notifyOnUpload` is the one column that reads the other way, and the reason is on `notify_on_upload` in
+  // db.js: null means "yes". The mapping still happens only here, so the oddity has one home rather than being
+  // remembered at each call site.
+  return {
+    ...row,
+    cadenceDays: row.cadence_days ?? 0,
+    notifyOnUpload: row.notify_on_upload !== 0,
+  };
 }
 
 /**
@@ -532,6 +965,13 @@ export function practiceFor(db, practiceId) {
  *
  * The name is not used in any URL or lookup — it is a display string — so changing it breaks nothing.
  */
+/** Set where the practice is. Null or empty means UTC, which is what every install did before this existed. */
+export function setPracticeTimezone(db, practiceId, timezone) {
+  const wanted = (timezone ?? '').trim() || null;
+  db.prepare('UPDATE practice SET timezone = ? WHERE id = ?').run(wanted, practiceId);
+  return wanted;
+}
+
 export function renamePractice(db, practiceId, name) {
   const row = db.prepare('SELECT id FROM practice WHERE id = ?').get(practiceId);
   if (!row) return false;
@@ -768,21 +1208,26 @@ export function replaceWrappedKey(db, practiceId, practitionerId, keyId, wrapped
   });
 }
 
-export function clientsOf(db, practiceId) {
-  return db
-    .prepare('SELECT id, name, email FROM client WHERE practice_id = ? ORDER BY name')
-    .all(practiceId);
-}
-
 /**
  * The practice's dashboard: every request, who it is for, and how much of it has arrived.
  *
+ * `scope` is one of three words rather than a boolean, because a boolean could not say what the closed
+ * tab needed. `includeClosed: true` returned *everything*, which is not "closed" — and the closed tab
+ * passed exactly that, so it listed open requests under a heading that said otherwise. A search inside it
+ * then matched a client whose request was still open, which is how the bug was found. Three words make the
+ * three cases say what they mean:
+ *
+ * - `open` — the board's default, and what "what do I do now?" is about
+ * - `closed` — the second tab: finished with, kept rather than deleted
+ * - `all` — both, for anything that genuinely wants both
+ *
  * One query rather than a loop, because the shape of the screen is known and the
- * alternative is a query per row. `includeClosed` exists because a practice's list grows all
- * season and a list that never empties stops being read — so closed requests are a second view
- * rather than a deletion.
+ * alternative is a query per row. A list that never empties stops being read — so closed requests are a
+ * second view rather than a deletion.
  */
-export function requestsFor(db, practiceId, { includeClosed = false } = {}) {
+export function requestsFor(db, practiceId, { scope = 'open' } = {}) {
+  const filter =
+    scope === 'all' ? '' : scope === 'closed' ? 'AND r.closed_at IS NOT NULL' : 'AND r.closed_at IS NULL';
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
@@ -790,7 +1235,7 @@ export function requestsFor(db, practiceId, { includeClosed = false } = {}) {
               (SELECT MAX(e.at) FROM event e WHERE e.request_id = r.id) AS last_activity_at
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.practice_id = ?
-          ${includeClosed ? '' : 'AND r.closed_at IS NULL'}
+          ${filter}
         ORDER BY r.created_at DESC`,
     )
     .all(practiceId)
@@ -848,7 +1293,7 @@ export function reopenRequest(db, practiceId, requestId, at = now()) {
 export function requestFor(db, practiceId, requestId) {
   const row = db
     .prepare(
-      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
+      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at, r.client_note,
               c.id AS client_id, c.name AS client_name, c.email AS client_email
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.id = ? AND r.practice_id = ?`,
@@ -927,6 +1372,35 @@ export function addItems(db, { requestId, labels, at = now() }) {
  * Withdrawing is reversible, like closing a request and for the same reason: a status that cannot be
  * undone is a trap for whoever sets it by mistake.
  */
+/**
+ * Correct a document's own wording, or its note.
+ *
+ * The gap this closes is small and annoying rather than large: a typo in a checklist line could only be fixed
+ * by withdrawing the document and asking for it again, which marks it as something the practice *stopped*
+ * wanting and re-adds it as a new item. Nothing about a spelling mistake deserves two entries in the record,
+ * especially when the record is what says what was asked for and when.
+ *
+ * A correction that changes nothing returns false and records nothing, for the same reason an edit that
+ * changes nothing does: a form submitted twice is not history.
+ */
+export function setItemLabel(db, practiceId, requestId, itemId, { label, note = null }, at = now()) {
+  const item = itemIn(db, practiceId, requestId, itemId);
+  if (!item) return false;
+
+  const trimmed = (label ?? '').trim();
+  if (!trimmed) return false;
+
+  const wantedNote = (note ?? '').trim() || null;
+  const changes = [];
+  if (trimmed !== item.label) changes.push(`${item.label} → ${trimmed}`);
+  if (wantedNote !== (item.note || null)) changes.push('its note was rewritten');
+  if (changes.length === 0) return false;
+
+  db.prepare('UPDATE request_item SET label = ?, note = ? WHERE id = ?').run(trimmed, wantedNote, itemId);
+  recordEvent(db, { requestId, kind: 'item.edited', detail: changes.join(', '), at });
+  return true;
+}
+
 export function setItemWithdrawn(db, practiceId, requestId, itemId, withdrawn, at = now()) {
   const item = itemIn(db, practiceId, requestId, itemId);
   if (!item || Boolean(item.withdrawn_at) === withdrawn) return false;
@@ -1046,7 +1520,7 @@ export function tokenLookup(db, token, at = new Date()) {
   const row = db
     .prepare(
       `SELECT t.id AS token_id, t.expires_at, t.revoked_at,
-              r.id, r.title, r.due_at, r.practice_id,
+              r.id, r.title, r.due_at, r.practice_id, r.client_note,
               c.name AS client_name,
               k.id AS practice_key_id, k.public_key AS practice_public_key
          FROM access_token t

@@ -14,6 +14,11 @@ read the file back off disk, require the document itself not to appear in it, an
 nothing but the passphrase. [What is encrypted, and what is not](docs/encryption.md) is the honest
 account of that, including four things it does not protect.
 
+Every workflow step the research named is built, and `docs/roadmap.md` says where each one's reasoning lives.
+What has not happened is the demand check in `docs/verify-demand.md` — a person asking practitioners, which
+no amount of code can do. That is the honest state of this: feature-complete for a first version, and unproven
+about whether anyone wants it.
+
 What works today: creating a practice, making an encryption key, building a request, **adding to it
 and taking things off it later**, creating a link the client opens with no account, receiving
 encrypted uploads, **a check against every document that arrives — so a request says "files to check"
@@ -40,6 +45,50 @@ link a browser never sends to a server; and **removing a member**, which destroy
 key and ends their sessions, keeps the record of who did what, and says on the page that asks that it
 cannot take back a key they already have.
 
+Since then, and in the order a practice meets them:
+
+- **Clients are records**, not names retyped: a directory of everyone you ask, with what each still owes
+  and whether they can be written to at all. An address typed on a later request updates the client
+  instead of being discarded — which is what it did, silently, until this existed.
+- **Lists you use again**: a checklist saved under a name, made either on its own page or from a request
+  that already has the right list on it. A template is a *starting point* rather than a record, so it is
+  the one thing in Tickmark that can be deleted outright.
+- **Ask everyone at once**: one list, one title, one deadline, and a request per client with **its own
+  link** — every name and address on the page before anything is sent, and a report naming every outcome.
+  A failure to one client never stops the other forty-nine.
+- **Being told when a client does something** — the only email nobody presses a button to send. One
+  message per request per day: what arrived, what has not, and what the client said, in their words. It is
+  sent **after** the client's own upload has been answered, so your mail server can never fail or delay
+  somebody else's file. Turn it off on the page where your practice's name lives.
+- **The year coming round**: the clients page names who is due an ask — nothing open for them, last asked
+  in this month of an earlier year — and *ask everyone* arrives with them already ticked. No scheduler and
+  no cycle length to configure; the rule reads your own history, and asking somebody takes them off the list.
+- **Finding things**: search over client, request and address that composes with the tab and state filter
+  already on screen; three orders; and both lists as CSV, honouring the filters and the order on screen,
+  because reconciling a season happens in a spreadsheet.
+- **A request that can change**: title, due date, the note to the client and the client itself, all
+  editable after creation — deadlines move constantly, and the old fix was to close the request and start
+  again, losing the client's link — and the first ask can be emailed from the request itself rather than by
+  copying a link into another program.
+- **A practice the client can place**: every letter is signed with your practice's current name, and the
+  page a client lands on says which firm is asking. Before this, an email asking a stranger for their bank
+  statements ended `Thanks,` and the page said "Tickmark", which is what a phishing attempt looks like.
+- **A receipt for the client**: their page says how many documents they have sent, names each file and the
+  day it arrived, and thanks them when the list is complete — which answers "did you get it?" without a
+  phone call.
+- **Closing a season in one go**: the finished ones ticked, the unfinished ones left as a decision, and each
+  closure recorded exactly as the single-request path records it.
+- **Your own calendar**: overdue dates are read where *you* are rather than in UTC, which said "overdue" a
+  day early in Auckland and a day late in Honolulu for part of every day.
+- **A way back in**: `tools/reset-password.mjs` replaces a lost password from the command line and ends that
+  person's sessions. The passphrase that unwraps the key is untouched and unrecoverable, because that is the
+  design — see [the encryption document](docs/encryption.md).
+- **A mail relay you can test**: a hidden page that sends one message through your own configuration and
+  reports the relay's exact reply — `535` for credentials, a refused connection for the port — rather than
+  leaving you to guess which of the three things is wrong.
+- **A page a client cannot lose a file to**: the browser checks the file's size against your limit before it
+  uploads, so a 50 MB scan against a 10 MB limit is a sentence rather than a raw 413.
+
 `docs/product-needs.md` explains where the states came from: the research, with sources, on what
 practices actually lose time to. The short version is that the chase is not a collection problem —
 every portal collects — it is that "received" and "ready" are different things and most tools conflate
@@ -51,12 +100,15 @@ about your clients. Set it and clients inside it are held back and named in the 
 quietly. Sending one request's reminder by hand is never held back, because there you are looking at that
 client.
 
-What does not exist yet: **recurring requests** on a schedule, which needs a decision about what happens
-when the schedule fires while the previous request is still open; and **files that arrived before their key
-was recorded**, which no move can touch because the move works from the record — the keys page says how
-many there are. Two things are refused rather than pending, and `docs/product-needs.md` says why: reading
-the documents (OCR and inference, which would mean sending a client's records to a third party), and
-integrations with the tax software practices already run.
+What does not exist yet: **recurring requests** on a schedule — a request that makes *itself* and emails a
+client because a date came round. That is still not built, and the reason is the one thing a schedule cannot
+answer: what happens when it fires while last year's request is still open. What exists instead is the half of
+it a scheduler was standing in for: the clients page says who is *due* an ask, and sending it is one action you
+press. And **files that arrived before their key was recorded**, which no move can touch because the move works
+from the record — the keys page says how many there are. Three things are refused rather than pending, and
+`docs/product-needs.md` says why: reading the documents (OCR and inference, which would mean sending a client's
+records to a third party), integrations with the tax software practices already run, and a robot that writes to
+your clients without a person reading the list first.
 
 `docker compose up` is verified: the image builds, the container serves, the volume holds ciphertext,
 and the records survive a restart. That sentence is here because it was tested, not because it was
@@ -119,9 +171,18 @@ Tickmark's answer is: **on your server, and nobody else.**
 - **uploads** against individual items, so a received file belongs to the item it
   answers, and "signed engagement letter" cannot be satisfied by a utility bill
 - a **status** per item — outstanding, received, needs attention — and a per-request
-  view of what is still owed
+  view of what is still owed. **A client who answers is a state of its own**, because
+  "I do not have this" and silence are different facts and the board says which is which
+- **clients as records**: a directory of everyone you ask, with what each still owes and
+  whether they can be written to at all, and **who is due an ask** now that the year has come
+  round. See [docs/clients.md](docs/clients.md).
+- **a list you use again**: a checklist saved under a name, and **ask everyone at once** —
+  one list, one deadline, a request per client with its own link, and a report naming every
+  outcome
 - **reminders**: the tool tells you who is outstanding and drafts the message — and sends it,
-  if you configure a mail relay, with every attempt recorded whether it worked or not
+  if you configure a mail relay, with every attempt recorded whether it worked or not. It
+  also tells *you* when a client sends something, once a day at most, so you are not the last
+  to know about your own work
 - a **record**: an append-only log of what was sent, what arrived, and when, so the
   question "did we get it?" is answered by reading rather than remembering
 - **end-to-end encryption**: files are encrypted in the client's browser to your
@@ -153,6 +214,9 @@ first version, not an oversight:
   it yet.
 - **no mobile app.** Responsive pages only.
 - **no AI.** Nothing here sends a client's documents anywhere.
+- **no scheduled requests.** The year coming round is a list on your clients page and a button you press,
+  not a robot that writes to your clients because a date arrived. If you want something that acts while
+  nobody is looking, this is deliberately not it.
 
 ## The honest limits of the encryption
 
@@ -180,6 +244,9 @@ Worth being precise, because it is the product's main claim:
 | `docs/mvp.md` | The scope of the first version, the stack, the data model, and what is cut |
 | `docs/encryption.md` | What is encrypted, what is not, and why — the document the central claim rests on |
 | `docs/members.md` | The decision about several people in one practice: one key, wrapped once per person, and what it costs |
+| `docs/clients.md` | Clients as records: the directory, the bug that made this necessary, and what it deliberately does not do |
+| `docs/design.md` | The look: what it is, the rules behind it, and how to review a page |
+| `docs/saas.md` | The audit of a multi-tenant codebase, and the plan for wrapping this one — including which parts of it are built and which are unproven |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
 | `docs/roadmap.md` | What comes next and why, including what is deliberately not being built |
 | `docs/verify-demand.md` | The pre-build check: who is asked, what is asked, and what the answers decide |

@@ -7,6 +7,10 @@ node_modules/
 # Local configuration. `.env.example` is committed; nothing else is.
 .env
 .env.*
+
+# The rendered pages from `tools/snapshot.mjs`, and any other scratch directory.
+tmp-*/
+
 !.env.example
 
 # Test and editor leftovers

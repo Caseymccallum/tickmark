@@ -1,0 +1,84 @@
+/**
+ * What day it is where the practice is.
+ *
+ * Everything stored here is UTC — timestamps are ISO strings, and a due date is a calendar date with no zone
+ * at all. That is deliberate and it does not change. What needed fixing is the arithmetic *about* those
+ * timestamps: "is this overdue" was answered by comparing the due date against the UTC date, so a practice in
+ * Auckland saw yesterday's date as today and a practice in Hawaii saw tomorrow's, for part of every day. On a
+ * tax deadline that is the difference between a request that is late and one that is not.
+ *
+ * `Intl` does the work rather than arithmetic on an offset, because a stored offset would be wrong twice a
+ * year in every country that has daylight saving — and those are exactly the weeks an accountant is busy.
+ *
+ * An unknown or missing zone falls back to UTC rather than throwing: a practice that typed something odd into
+ * a setting should get the old behaviour, not a broken page.
+ */
+const formatter = (timeZone) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
+};
+
+/** The calendar date (YYYY-MM-DD) in a zone, for an instant — or for now. */
+export function dateIn(timeZone, when = new Date()) {
+  // en-CA formats as YYYY-MM-DD, which is the same shape the database stores, so no reassembly is needed.
+  return formatter(timeZone).format(when);
+}
+
+/** Today's date where the practice is. The one comparison the product makes about time. */
+export const todayIn = (timeZone, when = new Date()) => dateIn(timeZone, when);
+
+/**
+ * The month (YYYY-MM) where the practice is.
+ *
+ * Used for one thing: the year coming round. A practice asks its clients for the same documents in the same
+ * month every year, so "asked in February" is the shape of the relationship — and the comparison has to be on the
+ * practice's calendar for the same reason the overdue date is, or a client asked at 11pm on the 31st of January
+ * would be filed under February for a practice in Auckland.
+ */
+export const monthIn = (timeZone, when = new Date()) => dateIn(timeZone, when).slice(0, 7);
+
+/**
+ * Whether a zone is one the runtime knows. Checked when a practice sets it, so the fallback above stays a
+ * safety net rather than something people quietly live with.
+ */
+export function knownZone(timeZone) {
+  if (!timeZone) return true;
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The zones a browser or a practice is most likely to want, for a form that should not be a text field. */
+export const COMMON_ZONES = [
+  'UTC',
+  'Europe/London',
+  'Europe/Dublin',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Madrid',
+  'Europe/Rome',
+  'Europe/Amsterdam',
+  'Africa/Johannesburg',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Toronto',
+  'America/Vancouver',
+  'America/Sao_Paulo',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Hong_Kong',
+  'Asia/Tokyo',
+  'Australia/Perth',
+  'Australia/Sydney',
+  'Australia/Brisbane',
+  'Pacific/Auckland',
+];

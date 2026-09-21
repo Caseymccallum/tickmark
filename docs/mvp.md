@@ -32,9 +32,14 @@ drafting a reminder makes a fresh one. That is the visible cost of a deliberate 
 on the screen where the practice can see it rather than in a footnote.
 
 **Built.** Re-encrypting old files to a new key — which is what lets a key be retired — landed as phase 2c,
-and removing a member as 2g, so nothing in the first version's scope is missing any more. What remains
-unbuilt is deliberate and named: recurring requests on a schedule, and integrations with the tax software
-practices already run. The honest limits of the encryption are in `docs/encryption.md` rather than here.
+and removing a member as 2g, so nothing in the first version's scope is missing any more. Since then: email
+sending (2a), a chase for everyone at once (2f) and a cadence over it (2h), the states the trade asks for
+(2e), clients as records (2i — `docs/clients.md`), a design system (2j — `docs/design.md`), a multi-tenant
+wrapper for a hosted version (2k — `docs/saas.md`, built and unproven), search and orders and CSV export
+(2l), the client's own receipt (2m), editing a request plus emailing the first ask (2n), and the practice's
+identity on everything a client receives plus a cap on sign-in guessing (2o). What remains unbuilt is
+deliberate and named: recurring requests on a schedule, and integrations with the tax software practices
+already run. The honest limits of the encryption are in `docs/encryption.md` rather than here.
 
 ## Keys are a history, not a value
 
@@ -137,35 +142,60 @@ follows is the original ordering, kept because the reasons are the interesting p
 
 ## The data model
 
-Nine tables, and the count went up twice during the first week of building. `session` was added because
-**signing out has to actually revoke access**, which needs server-side state. `practice_key` was added
-because **rotation cannot be a swap** — a key is a history, not a value, and a schema that cannot hold
-a second key cannot rotate. The plan said seven; the code says nine, and the code is right.
+**Fourteen tables**, and the count has been wrong in this paragraph twice, which is why it now says what the
+count *is*. The plan said seven; `session` made it eight because signing out has to actually revoke access
+and that needs server-side state; `practice` made it ten because a firm with two partners cannot be
+represented by one login (`docs/members.md`); `key_wrapping` made it eleven because two partners cannot share
+one passphrase either, so the same key needs one sealed copy per member; `invite` made it twelve, because the
+copy the second member gets has to come from somewhere; `template` and `template_item` made it fourteen,
+because the same forty document names were being typed again for the fifty-first client (`docs/roadmap.md`
+2q). A template is the one table here whose rows are genuinely deleted rather than kept — a request copies
+what it needs when it is made, so nothing refers back.
 
 The **record** is a table, not a log file, because the product's value includes being
 able to answer questions about the past.
 
-- `practitioner` — email and password hash. **No key columns**: a practice's keys are a history, in
-  `practice_key`, and a schema that cannot hold a second key cannot rotate
+- `practice` — the firm, which is what owns clients, keys, requests, the chase cadence, and where the practice
+  is (`timezone`, an IANA zone name, or null for UTC — see `src/clock.js`)
+- `practitioner` — a person's email and password hash. **No key columns**: a practice's keys are a history,
+  in `practice_key`, and a schema that cannot hold a second key cannot rotate
 - `practice_key` — a key the practice holds: the public half, the private half already wrapped under a
   passphrase the server has never seen, and when it was made. The newest is the one new uploads use
-- `client` — belongs to a practice; name and optional email
-- `request` — belongs to a client; title, due date, closed date
-- `request_item` — belongs to a request; label, note, position
+- `key_wrapping` — one sealed copy of one key, per member, so two people can each have their own passphrase
+  over the same key
+- `invite` — a one-use invitation, carrying a copy of the key to whoever opens it
+- `client` — belongs to a practice; name and optional email. A request points here rather than carrying a
+  copy, and `docs/clients.md` says what that made possible once the screens caught up with the schema
+- `request` — belongs to a client; title, due date, closed date, and the practice's own note to the client
+- `request_item` — belongs to a request; label, note, position, withdrawn, needs-attention with its reason,
+  reviewed, and what the client said instead of sending
 - `access_token` — belongs to a request; **the SHA-256 of the token, never the token**,
   plus expiry and revocation. A stolen database must not let anyone open a client's link.
 - `upload` — belongs to an item; filename, MIME type, size, SHA-256 **of the
   ciphertext**, a storage path, the client's note, and a timestamp
 - `event` — append-only, and the product's entire vocabulary for what has happened:
-  `request.created`, `items.added`, `item.withdrawn`, `item.restored`, `item.needs-attention`,
-  `item.attention-cleared`, `link.issued`, `link.revoked`, `upload.received`, `reminder.drafted`,
-  `request.closed`, `request.reopened`. Twelve kinds, and the reason there is no thirteenth is that
-  anything worth knowing later has to justify a new word here.
+  `request.created`, `request.edited`, `request.sent`, `items.added`, `item.withdrawn`, `item.restored`,
+  `item.edited`, `item.needs-attention`, `item.attention-cleared`, `item.checked`, `item.check-undone`,
+  `item.check-cleared`, `item.client-said`, `item.client-said-cleared`, `link.issued`, `link.revoked`,
+  `upload.received`, `upload.re-encrypted`, `notice.sent`, `notice.failed`, `reminder.drafted`,
+  `reminder.sent`, `reminder.failed`, `request.closed`, `request.reopened`.
+  **Twenty-five kinds**, and the reason there is no twenty-sixth is that anything worth knowing later has to
+  justify a new word here.
+
+  This list has been counted wrong twice, so it is now taken from the source rather than written from memory —
+  the two words that were missing the first time were `item.edited`, recorded when a practice corrects a
+  document's wording instead of withdrawing and re-asking, and `item.check-cleared`, which is a *new file*
+  clearing an earlier check. That second one is not the same event as `item.check-undone`: one is a person
+  changing their mind, and the other is material arriving that nobody has looked at yet, and a record that
+  cannot tell those apart is a record that cannot answer "did anyone check this?".
 
   Two habits in that list are deliberate. An act on several items at once is *one* event — adding
   four documents is `items.added`, not four rows — because a log that records one act four times is a
   log nobody reads. And a status that can be set can be unset, and both are recorded: withdrawn and
-  restored, flagged and cleared, closed and reopened.
+  restored, flagged and cleared, closed and reopened, checked and unchecked. Two of the newer words are
+  there for the same reason: `request.sent` is not `reminder.sent`, because asking for something and
+  chasing it are different sentences, and `request.edited` carries *what* changed in its detail, because an
+  event saying "edited" would be the least useful row in the record.
 - `session` — a signed-in practice; the token is stored hashed, like a link token
 
 Three choices inside that are worth stating:

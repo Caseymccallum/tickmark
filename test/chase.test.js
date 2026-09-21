@@ -30,7 +30,8 @@ test('the draft says how many are outstanding, names them, and carries a link', 
   assert.match(one.body, /https:\/\/office\.example\/r\/tok/, 'an absolute link, so it can be pasted into mail');
   assert.ok(!one.body.includes('needed by'), 'no due date is mentioned when there is none');
   assert.match(one.body, /does not apply to you, reply/, 'the escape hatch is there');
-  assert.match(one.body, /Thanks,$/);
+  assert.match(one.body, /Thanks,$/m, 'the sign-off is there');
+  assert.ok(!/My practice|Northwind Practice/.test(one.body), 'and a caller that passes no practice name gets no invented signature');
 
   const many = reminderDraft({
     clientName: 'Northwind Ltd',

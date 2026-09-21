@@ -41,6 +41,10 @@ const PLAN_TABLES = [
   'request',
   'request_item',
   'session',
+  // Two tables rather than one, because a template's items are the same shape as a request's and there is no
+  // sensible way to store a list of documents in a single row.
+  'template',
+  'template_item',
   'upload',
 ];
 

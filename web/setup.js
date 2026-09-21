@@ -10,12 +10,27 @@ import { MIN_PASSPHRASE, generatePracticeKey } from './tickmark-crypto.js';
 const form = document.getElementById('setup');
 
 if (form) {
+  const status = form.querySelector('.status');
+  const submit = form.querySelector('button[type="submit"]');
+  // First setup only: the page asks for confirmation that the passphrase has been saved somewhere
+  // safe, and refuses to go on until it has been given. The button starts disabled, and stays
+  // disabled until the box is ticked — so the warning cannot be scrolled past and forgotten.
+  const saved = form.querySelector('#saved-passphrase');
+  if (saved && submit) {
+    saved.addEventListener('change', () => {
+      submit.disabled = !saved.checked;
+    });
+  }
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const status = form.querySelector('.status');
     const passphrase = form.querySelector('#passphrase').value;
     const again = form.querySelector('#again').value;
 
+    if (saved && !saved.checked) {
+      status.textContent = 'Confirm that the passphrase has been saved somewhere safe first.';
+      return;
+    }
     if (passphrase.normalize('NFC').length < MIN_PASSPHRASE) {
       status.textContent = `Use at least ${MIN_PASSPHRASE} characters.`;
       return;

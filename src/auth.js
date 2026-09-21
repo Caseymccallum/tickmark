@@ -15,6 +15,12 @@ import { newId } from './db.js';
 
 export const SESSION_DAYS = 14;
 export const COOKIE_NAME = 'tickmark_session';
+/**
+ * How long a password has to be. Here rather than in the routing, because two things now need to agree on it:
+ * the sign-up form and the command-line tool that replaces a password. A policy enforced in one place and
+ * assumed in another is a policy that drifts.
+ */
+export const MIN_PASSWORD = 12;
 
 /**
  * Cookies are `Secure` unless the operator says otherwise. A local trial over plain

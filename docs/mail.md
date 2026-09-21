@@ -58,6 +58,16 @@ startup log line says `with your own CA` when it is in use.
 Credentials are percent-encoded in the URL, so a password containing `@` is `%40`. The startup log
 prints the relay's host and port and **never** the password.
 
+## Testing it
+
+Signed in, there is a page at **`/admin/test-email`** — an address field and a button, deliberately
+off the navigation because it is a setup tool rather than part of the day's work. It sends one
+plain-text message through the configured relay *exactly the way a reminder is sent*, so a success
+there is a relay a reminder will work with. When it fails, the page shows the step that failed and the
+relay's own reply — `550 5.1.1 no such user` is quotable to a mail provider — with one sentence
+naming which of the four usual causes it was: the credentials, the port, the firewall, or the
+certificate.
+
 ## When something goes wrong
 
 A send either works or it fails, and **a failure is never silent**. The practice gets a page with the

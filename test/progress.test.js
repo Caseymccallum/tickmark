@@ -180,8 +180,17 @@ test('the client can say why instead of sending, and the practice sees it', asyn
     const item = itemStatus(db, p.requestId).find((row) => row.id === p.itemIds[0]);
     assert.equal(item.clientSays, 'I do not have this');
     assert.equal(item.received, false, "and the item stays outstanding: stopping the ask is the practice's decision");
-    assert.equal(requestProgress(db, p.requestId).state, 'waiting', 'so the request is still waiting');
     assert.equal(requestProgress(db, p.requestId).clientSaid, 1);
+    // **This said 'waiting' until Phase 2t, and the change is the point of that phase.** The item is still
+    // outstanding — the assertion above is the one that matters for that — but the *request* is no longer waiting
+    // on the client: the client has replied, and what it is waiting on now is a decision from the practice. A
+    // board that showed this as "waiting on the client" showed it identically to a client who had said nothing,
+    // which is the one distinction the item-level record has always kept.
+    assert.equal(
+      requestProgress(db, p.requestId).state,
+      'answered',
+      'so the request is waiting on the practice, not on the client',
+    );
 
     // The practice's page shows it, and so does the reminder — chasing somebody about a document they
     // have already explained they cannot produce is how a client stops answering.
@@ -233,9 +242,10 @@ test('a new request can be filled in from an old one, which is the year-two pain
     await p.client.post(`/requests/${p.requestId}/items/${p.itemIds[2]}/withdraw`);
 
     const prefilled = await (await p.client.get(`/requests/new?from=${p.requestId}`)).text();
-    assert.match(prefilled, /Filled in from/, 'the page says where the list came from');
-    assert.match(prefilled, /value="Northwind Ltd"/, 'the client is carried over');
-    assert.match(prefilled, /value="accounts@northwind\.example"/, 'and their address, which a reminder needs');
+    assert.match(prefilled, /Duplicating/, 'the page says what it is');
+    assert.match(prefilled, /value="2025 return"/, 'the title is carried over');
+    assert.match(prefilled, /id="client" name="client" required value=""/, 'the client is left for the practice to choose');
+    assert.match(prefilled, /id="client_email" name="client_email" type="email" value=""/, 'and the address is not carried either');
 
     // Read the textarea's *value*, not the whole page: the placeholder text lists example documents,
     // and matching against that would pass or fail for reasons unrelated to what was carried over. The
