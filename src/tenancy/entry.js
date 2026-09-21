@@ -1,0 +1,71 @@
+/**
+ * The MULTI_TENANT entry point.
+ *
+ * `node src/server.js` stays the self-hosted server, byte for byte. This is what `MULTI_TENANT=1`
+ * runs instead: it opens the registry, builds the pool, and hands `createApp` the two injected
+ * dependencies that turn it into a multi-tenant server — a `resolveTenant` and a link recorder.
+ * (docs/saas.md §2.3, §2.4.)
+ *
+ * Nothing here touches the core's query text, crypto, or envelope format. The registry learns
+ * about a link only through the injected `onLinkIssued` the core already calls; the core route
+ * that issues links does not know a registry exists.
+ */
+import { join } from 'node:path';
+
+import { createApp } from '../app.js';
+import { mailerFromEnvironment } from '../mailer.js';
+
+import { createGateway } from './gateway.js';
+import { createPool } from './pool.js';
+import { countTenants, openRegistry, recordLink, tenantForPractice } from './registry.js';
+import { createResolver } from './resolve.js';
+import { stripeFromEnvironment } from './stripe.js';
+import { billingWallPage } from './views.js';
+
+export function createSaasServer({
+  dataDir = process.env.TICKMARK_DATA ?? 'data',
+  registryFile = process.env.TICKMARK_REGISTRY ?? join(dataDir, 'saas.db'),
+  tenantsRoot = process.env.TICKMARK_TENANTS ?? join(dataDir, 'tenants'),
+  maxUploadBytes = Number(process.env.TICKMARK_MAX_UPLOAD ?? 25 * 1024 * 1024),
+  env = process.env,
+} = {}) {
+  const registry = openRegistry(registryFile);
+  const pool = createPool({ root: tenantsRoot });
+  const stripe = stripeFromEnvironment(env);
+  const gateway = createGateway({ registry, pool, stripe });
+
+  // A practice with a closed subscription gets the billing wall from the resolver, before its own
+  // database is opened — and the wall offers the gateway's own buttons, which is why it is drawn
+  // by the gateway's page rather than by the core's.
+  const resolveTenant = createResolver({
+    registry,
+    pool,
+    onBlocked: (response, tenant, status) => {
+      response.writeHead(402, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(billingWallPage({ tenant, status }).value);
+    },
+  });
+
+  let mailer = null;
+  try {
+    mailer = mailerFromEnvironment(env);
+  } catch (error) {
+    console.error(`tickmark: mail is misconfigured — ${error.message}`);
+  }
+
+  const server = createApp(registry, {
+    maxUploadBytes,
+    resolveTenant,
+    preHandle: gateway.handle,
+    healthCheck: () => countTenants(registry),
+    onLinkIssued: ({ practiceId, token }) => {
+      // The core hands back the practice id; the registry indexes by tenant id. One lookup joins
+      // the two, and a link issued by a file the registry does not know is simply not indexed.
+      const tenant = tenantForPractice(registry, practiceId);
+      if (tenant) recordLink(registry, { tenantId: tenant.id, token });
+    },
+    mailer,
+  });
+
+  return { server, registry, pool, gateway, stripe };
+}
