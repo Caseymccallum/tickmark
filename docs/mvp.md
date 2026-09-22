@@ -269,22 +269,71 @@ catches the failure mode where a thing is 90% built and never arrives:
 - `README.md` describes what exists and nothing that does not
 - it is announced somewhere a practitioner can find it
 
-## The licence, and why AGPL
+## The licence, and why AGPL-3.0
 
-**AGPL-3.0-or-later.** Anyone may run Tickmark for their own practice, modify it, and
-share it. Anyone who runs a *modified* version as a network service for others must
-offer their changes back.
+**AGPL-3.0-or-later**, the GNU Affero General Public License. Anyone may read this code,
+run it for their own practice, change it, and share it, for nothing. What it asks of
+anybody offering it to others as a service is that they publish the changes they made, so
+improvements come back and a closed fork cannot quietly exist.
 
-The alternative was MIT, which is what the author's previous open-source project uses,
-and the difference is the commercial question rather than a philosophical one. The plan
-included a hosted edition paid for by practices that do not want to run a server. MIT
-would let any competitor take this code, host it, and compete with the hosted edition
-without contributing anything. AGPL makes that specific move unattractive while leaving
-every self-hoster — which is the audience this project needs first — entirely
-unaffected, since running software for yourself carries no obligation.
+### Why not MIT
 
-This is a decision worth revisiting if it turns out to be the reason a practice or a
-contributor walks away. Recorded as reversible on purpose.
+**MIT** is what the author's previous project uses, and it was the first choice. It fails
+on one specific scenario: a competitor takes this code, makes it better behind closed
+doors, and sells the result to the same practices with no contribution back. MIT permits
+that explicitly. AGPL is the answer to it — anyone may host this, but not as a black box.
+
+### Why not a no-competing-use licence, which was tried
+
+On 22 September 2026 this project changed to **FSL-1.1-ALv2**, the Functional Source
+License: source-available, free to read, run, change and share for your own practice, with
+one restriction — it may not be resold as a competing hosted service — converting
+irrevocably to Apache 2.0 two years after each release. Sentry's licence, written for
+exactly this shape of business. It lasted a day.
+
+**It was reverted because it closed a door that almost nobody walks through, and gave up
+something that is genuinely useful.** Weighing the two:
+
+The attack FSL prevents is somebody hosting *this exact software* and undercutting the
+hosted edition on price. That is a bad business for whoever attempts it — they cannot
+differentiate a copy, and they would still carry the servers, the billing, the support and
+the DPAs, competing against the one party who can price at cost. Meanwhile the scenario
+that is actually dangerous, a closed derived product, **was already blocked by AGPL**.
+So the protection bought was narrow and theoretical.
+
+What it cost was real. The open-source label is a distribution channel that works without
+a marketing budget: *"open source alternative to [paid tool]"* is how a solo project gets
+found in roundups, in forum threads and in searches by people who have already decided they
+do not want a vendor. This project has no budget to replace that channel with. And a
+licence that restricts a competitor while the business model does not depend on the
+restriction is a licence that will be regretted.
+
+### What actually protects this, stage by stage
+
+Worth writing down, because it is not the licence:
+
+| Stage | What protects it |
+| --- | --- |
+| Pre-launch | Nothing is needed. The risk is obscurity, not copying. |
+| The first twenty practices | The relationship. A bookkeeper who likes it and says so to another bookkeeper. |
+| Scale | The brand, the support reputation, and moving first on features. |
+
+A licence protects the code; the business is not the code. **The registerable protection
+that matters is the trademark** — nobody else may trade as Tickmark, which no software
+licence can achieve — and that is the first thing worth paying for.
+
+### What this decision costs, stated rather than discovered
+
+- **Anybody may host this and charge for it.** Not merely permissible but expected; the
+  bet is that the hosted edition competes on being run well rather than on being the only
+  option. AGPL means a competitor must publish their changes, not that they cannot exist.
+- **The licence is not the moat.** Servers, support and trust are. Nothing here stops
+  somebody writing the same product from scratch, and nobody should think it does.
+- **Changing it later gets expensive.** No releases, no forks and no contributors meant
+  this decision cost nothing twice over. The same change after a release would be
+  one-way, because anyone who took the code under the old licence keeps those rights
+  forever. That is why the choice is being made now rather than after launch.
+
 
 ## What would make this not worth building
 

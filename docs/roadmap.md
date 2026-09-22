@@ -1040,7 +1040,40 @@ exists for the other kind.
 Also fixed while in there: the members page rendered its "Removed" heading and paragraph **twice**, from an
 earlier edit.
 
+## The one capability a competitor has and this does not, with evidence
+
+Not a phase, because it is not agreed yet — it is a decision, and the research has now made it the top of the
+queue. `docs/verify-demand.md` has the full reading; this is the shape of the problem.
+
+A respondent who uses two different products for the two halves of this job — one for collecting documents, one
+for distributing returns — was asked, in effect, what is wrong with them. She named one thing, twice, unprompted,
+about both: **she cannot move between entities without logging in again.** She covers around thirty partnerships.
+
+Suralink has the feature and she likes it. That matters more than any pricing difference found so far, because
+every other distinction in this exercise is about who will pay what and this one is about a capability.
+
+**In this product's model the position is currently worse.** A client is a row, a link opens one *request*, and a
+group with thirty partnerships is therefore thirty clients and thirty links — she would describe Tickmark exactly
+as she describes SafeSend.
+
+**And it is a security decision before it is a build**, which is why it is written here rather than started. A
+link issued for one request that reveals the existence of four others leaks more than it was sent for; the
+practice emailed it to one person, and links get forwarded. The options, honestly stated:
+
+1. **A client-scoped link**, replacing per-request links for clients who have several. One address, everything
+   for that client, and the same forwarding risk as the several emails it replaces — which is to say, not
+   obviously worse. The cost is that the token now means something bigger, and `access_token` is currently
+   per-request by design.
+2. **A per-request link that lists the client's other requests**, by name only, with a link each. Smaller change,
+   and it still tells a forwarded link more than it was sent with.
+3. **Nothing**, and let the practice send thirty emails. Which is what the incumbent's users are complaining
+   about, so it is an option only if the answer to the research turns out to be "thirty is unusual".
+
+The evidence points at 1, the design argument is not settled, and the honest position is that **this needs a
+decision rather than a sprint** — which is what being written down here is for.
+
 ## Phase 3 — Find out if anyone wants it
+
 
 
 
@@ -1063,7 +1096,41 @@ none of them before Phase 3 says so:
 - **A client portal without a link**, so a client can log in and see everything they owe.
 - **Per-practice branding** on the client's page.
 
-## What is not on this list, and will not be
+## Tooling considered, and declined — 22 September 2026
+
+Recorded because the answer is "none yet", and a decision like that gets re-litigated every time somebody sees the
+project again. [markfulton/ai-employees](https://github.com/markfulton/ai-employees) — eight MIT-licensed
+"AI Employee" folders of scheduled routines, which run on the agent you already use and which name Cline among
+their supported harnesses. Read in full before deciding; cloned outside the repository, because a folder of
+agent-instruction files inside a workspace is prompt material sitting where the agent reads.
+
+**Every one except `web-dev-employee` requires a live business home page**, and six of the eight — GTM, Sales, Ads,
+Customer Satisfaction, SEO and Chief of Staff — **read your price, positioning and competitors off that page
+rather than asking for them.** That is the whole gate, and it is a fair one: the kit is built for a business with a
+published offer, and Tickmark does not have one. No price, no positioning, no site, no customers.
+
+| Employee | Verdict | The reason |
+| --- | --- | --- |
+| `gtm-engineer` | **Later, and this is the one worth having** | Built to launch an offer. It is the right tool for the phase after Phase 0 — the unglamorous 10% of pricing, positioning and the announcement. Not now: it would write an ICP and a positioning statement for customers nobody has met, confidently and wrong. The trigger is concrete: **a landing page and a price.** |
+| `sales-employee` | **No, and strategically rather than by timing** | Cold first-touch and follow-up outreach, aimed at the same trade that has just asked, anonymously, whether this is a founder extracting from it. A machine pointed at that would confirm the accusation, and the Facebook threads have earned something a sequence cannot. |
+| `social-media-employee` | **No** | *"Owns one account's organic social presence."* The presence that exists is personal participation in two practitioner groups, and it is working. A content routine would genericise the one asset that is earning trust. |
+| `seo-employee` | **No** | Optimises a site. There is no site. |
+| `ad-manager-employee` | **No** | No budget, no price, nothing to advertise. |
+| `customer-satisfaction-employee` | **No** | No customers. |
+| `chief-of-staff` | **No** | It watches the *other* employees and reports what ran and what did not. With none hired it watches nothing. It is the last hire, not the first. |
+| `web-dev-employee` | **No** | The engineer on this project is the agent already in the editor, and this repository's conventions — zero dependencies, docs-first, three hundred tests, one particular voice — would be fought by a generic routine rather than served. |
+
+**What the kit did give, for nothing, and it is worth keeping.** Its structure is plain text and readable, and two
+of its ideas are already this project's ideas arrived at independently:
+
+- **The save test:** *"what the control commits is"* — the button's label is not the question, and a save that
+  publishes is a send whatever it says. That is the same discipline as a chase that holds the draft.
+- **The period key and window guard:** a job that fires late or twice looks at what already happened and does
+  nothing. That is the same problem the reminder cadence solves, solved the same way.
+
+Neither needed hiring anybody. Which is the finding: **the kit's product is the structure, and the structure is
+readable.**
+
 
 Written down so that it does not get suggested in six months as though it were new:
 

@@ -254,7 +254,7 @@ rest of the suite at 190 passing):
 2. **Registry + pool. Built.** `src/tenancy/pool.js` (lazy open, LRU close) and
    `src/tenancy/registry.js` (accounts, SaaS sessions, the host map, tenants). Provisioning goes
    through the core's own `createPractice`/`createPractitioner`, and the account's password hash is
-   copied into the practice's file — so the first sign-in is the same page the open-source product
+   copied into the practice's file — so the first sign-in is the same page the self-hosted product
    shows, and the SaaS layer never invents a second way in.
 3. **The link index. Built — with one refinement to the plan.** The index (`link_index`, digest
    prefixes only) is not written by a resolver-side sweep but by an injected `onLinkIssued` the

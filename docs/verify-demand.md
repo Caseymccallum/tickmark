@@ -90,7 +90,7 @@ Written down **before** asking, so that the result is a reading rather than a mo
 The first version of this table made *"two or more would self-host"* a condition of building at all, and its
 second row said **"build the hosted product instead — do not build the self-hosted one."** Both were written
 when there was one deployment. There are now two: `docs/saas.md` describes the multi-tenant layer, and the
-open-source install is unchanged beside it. **The choice that row was protecting against has already been made
+self-hosted install is unchanged beside it. **The choice that row was protecting against has already been made
 in the code**, so asking about it can no longer decide whether to build. Asking it as a gate would have thrown
 away a good answer to a question that stopped mattering.
 
@@ -200,6 +200,125 @@ about or had not weighed against.
     user* that a repeating cycle is wanted. `docs/roadmap.md` §2u answers the annual case and deliberately
     refuses the scheduler; this is the monthly case, arriving unprompted, from the client side.
 
+- **SafeSend** — 21 September 2026, by the same respondent, and named only for what it does *not* do well. She
+  values it for being consistent — *"all the information is compiled in the same format for each return"* — and
+  for *"the reminder emails to make sure I don't miss anything"*. Her one complaint is the same complaint she
+  made about Suralink.
+
+### The multi-entity finding, which is now the strongest signal in the exercise
+
+The same respondent, unprompted, about **two different products**:
+
+> *"I can toggle between entities if you have clients with multiple returns"* — of Suralink.
+>
+> *"We also use SafeSend for tax return distribution and my only issue is I can't toggle between entities. I have
+> to log in to each one."* — of SafeSend.
+
+**"My only issue"** is doing real work in that sentence. Asked what is wrong with a product, an experienced user
+of thirty partnerships named one thing, and it was not the documents, not the reminders, not the format, and not
+the price. It was having to move between entities one at a time.
+
+And the number that makes it concrete is in the same message: **"I cover around 30 partnerships"** — which is
+also the first honest answer this exercise has had to *"how many clients per season?"*, the third question on the
+list, asked on 20 September and answered on the 21st without being asked again.
+
+Three things follow, in order of how much they should change the plan:
+
+1. **This is the one competitor gap that is not about pricing or positioning.** Suralink has the feature, and it
+   is the thing she likes about it. Every other difference found so far is about who is willing to pay what;
+   this is about a capability, and it is the only such difference in the whole exercise.
+2. **In this product's model it is currently worse, not better.** A client is a row and a link opens one
+   *request*, so a group with thirty partnerships gets thirty clients and thirty links. She would be describing
+   Tickmark exactly as she describes SafeSend.
+3. **Spanning requests for one client is a security decision before it is a build.** A link issued for one request
+   that reveals the existence of four others is a link that leaks more than it was sent for, and the practice
+   emailed it to one person who may forward it. That is why `docs/roadmap.md` carries it as a design question
+   rather than a task, and it is now the top of that list.
+
+### The objection, which is a signal rather than a heckle — 22 September 2026
+
+Anonymous, in the same group, under the posts:
+
+> *"So you have no actual experience but want to build a tool based on what we have already developed for
+> ourselves and give to you?"*
+
+Two charges in one sentence, and only one of them is a misreading.
+
+**The true one:** the author is not a practitioner. That was disclosed in the post, deliberately, and it is the
+reason the questions are being asked rather than assumed. Nobody was misled, and there is no answer to this
+charge — only the acceptance of it.
+
+**The real one:** *founder asks a trade for its expertise and keeps the value.* This is a familiar shape and the
+suspicion is reasonable, which is why the answer cannot be "I'm just curious". The position, stated plainly
+rather than hedged, because a hedge here would be a lie that a future customer could catch:
+
+- the replies are public and go to everybody reading the thread, not to the author privately;
+- **the software can be read and run for nothing** — anyone can run it on their own server at no charge, and it is
+  not a cut-down or trial edition. A practice that answered here gets the result for free;
+- **there will also be a hosted version, run by the author, and it will be paid.** That is a commercial project
+  and pretending otherwise would be both dishonest and pointless — the hosted service is a public thing, and
+  anybody who found it later would read the denial as the real answer. What the subscription sells is *running a
+  server*, not the knowledge in this thread, and the software is identical either way.
+
+That is the open-source position, and the reason it answers the charge is that it is **checkable**: the source
+is readable, the licence is in the repository, and "you could run this yourself" is not a claim anybody has to take
+on trust.
+
+**Amended 22 September 2026 — the licence was changed to FSL-1.1-ALv2 and changed back the same day.** The
+position first written here said *"the software is open source and will stay that way"*, and that sentence is
+true again as written: the project is **AGPL-3.0-or-later**, an OSI-approved open-source licence.
+
+What happened in between, recorded because the reasoning is worth more than the outcome. The concern was a
+competitor hosting this software and undercutting the hosted edition, so the licence moved to the Functional
+Source License — source-available, free for your own practice, with one restriction (no reselling it as a
+competing service) and an irrevocable conversion to Apache 2.0 after two years. On weighing it: **the attack
+that prevents is a bad business for whoever attempts it** (they cannot differentiate a copy, and still carry
+the servers, billing and support), while the scenario that is actually dangerous — a closed derived product —
+**was already blocked by AGPL**. And what it cost was real: *"open source"* is a distribution channel that
+works without a marketing budget, and this project has no budget to replace it with. See `docs/mvp.md` for
+the full reasoning.
+
+So the drafted reply, *"the software is open source and will stay that way"*, stands and needed no correction.
+The general lesson is the one this project keeps relearning: **a claim is worth checking against the artifact,
+not against memory** — the licence was asserted in four files and a build check, and three of them were wrong
+at least once.
+
+
+**Why it belongs in this file at all.** It is the first evidence about *how the profession sees an outside
+builder*, as opposed to how it sees document chasing, and the two conclusions are different:
+
+1. **A readable source is not a marketing line here; it is the answer to the only objection this research has
+   drawn.** A hosted-only product from a non-practitioner — or one whose source nobody could inspect — would have
+   no reply to this comment at all. Note that the *readability* is doing the work, not the licence tag: the licence
+   changed on 22 September and this conclusion did not.
+2. **The community is watching the exchange, not the comment.** A defensive answer confirms the charge for every
+   lurker who reads it; a short one that concedes the truth and states the actual position converts some of them.
+   That is an argument for answering slowly and briefly, and against deleting it.
+
+No reply had been made at the time of writing.
+
+### Two more things she said, which are smaller and worth keeping
+
+
+
+**Reminders are welcome.** *"I love the reminder emails to make sure I don't miss anything."* That is the chase
+validated from the **receiving** end — by somebody who is the client, not the buyer, and who has no reason to be
+polite about an email. It is the first evidence that the product's central act is wanted by the person on the
+other side of it, and the follow-up asks when they would *stop* being welcome, which is the harder half.
+
+**Consistency is a client-side benefit, not just a practice-side convenience.** What she praises is that
+everything arrives *"in the same format for each return"*, and what she complains about is that it does not
+always: *"when an individual packages the return they are slightly different."* Templates in this product were
+built for the practice — the same forty document names not typed again — and this is the first evidence that they
+matter to the client as well, because a checklist in the same order every year is one she can work down without
+reading it.
+
+**And one operational note for the hosted layer**, not for the product: *"There was only one day early in the
+year I had issues logging in… That seems to happen with all software around deadline time."* She forgives it,
+which is exactly why it is worth writing down: deadline week is when the load is, and being forgiven is not the
+same as being unaffected.
+
+
 ### Suralink, read from their own homepage — 20 September 2026
 
 Found by the author, not volunteered by a respondent. What the front page claims:
@@ -252,7 +371,15 @@ that helps is **a record that proves what was asked and when**.
 
 Not an impression — a count, so the decision below is arithmetic and not mood.
 
-- Named the chase in their top three pains: **0 of 5**
+- Named the chase in their top three pains: **0 of 5** — but the counter is the wrong shape and this is the
+  evidence. The first respondent named being *blamed* for a late document; the second says she *loves* the
+  reminder emails. Neither is a complaint about chasing, and both are about the chase. What the exercise was
+  really testing is whether the problem is real, and **somebody paying 1,300 firms' worth of a competitor plus
+  a second product for the same job has answered that more convincingly than five replies to a post would have.**
+
+- **How many clients per season:** **30 partnerships** — answered unprompted on 21 September by the respondent
+  above. The only honest number in the exercise, and it is large enough for the size argument in
+  `docs/product-needs.md` to be worth something.
 
   A note on why the first reply is not counted here yet. She named a frustration, and a specific one — but
   it is **being blamed**, not the document collection itself. Counting it as "the chase" would be reading the

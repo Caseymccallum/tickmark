@@ -290,7 +290,14 @@ Worth being precise, because it is the product's main claim:
 
 ## Licence
 
-AGPL-3.0-or-later. The reasoning, and what it protects, are in `docs/mvp.md`. The
-short version: anyone may run this for their own practice, change it, and share it;
-anyone who offers it to others as a service must publish their changes. That is the
-line between a community edition and somebody else's product.
+**AGPL-3.0-or-later** — the GNU Affero General Public License. The reasoning, and
+what it protects, are in `docs/mvp.md`. The short version: anyone may read this,
+run it for their own practice, change it and share it, for free. What it asks of
+anybody offering it to others as a service is that they publish the changes they
+made — which is the line between a community edition and somebody taking this and
+calling it theirs, and it is why the hosted edition can exist without being
+undercut by a closed copy of itself.
+
+The source is public and always will be; the self-hosted edition is free forever;
+and the hosted edition has to be paid for because running servers for people is
+work. That is the whole of the bargain.
