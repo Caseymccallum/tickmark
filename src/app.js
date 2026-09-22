@@ -85,11 +85,14 @@ import {
   practiceFor,
   previousChecklistFor,
   renamePractice,
+  recordClientMessage,
+  setPracticeContact,
   requestOwner,
   requestsForClient,
   setPracticeNotify,
   ownersOf,
   setPracticeTimezone,
+  MAX_CLIENT_MESSAGE,
   setRole,
   updateClient,
   wrappingHoldersOf,
@@ -299,6 +302,10 @@ export const ROUTES = [
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)\/says$/, clientSays],
+  // Two things a client needed and could not do: send something nobody asked for, and say something that
+  // is not a file. Both used to leave the product and become an ordinary email.
+  ['POST', /^\/r\/([^/]+)\/extra$/, receiveExtra],
+  ['POST', /^\/r\/([^/]+)\/message$/, clientMessage],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)$/, receiveUpload],
   // Public: no session, gated by the token in the path — and by the secret in the fragment, which the
   // server never sees. Whoever holds the link can accept it; the page says so rather than implying the
@@ -536,11 +543,14 @@ function home({ response, practitioner }) {
   );
 }
 
+/** The shape an address has to have, in the one place it is written down. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /** The one place a credential is validated, so sign-up and sign-in cannot drift apart. */
 function validateCredentials(email, password) {
   if (!email) return 'An email address is required.';
   if (email.length > 254) return 'That email address is too long.';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'That does not look like an email address.';
+  if (!EMAIL_SHAPE.test(email)) return 'That does not look like an email address.';
   if (typeof password !== 'string' || password.length < MIN_PASSWORD) {
     return `A password of at least ${MIN_PASSWORD} characters is required.`;
   }
@@ -776,6 +786,8 @@ export function arrivalDraft({
   missing = [],
   answers = [],
   again = [],
+  said = [],
+  extra = 0,
   link,
   practiceName = null,
 }) {
@@ -800,6 +812,21 @@ export function arrivalDraft({
       ...answers.map((item) => `  - ${item.label} — "${item.says}"`),
       '',
       'Those are waiting on a decision from you rather than on the client.',
+      '',
+    );
+  }
+
+  // A message, quoted rather than summarised. The two fixed buttons cover "I cannot send this" and "I will send
+  // it later"; anything else the client writes is theirs and paraphrasing it would lose the part that matters.
+  if (said.length > 0) {
+    lines.push(`And ${said.length === 1 ? 'a message' : `${said.length} messages`} from ${clientName}:`, '');
+    for (const message of said) lines.push(`  "${message}"`, '');
+  }
+
+  // Files that answer nothing. Named rather than counted, because the practice has to decide what they are.
+  if (extra > 0) {
+    lines.push(
+      `${extra} ${extra === 1 ? 'file was' : 'files were'} sent that nothing had asked for. They are on the request.`,
       '',
     );
   }
@@ -839,9 +866,11 @@ export function arrivalDraft({
     // and an answer present means the answer is what happened; anything else is a file.
     subject: complete
       ? `Everything has arrived for ${title}`
-      : received === 0 && answers.length > 0
-        ? `${clientName} has answered about ${title}`
-        : `${clientName} has sent something for ${title}`,
+      : received === 0 && said.length > 0
+        ? `${clientName} has written about ${title}`
+        : received === 0 && answers.length > 0
+          ? `${clientName} has answered about ${title}`
+          : `${clientName} has sent something for ${title}`,
     body: lines.join('\n'),
   };
 }
@@ -899,6 +928,13 @@ export async function notifyPracticeOfChange({ db, requestRow, mailer, origin })
       again: items
         .filter((item) => item.needsAttention)
         .map((item) => ({ label: item.label, note: item.attentionNote })),
+      // A client's own words are quoted, and their own documents are counted. Both are facts about the request;
+      // neither is a "reason this email was sent", which is why the subject is derived from them rather than
+      // passed in as a trigger that a caller could get wrong.
+      said: history(db, requestRow.id)
+        .filter((event) => event.kind === 'client.messaged')
+        .map((event) => event.detail),
+      extra: uploadsOf(db, requestRow.id).filter((upload) => upload.request_item_id === null).length,
       link: `${origin}/requests/${requestRow.id}`,
       practiceName: practice.name,
     });
@@ -1554,7 +1590,14 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   const withdrawn = allItems.filter((item) => item.withdrawn);
   const links = tokensFor(db, found.id);
   const filesFor = new Map();
+  const extras = [];
   for (const upload of uploadsOf(db, found.id)) {
+    // Files the client sent that nobody asked for. They belong to the request and to no item, so they are
+    // gathered separately rather than being filed against a checklist line they do not answer.
+    if (upload.request_item_id === null) {
+      extras.push(upload);
+      continue;
+    }
     const list = filesFor.get(upload.request_item_id) ?? [];
     list.push(upload);
     filesFor.set(upload.request_item_id, list);
@@ -1566,6 +1609,9 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   // Computed from the same function the list uses, so the page and the board cannot disagree.
   const progress = requestProgress(db, found.id);
   const events = history(db, found.id);
+  // What the client wrote in their own words, so the practice sees it beside the documents rather than only
+  // in a mail client. The history below shows it too; this is the part that is meant to be noticed.
+  const messages = events.filter((event) => event.kind === 'client.messaged');
   // When this client was last in touch by any means, for the line in the chasing card: the question the practice
   // asks before pressing "Draft a reminder" is "have I already spoken to them?", and until 2v the page could not
   // answer it for a phone call.
@@ -1862,6 +1908,35 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
         here. <strong>Nothing is sent and the client is not told:</strong> this is you making the record true, so the
         tool knows you have already spoken to them.</p>
       </section>
+      ${messages.length > 0
+        ? html`<section class="card">
+            <h2>In the client's own words</h2>
+            <p class="note">Written on their page, and kept with this request. Nothing here needs answering
+            through this tool — it is here so the reason a document is late is beside the documents.</p>
+            ${messages.map((event) => html`<div class="said">
+              <p class="note"><span class="when">${event.at}</span></p>
+              <p>${event.detail}</p>
+            </div>`)}
+          </section>`
+        : ''}
+      ${extras.length > 0
+        ? html`<section class="card">
+            <h2>Sent without being asked</h2>
+            <p class="note">Files the client sent that are not on the checklist. They are encrypted the same
+            way as everything else, and they answer nothing — so they do not count toward what is outstanding.</p>
+            <div class="scroll"><table>
+              <thead><tr><th align="left">File</th><th align="left">Arrived</th><th align="left">Open</th></tr></thead>
+              <tbody>
+                ${extras.map((upload) => html`<tr>
+                  <td><span class="cell-t">${upload.filename}</span>
+                    ${upload.client_note ? html`<span class="cell-s">${upload.client_note}</span>` : ''}</td>
+                  <td class="note">${upload.uploaded_at}</td>
+                  <td><a class="btn sm" href="/requests/${found.id}/files/${upload.id}">Download</a></td>
+                </tr>`)}
+              </tbody>
+            </table></div>
+          </section>`
+        : ''}
       <section class="card">
         <h2>What has happened</h2>
         <ul class="plain">
@@ -3028,10 +3103,7 @@ async function serveEnvelope({ db, response, practitioner, params, practiceId })
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
 
   const row = db
-    .prepare(
-      `SELECT u.* FROM upload u JOIN request_item i ON i.id = u.request_item_id
-        WHERE u.id = ? AND i.request_id = ?`,
-    )
+    .prepare('SELECT * FROM upload WHERE id = ? AND request_id = ?')
     .get(params[1], found.id);
   if (!row) return fail(response, 404, 'There is no file with that id in this request.', practitioner);
 
@@ -4225,8 +4297,7 @@ async function reencryptFile({ db, request, response, practitioner, practiceId, 
   const existing = db
     .prepare(
       `SELECT u.id, u.storage_path FROM upload u
-         JOIN request_item i ON i.id = u.request_item_id
-         JOIN request r ON r.id = i.request_id
+         JOIN request r ON r.id = u.request_id
         WHERE u.id = ? AND r.practice_id = ?`,
     )
     .get(params[0], practiceId);
@@ -4439,7 +4510,7 @@ async function changeItemPage({ db, request, response, practitioner, params, pra
  * The client's page. No account, no session — the token in the path is the whole of the
  * authorization, which is why it is 256 random bits and why only its digest is stored.
  */
-function clientPage({ db, response, params, maxUploadBytes }) {
+function clientPage({ db, response, params, maxUploadBytes, url }) {
   const found = tokenLookup(db, params[0]);
 
   if (found.state === 'expired') {
@@ -4482,24 +4553,37 @@ function clientPage({ db, response, params, maxUploadBytes }) {
   // the question it answers: "did you get it?" is the phone call this page exists to prevent, and the
   // person best placed to answer it is the one holding the link. They chose the filenames, so showing
   // them back is not a disclosure — it is their own message returning to them.
-  const sent = new Map();
+  const answers = new Map();
+  const extras = [];
   for (const upload of uploadsOf(db, open.id)) {
-    const list = sent.get(upload.request_item_id) ?? [];
+    // An upload with no item is the client's own document — something nobody asked for. It goes in a list of
+    // its own rather than beside a checklist line, because it is not an answer to anything.
+    if (upload.request_item_id === null) {
+      extras.push(upload);
+      continue;
+    }
+    const list = answers.get(upload.request_item_id) ?? [];
     list.push(upload);
-    sent.set(upload.request_item_id, list);
+    answers.set(upload.request_item_id, list);
   }
-  const received = items.filter((item) => (sent.get(item.id) ?? []).length > 0).length;
+  const received = items.filter((item) => (answers.get(item.id) ?? []).length > 0).length;
+
+  // What the client has said in their own words, newest last, so the page shows them the message they sent
+  // rather than only telling the practice about it. Same reasoning as the receipt above.
+  const said = history(db, open.id).filter((event) => event.kind === 'client.messaged');
 
   // What the browser is allowed to compare a newly picked file against. Deliberately **name, size and date
   // only** — the three facts this page already shows the client on the rows below, so the check discloses
   // nothing that was not already on the screen. A hash of the contents would catch more and is the one thing
   // this product will not hold; the reasoning is in web/preflight.js, and there is a test that fails if a hash
   // ever appears in this payload.
-  const alreadySent = [...sent.values()].flat().map((upload) => ({
-    name: upload.filename,
-    bytes: upload.size_bytes,
-    at: dateIn(practice?.timezone, new Date(upload.uploaded_at)),
-  }));
+  const alreadySent = [...answers.values(), ...extras.map((upload) => [upload])]
+    .flat()
+    .map((upload) => ({
+      name: upload.filename,
+      bytes: upload.size_bytes,
+      at: dateIn(practice?.timezone, new Date(upload.uploaded_at)),
+    }));
 
   if (!open.practice_public_key) {
     return sendPage(response, 503, page({
@@ -4515,12 +4599,12 @@ function clientPage({ db, response, params, maxUploadBytes }) {
     <td>
       <span class="cell-t">${item.label}</span>
       ${item.note ? html`<span class="cell-s">${item.note}</span>` : ''}
-      ${(sent.get(item.id) ?? []).map((upload) => html`<span class="cell-s">you sent
+      ${(answers.get(item.id) ?? []).map((upload) => html`<span class="cell-s">you sent
         <strong>${upload.filename}</strong> on ${dateIn(practice?.timezone, new Date(upload.uploaded_at))}</span>`)}
     </td>
     <td>${item.needsAttention
       ? html`${badge('please send this again', TONES.wrong)}${item.attentionNote ? html`<span class="cell-s">${item.attentionNote}</span>` : ''}`
-      : (sent.get(item.id) ?? []).length > 0
+      : (answers.get(item.id) ?? []).length > 0
         ? badge('received', TONES.done)
         : item.clientSays
           ? html`${badge('you said:', TONES.waiting)}<span class="cell-s">${item.clientSays}</span>`
@@ -4557,6 +4641,10 @@ function clientPage({ db, response, params, maxUploadBytes }) {
         <p class="eyebrow">${practice?.name ?? 'Documents requested'}</p>
         <h1>${open.title}</h1>
         <p class="who">${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
+        ${url.searchParams.get('said') === '1'
+          ? html`<p class="success"><strong>Message sent.</strong> The practice has it, and it is kept with
+              this request — you will see it below, and they will see it beside the documents.</p>`
+          : ''}
         ${open.client_note ? html`<div class="greeting">${open.client_note}</div>` : ''}
         ${items.length === 0
           ? ''
@@ -4576,6 +4664,54 @@ function clientPage({ db, response, params, maxUploadBytes }) {
         ${items.length === 0
           ? html`<p>Nothing is being asked of you at the moment. Add the practice's address to your
               contacts, in case they ask for something later.</p>`
+          : ''}
+        ${extras.length > 0
+          ? html`<h2>Anything else you have sent</h2>
+              <p class="note">Documents you sent that were not on the list. The practice has them.</p>
+              <ul class="plain">${extras.map((upload) => html`<li>
+                  <strong>${upload.filename}</strong>
+                  <span class="note"> — sent on ${dateIn(practice?.timezone, new Date(upload.uploaded_at))}</span>
+                </li>`)}</ul>`
+          : ''}
+        <h2>Send something that was not asked for</h2>
+        <p class="note">If you have a document the practice has not asked for — a letter, a form, anything
+        you think they need — this is the safe way to send it. It is encrypted the same way as everything
+        else, and they will see it attached to this request.</p>
+        <form class="upload" method="post" action="/r/${params[0]}/extra">
+          <input type="file" name="file" required>
+          <input type="text" name="note" placeholder="what is it? (optional)" maxlength="500">
+          <div class="row">
+            <button type="submit">Send it</button>
+            <span class="status"></span>
+          </div>
+        </form>
+        <h2>Send a message</h2>
+        <p class="note">For anything that is not a file — the statements are in the post, you have changed
+        your address, the bank said five days. It goes to the practice with this request, and it stays here
+        so you can see what you said.</p>
+        <form method="post" action="/r/${params[0]}/message" class="stack">
+          <textarea name="body" rows="3" required maxlength="${MAX_CLIENT_MESSAGE}"
+            placeholder="Anything the practice should know"></textarea>
+          <div class="row"><button type="submit">Send the message</button></div>
+        </form>
+        ${said.length > 0
+          ? html`<div class="said">
+              <h3>What you have told them</h3>
+              ${said.map((event) => html`<p class="note">
+                <span class="when">${dateIn(practice?.timezone, new Date(event.at))}</span>
+                ${event.detail}</p>`)}
+            </div>`
+          : ''}
+        ${practice?.contact_email || practice?.contact_phone
+          ? html`<h2>Asking the practice something</h2>
+              <p class="note">If this page is not the right place for it — anything about fees, deadlines,
+              or a document you would rather discuss first — the practice can be reached at:</p>
+              <ul class="plain">
+                ${practice.contact_email
+                  ? html`<li><a href="mailto:${practice.contact_email}">${practice.contact_email}</a></li>`
+                  : ''}
+                ${practice.contact_phone ? html`<li>${practice.contact_phone}</li>` : ''}
+              </ul>`
           : ''}
         <p class="note">Nothing here needs an account. Come back to this page with the same
         link to send the rest — the list shows what has already arrived.</p>
@@ -4632,29 +4768,17 @@ async function clientSays({ db, request, response, params, mailer }) {
 }
 
 /**
- * The client's upload, sent by the page's own script as a raw body.
+ * Take an encrypted file from a client, check it, and put it somewhere.
  *
- * The filename arrives in a header and is recorded as a *label* only. It is never used to
- * build a path, so a filename like `../../etc/passwd` cannot become one — the bytes are
- * stored under an id this process generated. That property is what makes the storage layer
- * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
- * starts joining the filename into a path.
+ * One implementation for both kinds of upload, because the checks that matter are the same and a second copy
+ * of them is a second place for the product's central claim to become false. In particular the envelope check
+ * and the key check happen for a document nobody asked for exactly as they do for an answer: a file the
+ * server can read is a file the server can read, whatever the checklist says about it.
+ *
+ * Returns null when it has already answered the request with a failure, which is this file's idiom — `fail`
+ * writes the response, so a caller only has to return.
  */
-async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, mailer }) {
-  const [token, itemId] = params;
-  const found = tokenLookup(db, token);
-  if (found.state !== 'open') {
-    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
-  }
-
-  const item = itemInRequest(db, found.request.id, itemId);
-  if (!item) return fail(response, 404, 'That document is not part of this request.');
-  if (item.withdrawn_at) {
-    // A client may be holding a page from before the practice stopped asking. Saying so is better than
-    // storing a file that nothing is waiting for, or than a "not found" that reads like their mistake.
-    return fail(response, 409, 'The practice is no longer asking for that one. Refresh the page to see the current list.');
-  }
-
+async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, requestId, requestItemId = null }) {
   const type = String(request.headers['content-type'] ?? '');
   if (!type.startsWith('application/octet-stream')) {
     return fail(response, 415, 'This page sends files as raw bytes, which needs JavaScript to be enabled.');
@@ -4691,7 +4815,7 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
         `SELECT k.id FROM practice_key k JOIN request r ON r.practice_id = k.practice_id
           WHERE k.id = ? AND r.id = ?`,
       )
-      .get(claimedKey, found.request.id);
+      .get(claimedKey, requestId);
     if (!key) {
       return fail(response, 400, 'That upload named a key this practice does not have. Nothing was stored.');
     }
@@ -4699,15 +4823,15 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
   }
 
   const uploadId = newId();
-  const directory = join(blobDir, found.request.id);
+  const directory = join(blobDir, requestId);
   await mkdir(directory, { recursive: true });
   const storagePath = join(directory, `${uploadId}.bin`);
   await writeFile(storagePath, body);
 
   recordUpload(db, {
     id: uploadId,
-    requestId: found.request.id,
-    requestItemId: item.id,
+    requestId,
+    requestItemId,
     filename: header('x-file-name', 'upload.bin', 255),
     mime: header('x-file-type', 'application/octet-stream', 120),
     sizeBytes: body.length,
@@ -4718,7 +4842,126 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     at: now(),
   });
 
-  sendJson(response, 201, { ok: true, received: item.label, bytes: body.length, envelope: ENVELOPE_VERSION });
+  return { uploadId, bytes: body.length };
+}
+
+/**
+ * A file the client sent that nobody asked for.
+ *
+ * This closes the product's last route out of itself. Before it, a client holding a link who also had the VAT
+ * return, a covering letter or last year's return had one way to send it: email, in the clear, outside the
+ * record, with none of the protection the page they were already looking at exists to provide. The practice
+ * then held a document with nowhere to live.
+ *
+ * It answers no item, so it clears nothing and marks nothing received — the checklist is what the practice
+ * asked for, and a client's own addition is not an answer to a question.
+ */
+async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, mailer }) {
+  const found = tokenLookup(db, params[0]);
+  if (found.state !== 'open') {
+    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
+  }
+
+  const stored = await acceptEnvelope({
+    db,
+    request,
+    response,
+    blobDir,
+    maxUploadBytes,
+    requestId: found.request.id,
+  });
+  if (!stored) return;
+
+  sendJson(response, 201, { ok: true, extra: true, bytes: stored.bytes, envelope: ENVELOPE_VERSION });
+
+  await notifyPracticeOfChange({
+    db,
+    requestRow: found.request,
+    mailer,
+    origin: originOf(request),
+  });
+}
+
+/**
+ * The client writing to the practice with no file attached.
+ *
+ * The two buttons beside each item cover "I do not have this" and "I will send it later". Everything else a
+ * client might need to say — "I posted it", "the bank said five days", "my name changed" — had no route
+ * except an email, which is the record this page exists to keep them out of.
+ *
+ * A form post rather than an upload: there is nothing to encrypt, and pretending otherwise would be worse
+ * than useless. The practice's page shows the words and the history keeps them.
+ */
+async function clientMessage({ db, request, response, params, mailer }) {
+  const found = tokenLookup(db, params[0]);
+  if (found.state !== 'open') {
+    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
+  }
+
+  const fields = formFields(await readBody(request));
+  const body = (field(fields, 'body') ?? '').trim();
+  if (body.length === 0) {
+    return fail(response, 400, 'There was nothing in that message. Type something and send it again.');
+  }
+  // Refused rather than trimmed: a message the client cannot see the end of is not the message they wrote.
+  if (body.length > MAX_CLIENT_MESSAGE) {
+    return fail(
+      response,
+      400,
+      `That is longer than ${MAX_CLIENT_MESSAGE} characters, which is more than the practice can read in a list. Nothing was sent.`,
+    );
+  }
+
+  recordClientMessage(db, { requestId: found.request.id, body });
+  redirect(response, `/r/${params[0]}?said=1`);
+
+  // After the client has their answer back, and never before it — the same rule the uploads follow.
+  await notifyPracticeOfChange({
+    db,
+    requestRow: found.request,
+    mailer,
+    origin: originOf(request),
+  });
+}
+
+/**
+ * The client's upload, sent by the page's own script as a raw body, as the answer to an item the practice
+ * asked for. The checks and the storage are in `acceptEnvelope`; what is here is the part that is about
+ * *items* — that the item exists, that it belongs to this request, and that the practice is still asking.
+ *
+ * The filename arrives in a header and is recorded as a *label* only. It is never used to
+ * build a path, so a filename like `../../etc/passwd` cannot become one — the bytes are
+ * stored under an id this process generated. That property is what makes the storage layer
+ * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
+ * starts joining the filename into a path.
+ */
+async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, mailer }) {
+  const [token, itemId] = params;
+  const found = tokenLookup(db, token);
+  if (found.state !== 'open') {
+    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
+  }
+
+  const item = itemInRequest(db, found.request.id, itemId);
+  if (!item) return fail(response, 404, 'That document is not part of this request.');
+  if (item.withdrawn_at) {
+    // A client may be holding a page from before the practice stopped asking. Saying so is better than
+    // storing a file that nothing is waiting for, or than a "not found" that reads like their mistake.
+    return fail(response, 409, 'The practice is no longer asking for that one. Refresh the page to see the current list.');
+  }
+
+  const stored = await acceptEnvelope({
+    db,
+    request,
+    response,
+    blobDir,
+    maxUploadBytes,
+    requestId: found.request.id,
+    requestItemId: item.id,
+  });
+  if (!stored) return;
+
+  sendJson(response, 201, { ok: true, received: item.label, bytes: stored.bytes, envelope: ENVELOPE_VERSION });
 
   // After the client has their answer, and never before it. Awaiting this here would put the practice's mail
   // server in the path of somebody else's upload: a relay that has gone quiet would turn a client's successful
@@ -4916,13 +5159,19 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
               <option value="">UTC${practice.timezone ? '' : ' (current)'}</option>
               ${COMMON_ZONES.map((zone) => html`<option value="${zone}"${practice.timezone === zone ? ' selected' : ''}>${zone}</option>`)}
             </select>
+            <input name="contact_email" type="email" value="${practice.contact_email ?? ''}"
+              placeholder="clients@yourpractice.co.uk" aria-label="An address clients can write to">
+            <input name="contact_phone" value="${practice.contact_phone ?? ''}"
+              placeholder="Phone (optional)" aria-label="A phone number clients can ring">
             <button type="submit">Save</button>
           </form>
         </div>
       </div>
       <p class="note">The name is what a client sees on every letter and on the page they upload to. The zone is
       where the practice is, and it decides one thing: whether a request is overdue yet. Everything stored is
-      in UTC; this is the calendar those dates are read on.</p>
+      in UTC; this is the calendar those dates are read on. The address and phone appear on the client's page
+      — a client with a question about fees, or something they would rather not put in a message, is otherwise
+      looking for an old email.</p>
       <form method="post" action="/members/notify" class="card">
         <label class="check">
           <input type="checkbox" name="notify" value="1"${practice.notifyOnUpload ? raw(' checked') : ''}>
@@ -5410,7 +5659,6 @@ async function renamePracticePage({ db, request, response, practitioner, practic
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const name = (field(fields, 'name') ?? '').trim();
-  const timezone = field(fields, 'timezone');
 
   if (name.length === 0) {
     return fail(response, 400, 'A practice needs a name. It can be anything — it is only shown to you and to the people you invite.', practitioner);
@@ -5419,15 +5667,40 @@ async function renamePracticePage({ db, request, response, practitioner, practic
     return fail(response, 400, `That name is longer than ${MAX_PRACTICE_NAME} characters, which is more than a heading can hold.`, practitioner);
   }
 
+  // **`field()` cannot tell "posted blank" from "not posted"** — it answers `fallback` for both. One handler
+  // serves a form that carries a name, a zone and two contact fields, so a partial post would otherwise wipe
+  // whatever it never mentioned. `hasOwn` is what distinguishes them, and that distinction is the whole
+  // reason the timezone is not silently reset by every rename.
+  const posted = (name) => Object.hasOwn(fields, name);
+
   // The zone is refused rather than silently ignored, because a practice that picks a zone and finds their
   // overdue dates unchanged has no way to tell whether it was saved. The form offers a list; this catches a
   // hand-posted value, and the fallback in `clock.js` stays the safety net it was meant to be.
-  if (timezone !== undefined && !knownZone(timezone)) {
-    return fail(response, 400, `"${timezone}" is not a time zone this server knows. Pick one from the list.`, practitioner);
+  if (posted('timezone')) {
+    const timezone = field(fields, 'timezone') ?? '';
+    if (!knownZone(timezone)) {
+      return fail(response, 400, `"${timezone}" is not a time zone this server knows. Pick one from the list.`, practitioner);
+    }
+  }
+
+  // The contact details a client can see. `type="email"` in the form is a convenience, not a check — a
+  // hand-posted value has to be refused here or the client's page gets a `mailto:` that does nothing. The
+  // shape is deliberately loose, and it is the same one sign-up uses rather than a second opinion.
+  if (posted('contact_email')) {
+    const email = field(fields, 'contact_email') ?? '';
+    if (email !== '' && !EMAIL_SHAPE.test(email)) {
+      return fail(response, 400, `"${email}" does not look like an email address. Leave it empty if you would rather not show one.`, practitioner);
+    }
   }
 
   renamePractice(db, practiceId, name);
-  if (timezone !== undefined) setPracticeTimezone(db, practiceId, timezone);
+  if (posted('timezone')) setPracticeTimezone(db, practiceId, field(fields, 'timezone') ?? '');
+  if (posted('contact_email') || posted('contact_phone')) {
+    setPracticeContact(db, practiceId, {
+      email: posted('contact_email') ? field(fields, 'contact_email') : undefined,
+      phone: posted('contact_phone') ? field(fields, 'contact_phone') : undefined,
+    });
+  }
   return redirect(response, '/members');
 }
 

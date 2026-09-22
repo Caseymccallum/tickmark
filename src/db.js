@@ -94,7 +94,13 @@ CREATE TABLE IF NOT EXISTS practice (
   -- write to clients wants to be told when work arrives, and a product that knows and says nothing is worse
   -- than one that does not know. So the column records the *decision to stop*, not a decision to start, and a
   -- database written before it existed starts being useful rather than starting silent.
-  notify_on_upload INTEGER
+  notify_on_upload INTEGER,
+  -- Where a client can reach the practice, shown on the page they upload to. Nullable, and null means "not
+  -- given" — a practice that has not filled this in gets no contact block rather than an empty one. It is
+  -- here because that page otherwise offers exactly one route: post a file. A client with a question left the
+  -- portal and found an old email, which is the moment the portal stopped being where the work happens.
+  contact_email TEXT,
+  contact_phone TEXT
 );
 
 CREATE TABLE IF NOT EXISTS practitioner (
@@ -285,7 +291,15 @@ CREATE TABLE IF NOT EXISTS access_token (
 -- sha256 is over the ciphertext, never over the plaintext.
 CREATE TABLE IF NOT EXISTS upload (
   id              TEXT PRIMARY KEY,
-  request_item_id TEXT NOT NULL REFERENCES request_item(id),
+  -- **An upload belongs to a request, and may answer one of its items.** That distinction is what lets a
+  -- client send something nobody asked for — the P60, the covering letter, last year's return — without
+  -- inventing a checklist entry for it. Before this column existed the request was reached *through* the
+  -- item, so an upload with no item had nowhere to live and the only way to send one was email.
+  request_id      TEXT NOT NULL REFERENCES request(id),
+  -- Nullable: an item answers a question the practice asked, and this is the answer. A client's own document
+  -- is not an answer to anything, and storing it as one would put a file the practice never requested into
+  -- their checklist — which is the sort of small lie this schema is otherwise careful about.
+  request_item_id TEXT REFERENCES request_item(id),
   filename        TEXT NOT NULL,
   mime            TEXT,
   size_bytes      INTEGER NOT NULL,
@@ -421,7 +435,7 @@ function migrate(db) {
   // and adding the practice migration silently made `migratedKeys` mean something else — which a test
   // caught, and which would have been a lie in the one place an operator looks to see what happened to
   // their database.
-  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0, wrappings: 0, invites: 0 };
+  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0, wrappings: 0, invites: 0, uploads: 0 };
   for (const [table, column, definition] of [
     ['request_item', 'withdrawn_at', 'TEXT'],
     ['request_item', 'attention_at', 'TEXT'],
@@ -440,6 +454,8 @@ function migrate(db) {
     ['practice', 'cadence_days', 'INTEGER'],
     ['practice', 'timezone', 'TEXT'],
     ['practice', 'notify_on_upload', 'INTEGER'],
+    ['practice', 'contact_email', 'TEXT'],
+    ['practice', 'contact_phone', 'TEXT'],
     ['practitioner', 'role', 'TEXT'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
@@ -448,6 +464,9 @@ function migrate(db) {
   // After the column loop and before anything reads an invitation, because an invitation's shape is what
   // changed here rather than its contents.
   changes.invites = sealedInvites(db);
+  // A shape change too, and it has to happen before anything reads an upload — `key_id` above was added to
+  // the old table, and the rebuild carries it across.
+  changes.uploads = uploadsLearnTheirRequest(db);
   changes.session = sessionPracticeColumnGoes(db);
   // After tenancy, because a wrapping needs the practitioner's practice to make sense of — and the
   // person who made the key is exactly the person the copy belongs to.
@@ -565,6 +584,66 @@ function sealedInvites(db) {
   return 1;
 }
 
+/**
+ * Every upload learns which request it belongs to, and stops being required to answer an item.
+ *
+ * The request used to be reachable only *through* the item, which made "a client sent something nobody asked
+ * for" unrepresentable — the only way to send one was email, which is the one thing this product exists to
+ * replace. The rebuild is not merely structural: the rows are backfilled from the join that every reader was
+ * already doing, so a file already on disk keeps pointing at the request it arrived under.
+ *
+ * SQLite cannot relax `NOT NULL` in place, which is the only reason this is a rebuild rather than an
+ * `ALTER TABLE`. The guard is the column's presence, so a database that has been through it is unchanged on
+ * the second run.
+ */
+function uploadsLearnTheirRequest(db) {
+  if (columnsOf(db, 'upload').includes('request_id')) return 0;
+
+  const before = db.prepare('SELECT COUNT(*) AS n FROM upload').get().n;
+
+  db.exec('BEGIN');
+  try {
+    db.exec(`CREATE TABLE upload_with_request (
+      id              TEXT PRIMARY KEY,
+      request_id      TEXT NOT NULL REFERENCES request(id),
+      request_item_id TEXT REFERENCES request_item(id),
+      filename        TEXT NOT NULL,
+      mime            TEXT,
+      size_bytes      INTEGER NOT NULL,
+      sha256          TEXT NOT NULL,
+      storage_path    TEXT NOT NULL,
+      client_note     TEXT,
+      uploaded_at     TEXT NOT NULL,
+      key_id          TEXT REFERENCES practice_key(id)
+    )`);
+
+    const copied = db
+      .prepare(
+        `INSERT INTO upload_with_request
+           (id, request_id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, uploaded_at, key_id)
+         SELECT u.id, i.request_id, u.request_item_id, u.filename, u.mime, u.size_bytes, u.sha256,
+                u.storage_path, u.client_note, u.uploaded_at, u.key_id
+           FROM upload u JOIN request_item i ON i.id = u.request_item_id`,
+      )
+      .run().changes;
+
+    // Every file already on disk has an item — there was no way to write one without it — so a count that
+    // disagrees means the rename below would drop a row. It stops instead, because a database that refuses
+    // to open is recoverable and a file nobody can find again is not.
+    if (copied !== before) {
+      throw new Error(`the upload rebuild would carry ${copied} of ${before} rows; nothing has been changed`);
+    }
+
+    db.exec('DROP TABLE upload');
+    db.exec('ALTER TABLE upload_with_request RENAME TO upload');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return 1;
+}
+
 function columnsOf(db, table) {
   return db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((row) => row.name);
 }
@@ -610,6 +689,8 @@ export function openDatabase(file = ':memory:') {
   db.migratedTenancy = changes.tenancy;
   db.migratedSession = changes.session;
   db.migratedWrappings = changes.wrappings;
+  db.migratedInvites = changes.invites;
+  db.migratedUploads = changes.uploads;
   return db;
 }
 

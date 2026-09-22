@@ -126,6 +126,23 @@ await withServer(async ({ base, agent, db }) => {
     await save("client page, with the practice's note", `/r/${notingLink.token}`, anonymous);
   }
 
+  // The three ways a client speaks, on the page where they do it: a message, a document nobody asked for, and
+  // the practice's own contact details. Captured here rather than after the due-ask block below, because a
+  // closed request suppresses most of what is worth looking at.
+  await client.post('/members/name', {
+    name: 'Lodge & Co',
+    contact_email: 'hello@lodgeandco.example',
+    contact_phone: '0161 496 0000',
+  });
+  if (notingLink.token) {
+    await anonymous.post(`/r/${notingLink.token}/message`, {
+      body: 'The accounts are in the post — the bank said five working days. I will send the return myself.',
+    });
+    await save('client page, after writing a message', `/r/${notingLink.token}?said=1`, anonymous);
+    await save('client page, message sent', `/r/${notingLink.token}`, anonymous);
+    await save('request, with a message from the client', `/requests/${notingId}`, client);
+  }
+
   // The year coming round, captured **last** — and the ordering is the whole reason it is here.
   //
   // Showing it means backdating the first request by a year and closing it, because that is what "due an ask"

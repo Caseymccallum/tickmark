@@ -1072,6 +1072,71 @@ practice emailed it to one person, and links get forwarded. The options, honestl
 The evidence points at 1, the design argument is not settled, and the honest position is that **this needs a
 decision rather than a sprint** — which is what being written down here is for.
 
+## Phase 2aa — The client's side of the loop, which had three holes in it
+
+The practice's workflow was complete; the client's was not. A client holding a link could answer an item, or press
+one of two buttons saying they could not. **Everything else left the product and became an ordinary email** — in
+the clear, outside the record, with none of the protection the page they were already looking at exists to
+provide. For a product whose whole claim is that documents stop travelling by email, that was the last route out
+of itself.
+
+### A file nobody asked for
+
+The most common real case: the client has the bank statements you asked for *and* the VAT return, a covering
+letter, last year's return. There was nowhere to put the second thing.
+
+It needed a schema change rather than a screen. `upload.request_item_id` was `NOT NULL` and the request was
+reached *through* the item, so an upload with no item was unrepresentable — and a file that cannot be represented
+cannot be stored. `upload` now carries `request_id NOT NULL` and `request_item_id` nullable, which is the honest
+model: **a file belongs to a request, and may answer one of its items.**
+
+- The rebuild is a migration (SQLite cannot relax `NOT NULL` in place), and it backfills `request_id` from the
+  join every reader was already doing. It is tested against the previous shape, and it **refuses to run** if the
+  row count disagrees — a database that will not open is recoverable, a file nobody can find is not.
+- **Every read of an upload was fixed with it.** Four places joined through the item (`serveEnvelope`,
+  `replaceUpload`, `filesPerKey`, `uploadsSealedTo`), and each of them would have silently hidden an extra: sent,
+  stored, and impossible to download or re-encrypt. The join is now on the request, and `uploadsOf` reads it
+  directly.
+- It answers nothing, so it clears nothing and marks nothing received. The checklist is what the practice asked
+  for, and a client's own addition is not an answer to a question.
+- It records `upload.extra` rather than `upload.received`, and the practice's page has a card for it: *"Sent
+  without being asked"*, with the client's own note if they left one.
+
+### A message with no file attached
+
+The two buttons cover *"I do not have this"* and *"I will send it later"*. Everything else a client might need to
+say — *"I posted it"*, *"the bank said five days"*, *"my name changed"* — had no route. It is now a message box
+on their page, kept as an event (`client.messaged`) so the history shows it, quoted back to them on their own page
+the way the receipt is, and shown to the practice in a card of its own.
+
+Refused rather than truncated when it is over 2,000 characters, because **a message whose end is missing is not
+the message they wrote.**
+
+### The practice's contact details, on the page the client is already looking at
+
+There was no way to reach the practice from the portal at all — no phone, no address, no reply route. A client
+with a question about fees left the product and found an old email, which is the moment the portal stops being
+where the work happens. `practice.contact_email` and `contact_phone` are set on the members page and appear on
+the client's page; **nothing is rendered when they are empty**, because a heading with nothing under it reads as
+a broken page.
+
+### The bug this turn found, and it was in a handler I had written an hour earlier
+
+`field()` answers `null` for *"posted blank"* **and** for *"not posted"*. The rename handler serves a form
+carrying a name, a zone, an address and a phone, so a partial post — an older page, a script, a test — was
+silently wiping the fields it never mentioned. It threw on `.trim()` of a null and took two existing tests down
+with a 500, which is how it was found.
+
+The fix is `Object.hasOwn(fields, name)`, and it also repaired a **latent bug from 2p**: every rename was
+resetting the practice's timezone to UTC. No test caught that one, because the fixture's timezone was UTC anyway —
+which is precisely the shape of bug this project keeps finding. Both are pinned now.
+
+### What is recorded
+
+Two new event kinds — `upload.extra` and `client.messaged` — taking the vocabulary from twenty-six to
+**twenty-eight**, plus a new case in the notification's subject. Two new columns on `upload`, two on `practice`.
+One table rebuilt and verified.
+
 ## Phase 3 — Find out if anyone wants it
 
 

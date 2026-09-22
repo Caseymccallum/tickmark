@@ -193,6 +193,11 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   problem. The duplicate check compares filename and size — facts already on the client's own page — rather than
   a hash of the contents, which is the one thing a server holding this product's promises must never keep.
 
+- **The client's side of the loop** (2aa): a client can now send a document nobody asked for, write a message
+  that is not a file, and see how to reach the practice — three things that previously left the product and
+  became an ordinary email. `upload` gained a `request_id` (a file belongs to a request and *may* answer an
+  item) and a rebuilt table that is verified rather than trusted.
+
 **Not built, and named rather than implied:**
 
 - **Recurring requests** on a schedule — a request that makes *itself*, and emails a client, because a date came

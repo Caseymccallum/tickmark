@@ -434,7 +434,11 @@ const TABLES = `
     background: currentColor; opacity: .8;
   }
   .badge.ok    { background: var(--ok-bg);   color: var(--ok-ink);   border-color: var(--ok-line); }
-  .badge.check { background: var(--info-bg); color: var(--info-ink); border-color: var(--info-line); }
+  /* What a client has told the practice in their own words, on their own page. */
+  .said { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .said h3 { margin-top: 0; }
+  .said p { margin: .35rem 0; }
+  .said .when { color: var(--faint); font-size: var(--fs-sm); margin-right: .4rem; }
   .badge.wait  { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-line); }
   .badge.bad   { background: var(--bad-bg);  color: var(--bad-ink);  border-color: var(--bad-line); }
   .badge.off   { background: var(--off-bg);  color: var(--off-ink);  border-color: var(--off-line); }

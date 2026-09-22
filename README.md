@@ -176,6 +176,12 @@ Tickmark's answer is: **on your server, and nobody else.**
   token, with an expiry you choose
 - **uploads** against individual items, so a received file belongs to the item it
   answers, and "signed engagement letter" cannot be satisfied by a utility bill
+- **the client's own words and their own files**: a client can send a document nobody
+  asked for — the VAT return, a covering letter — and write a message that is not a
+  file at all. Both are encrypted or kept the same way as everything else, and neither
+  ends up in an ordinary email, which was the only route out of this product until
+  they existed. The practice can also leave **an address and a phone number** on the
+  page the client is already looking at
 - a **status** per item — outstanding, received, needs attention — and a per-request
   view of what is still owed. **A client who answers is a state of its own**, because
   "I do not have this" and silence are different facts and the board says which is which.

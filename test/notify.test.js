@@ -311,3 +311,50 @@ test('a second sitting later the same day stays quiet, and a new day speaks agai
     assert.match(decoded(messages[1]), /3 of 3 documents/, 'with the position as it now stands');
   }, { mailer: mailerAt(fake.port) });
 });
+
+test('a client writing a message tells the practice, and the subject does not pretend a file arrived', async (t) => {
+  const fake = await relay(t);
+  await withServer(async ({ agent, db }) => {
+    const practice = await practiceWithRequest({ agent, db });
+    const { token } = await createLink(practice.client, practice.requestId);
+
+    await agent().post(`/r/${token}/message`, {
+      body: 'The statements are in the post — the bank said five working days.',
+    });
+
+    const [message] = await told(t, fake);
+    // The subject is the one part of an email read without opening it, and it is derived from the facts rather
+    // than passed in — so a message cannot arrive described as a document.
+    assert.match(message, /Subject: .*has written about/, `the subject says what happened: ${message.split('\r\n')[0]}`);
+    assert.ok(
+      !/has sent something/.test(message),
+      'and does not claim a document arrived, because none did',
+    );
+
+    const body = decoded(message);
+    assert.match(body, /the bank said five working days/, 'the client’s own words are quoted in the body');
+    assert.match(body, /0 of 3 documents/, 'and the position is stated as it is, not dressed up');
+  }, { mailer: mailerAt(fake.port) });
+});
+
+test('a file nobody asked for is named to the practice, and is not counted as received', async (t) => {
+  const fake = await relay(t);
+  await withServer(async ({ base, agent, db }) => {
+    const practice = await practiceWithRequest({ agent, db });
+    const { token } = await createLink(practice.client, practice.requestId);
+
+    const { encryptFile } = await import('../web/tickmark-crypto.js');
+    await fetch(`${base}/r/${token}/extra`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent('vat-return.pdf') },
+      body: await encryptFile(practice.keys.publicKey, Buffer.from('the VAT return')),
+    });
+
+    const [message] = await told(t, fake);
+    const body = decoded(message);
+    assert.match(body, /1 file was sent that nothing had asked for/, 'the practice is told what it is');
+    assert.match(body, /0 of 3 documents/, 'and it is not counted as one of the three that were asked for');
+    assert.ok(!/Everything has arrived/.test(body), 'so nothing claims the request is complete');
+  }, { mailer: mailerAt(fake.port) });
+});
+

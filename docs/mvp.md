@@ -184,7 +184,7 @@ able to answer questions about the past.
   `item.check-cleared`, `item.client-said`, `item.client-said-cleared`, `link.issued`, `link.revoked`,
   `upload.received`, `upload.re-encrypted`, `notice.sent`, `notice.failed`, `reminder.drafted`,
   `reminder.sent`, `reminder.failed`, `request.contacted`, `request.closed`, `request.reopened`.
-  **Twenty-six kinds**, and the reason there is no twenty-seventh is that anything worth knowing later has to
+  **Twenty-eight kinds**, and the reason there is no twenty-ninth is that anything worth knowing later has to
   justify a new word here.
 
   This list has been counted wrong twice, so it is now taken from the source rather than written from memory —

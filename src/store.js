@@ -18,6 +18,16 @@ import { dateIn, monthIn } from './clock.js';
 // holds the key. Store and policy stay separate — this imports the answer, it does not restate it.
 import { holdsKey } from './roles.js';
 
+/**
+ * How much of a client's own words to keep.
+ *
+ * Long enough for an explanation — "the bank said the statements go out on the 15th, I will forward them
+ * then" — and short enough that the event log stays something a person can read rather than scan. The
+ * routing refuses anything longer rather than truncating it quietly, so a message that arrives is a message
+ * that arrived whole.
+ */
+export const MAX_CLIENT_MESSAGE = 2000;
+
 /** Run `fn` in a transaction, rolling back on any throw. */
 export function inTransaction(db, fn) {
   db.exec('BEGIN');
@@ -692,23 +702,39 @@ export function issueToken(db, { requestId, tokenHash, expiresAt, at = now() }) 
  * id of its own would end up with two identifiers for one file — which is exactly the kind
  * of quiet mismatch that makes an operator's backup script wrong.
  */
-export function recordUpload(db, { id = newId(), requestId, requestItemId, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, keyId = null, at = now() }) {
+/**
+ * A file the client sent, either as the answer to an item or as something nobody asked for.
+ *
+ * `requestItemId` is optional, and the two cases are genuinely different: an answer clears any "needs
+ * attention" state on the item it answers, while a client's own document answers nothing and therefore
+ * clears nothing. The event says which kind arrived, because "upload.received" against a checklist line and
+ * "upload.extra" against no line at all are different things to find in a history eleven months later.
+ */
+export function recordUpload(db, { id = newId(), requestId, requestItemId = null, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, keyId = null, at = now() }) {
   return inTransaction(db, () => {
+    if (requestItemId !== null && !itemInRequest(db, requestId, requestItemId)) {
+      throw new Error(`upload ${id} names an item that is not in request ${requestId}`);
+    }
+
     db.prepare(
-      `INSERT INTO upload (id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, key_id, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, requestItemId, filename, mime, sizeBytes, sha256, storagePath, clientNote, keyId, at);
+      `INSERT INTO upload (id, request_id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, key_id, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, requestId, requestItemId, filename, mime, sizeBytes, sha256, storagePath, clientNote, keyId, at);
 
     // New material has not been looked at, so a check that was made against the old set no longer
     // stands. Doing this here rather than in the route means no caller can forget it — and a request
     // that kept saying "checked" after a file arrived would be exactly the lie this column exists to
     // prevent. A client's stated reason goes the same way: they said they could not send it, and then
     // they did.
-    const cleared = db
-      .prepare('UPDATE request_item SET reviewed_at = NULL, client_says = NULL, client_says_at = NULL WHERE id = ? AND (reviewed_at IS NOT NULL OR client_says IS NOT NULL)')
-      .run(requestItemId).changes;
+    //
+    // Nothing to clear when the file answers no item: there was no claim about it to withdraw.
+    const cleared = requestItemId === null
+      ? 0
+      : db
+          .prepare('UPDATE request_item SET reviewed_at = NULL, client_says = NULL, client_says_at = NULL WHERE id = ? AND (reviewed_at IS NOT NULL OR client_says IS NOT NULL)')
+          .run(requestItemId).changes;
 
-    recordEvent(db, { requestId, kind: 'upload.received', detail: filename, at });
+    recordEvent(db, { requestId, kind: requestItemId === null ? 'upload.extra' : 'upload.received', detail: filename, at });
     if (cleared > 0) {
       recordEvent(db, {
         requestId,
@@ -719,6 +745,58 @@ export function recordUpload(db, { id = newId(), requestId, requestItemId, filen
     }
     return id;
   });
+}
+
+/**
+ * A client writing to the practice without a file attached.
+ *
+ * Stored as an event rather than a table of its own, because that is what it is: something that happened to
+ * a request, at a time, that the history should show. The two fixed buttons beside each item cover "I do not
+ * have this" and "I will send it later"; this covers everything else — "I posted it", "the bank said five
+ * days", "my name changed" — which otherwise leaves the record for an ordinary email.
+ *
+ * `body` is the client's own words, verbatim. It is shown back to them on their page and to the practice in
+ * the history, so it is escaped on the way out like every other piece of text here.
+ */
+export function recordClientMessage(db, { requestId, body, at = now() }) {
+  const text = (body ?? '').trim();
+  if (text.length === 0) return null;
+  recordEvent(db, { requestId, kind: 'client.messaged', detail: text.slice(0, MAX_CLIENT_MESSAGE), at });
+  return text.slice(0, MAX_CLIENT_MESSAGE);
+}
+
+/**
+ * Where the client can reach the practice.
+ *
+ * Nullable, and null means "not given" — a practice that has not filled this in gets no contact block on the
+ * client's page rather than an empty one. It exists because the page otherwise offers exactly one route: post
+ * a file. A client with a question has to leave the portal and find an old email, which is the moment the
+ * portal stops being the place the work happens.
+ */
+/**
+ * Where the client can reach the practice.
+ *
+ * `undefined` means **"this form did not ask"** and leaves the column alone; `null` or a blank string means
+ * "clear it". The distinction matters because one handler serves a form that posts a name, a zone, an address
+ * and a phone, and a partial post — an older page, a test, a script — must not silently wipe the fields it
+ * never mentioned.
+ */
+export function setPracticeContact(db, practiceId, { email, phone } = {}) {
+  const clean = (value) => {
+    if (value === undefined) return undefined;
+    const text = (value ?? '').trim();
+    return text.length === 0 ? null : text.slice(0, 200);
+  };
+
+  const nextEmail = clean(email);
+  const nextPhone = clean(phone);
+  if (nextEmail !== undefined && nextPhone !== undefined) {
+    db.prepare('UPDATE practice SET contact_email = ?, contact_phone = ? WHERE id = ?').run(nextEmail, nextPhone, practiceId);
+  } else if (nextEmail !== undefined) {
+    db.prepare('UPDATE practice SET contact_email = ? WHERE id = ?').run(nextEmail, practiceId);
+  } else if (nextPhone !== undefined) {
+    db.prepare('UPDATE practice SET contact_phone = ? WHERE id = ?').run(nextPhone, practiceId);
+  }
 }
 
 /**
@@ -738,8 +816,7 @@ export function filesPerKey(db, practiceId) {
     .prepare(
       `SELECT u.key_id, COUNT(*) AS n
          FROM upload u
-         JOIN request_item i ON i.id = u.request_item_id
-         JOIN request r ON r.id = i.request_id
+         JOIN request r ON r.id = u.request_id
         WHERE r.practice_id = ?
         GROUP BY u.key_id`,
     )
@@ -805,10 +882,9 @@ export function retirePracticeKey(db, practiceId, keyId, at = now()) {
 export function uploadsSealedTo(db, keyId, practiceId = null) {
   return db
     .prepare(
-      `SELECT u.id, u.storage_path, u.filename, u.request_item_id, r.id AS request_id
+      `SELECT u.id, u.storage_path, u.filename, u.request_item_id, u.request_id
          FROM upload u
-         JOIN request_item i ON i.id = u.request_item_id
-         JOIN request r ON r.id = i.request_id
+         JOIN request r ON r.id = u.request_id
         WHERE u.key_id = ? ${practiceId ? 'AND r.practice_id = ?' : ''}
         ORDER BY u.uploaded_at, u.id`,
     )
@@ -840,10 +916,9 @@ export function replaceUpload(db, practiceId, { uploadId, keyId, storagePath, si
   return inTransaction(db, () => {
     const row = db
       .prepare(
-        `SELECT u.id, u.filename, u.storage_path, u.key_id, r.id AS request_id
+        `SELECT u.id, u.filename, u.storage_path, u.key_id, u.request_id
            FROM upload u
-           JOIN request_item i ON i.id = u.request_item_id
-           JOIN request r ON r.id = i.request_id
+           JOIN request r ON r.id = u.request_id
           WHERE u.id = ? AND r.practice_id = ?`,
       )
       .get(uploadId, practiceId);
@@ -1029,7 +1104,7 @@ export function requestOwner(db, requestId) {
 /** The firm behind an id. Null if there is no such practice. */
 export function practiceFor(db, practiceId) {
   const row = db
-    .prepare('SELECT id, name, created_at, cadence_days, timezone, notify_on_upload FROM practice WHERE id = ?')
+    .prepare('SELECT id, name, created_at, cadence_days, timezone, notify_on_upload, contact_email, contact_phone FROM practice WHERE id = ?')
     .get(practiceId);
   if (!row) return null;
   // The "null reads as 0" mapping happens here and nowhere else. Null means "written before the column
@@ -1649,12 +1724,17 @@ export function setClientSays(db, practiceId, requestId, itemId, says, at = now(
   return true;
 }
 
+/**
+ * Everything the client has sent to a request, whether it answers an item or not.
+ *
+ * This used to reach the request *through* the item, which is why it now reads the request directly:
+ * an upload that answers no item has no item to join to, and the join was silently hiding them.
+ */
 export function uploadsOf(db, requestId) {
   return db
     .prepare(
-      `SELECT u.id, u.request_item_id, u.filename, u.size_bytes, u.sha256, u.client_note, u.uploaded_at
-         FROM upload u JOIN request_item i ON i.id = u.request_item_id
-        WHERE i.request_id = ? ORDER BY u.uploaded_at`,
+      `SELECT id, request_id, request_item_id, filename, size_bytes, sha256, client_note, uploaded_at
+         FROM upload WHERE request_id = ? ORDER BY uploaded_at`,
     )
     .all(requestId);
 }
