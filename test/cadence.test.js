@@ -119,13 +119,17 @@ test('a practice sets a cadence, and the run respects it and names who it held b
     assert.match(report, /0 sent, 0 failed, 0 not attempted, 1 held back by your cadence/,
       'the summary counts the client it held back');
     assert.match(report, /Northwind Ltd/, 'and the table names them');
-    assert.match(report, /held back by your cadence — reminded just now/, 'with the reason and how long ago');
+    assert.match(
+      report,
+      /held back by your cadence — in touch just now/,
+      'with the reason and how long ago — "in touch" rather than "reminded", because since 2v the cadence counts a phone call too',
+    );
     assert.equal(received(relay).length, 1, 'and nothing more reached the relay');
 
     const list = await (await client.get('/chase')).text();
     assert.match(list, /held back — inside your cadence/, 'the list marks them');
     assert.match(list, /Nothing would be sent at the moment/, 'and the banner says the run would send nothing');
-    assert.match(list, /because every client who owes something was written to inside your\s+14-day cadence/,
+    assert.match(list, /because every client who owes something was in touch inside your\s+14-day cadence/,
       'naming the reason');
     assert.match(list, /<button type="submit" disabled>Send<\/button>/, 'and the button is disabled, not misleading');
   }, { mailer: mailerFor(relay) });

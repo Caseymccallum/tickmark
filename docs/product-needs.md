@@ -115,7 +115,20 @@ One sentence for what Tickmark should be, narrower than "a client portal":
 - **A chase cadence the practice sets** (2h, below): how many days must pass before the batch run may
   write to the same client again, defaulting to none. The design decision is the point — the number is the
   firm's, not this software's — and clients the cadence holds back are named in the report rather than
-  dropped quietly.
+  dropped quietly. Since 2v it counts **every** contact, including a call recorded by hand, because the setting
+  is about how often a client hears from the practice rather than how many emails the tool sent.
+- **A record of the contact that was not an email** (2v): a phone call, a letter, a conversation in the office,
+  written down in the practice's own words. It sends nothing and tells the client nothing — it makes the
+  practice's own view true, and it keeps the chase from contradicting what a person already did. The research is
+  blunt about why this matters: half of practitioners name "uncooperative clients" their first concern, and
+  uncooperative clients are the ones who do not answer email.
+- **A review loop worth sitting down to** (2w): one press checks off everything that has arrived — "Mark all 3 as
+  checked" — with each document still recorded on its own. Its real value is smaller than it sounds and stated
+  rather than sold: minutes a season, not hours. What came out of building it is worth more than the feature:
+  **a flagged document kept a request off "ready"**, which meant the board said "ready to work on" while the
+  chase page listed the same client as owing a document. Two screens disagreeing about one request, invisible to
+  277 tests, found by writing a script that produced the sequence a real rejection produces and printing the
+  state.
 - **Clients as records** (2i, `docs/clients.md`): a directory of everyone the practice asks, with what each
   one still owes and whether they can be written to at all; a client's own page with their history and their
   details, editable, so a typo is a repair rather than a fork. This is where *"who do I work for, and who is

@@ -178,8 +178,8 @@ able to answer questions about the past.
   `item.edited`, `item.needs-attention`, `item.attention-cleared`, `item.checked`, `item.check-undone`,
   `item.check-cleared`, `item.client-said`, `item.client-said-cleared`, `link.issued`, `link.revoked`,
   `upload.received`, `upload.re-encrypted`, `notice.sent`, `notice.failed`, `reminder.drafted`,
-  `reminder.sent`, `reminder.failed`, `request.closed`, `request.reopened`.
-  **Twenty-five kinds**, and the reason there is no twenty-sixth is that anything worth knowing later has to
+  `reminder.sent`, `reminder.failed`, `request.contacted`, `request.closed`, `request.reopened`.
+  **Twenty-six kinds**, and the reason there is no twenty-seventh is that anything worth knowing later has to
   justify a new word here.
 
   This list has been counted wrong twice, so it is now taken from the source rather than written from memory —

@@ -100,6 +100,12 @@ about your clients. Set it and clients inside it are held back and named in the 
 quietly. Sending one request's reminder by hand is never held back, because there you are looking at that
 client.
 
+**And you can record the contact that was not an email** — a phone call, a letter, a conversation in the
+office. It goes in the record, it counts against the cadence like a reminder does, and it sends nothing: the
+point is that the tool stops offering to chase somebody you spoke to this morning. Until this existed the only
+contact the product could represent was an email it had sent itself, which meant a practice that chased by
+phone was either nagging by email or not trusting the software at all.
+
 What does not exist yet: **recurring requests** on a schedule — a request that makes *itself* and emails a
 client because a date came round. That is still not built, and the reason is the one thing a schedule cannot
 answer: what happens when it fires while last year's request is still open. What exists instead is the half of
@@ -172,7 +178,10 @@ Tickmark's answer is: **on your server, and nobody else.**
   answers, and "signed engagement letter" cannot be satisfied by a utility bill
 - a **status** per item — outstanding, received, needs attention — and a per-request
   view of what is still owed. **A client who answers is a state of its own**, because
-  "I do not have this" and silence are different facts and the board says which is which
+  "I do not have this" and silence are different facts and the board says which is which.
+  **One press checks off everything that arrived** — each document still recorded on its own —
+  and a document flagged for re-sending keeps the request off "ready", because a file that
+  is no use is not a file that is in
 - **clients as records**: a directory of everyone you ask, with what each still owes and
   whether they can be written to at all, and **who is due an ask** now that the year has come
   round. See [docs/clients.md](docs/clients.md).

@@ -58,15 +58,6 @@ await withServer(async ({ base, agent, db }) => {
   await save('templates', '/templates', client);
   if (templateId) await save('template', `/templates/${templateId}`, client);
   await save('ask everyone', templateId ? `/ask-everyone?template=${templateId}` : '/ask-everyone', client);
-
-  // The year coming round: backdate the first request by a year so the client is due an ask this month, which is
-  // the one way to see that page with something on it.
-  const lastYear = new Date();
-  lastYear.setFullYear(lastYear.getFullYear() - 1);
-  db.prepare('UPDATE request SET created_at = ? WHERE id = ?').run(lastYear.toISOString(), practice.requestId);
-  db.prepare('UPDATE request SET closed_at = ? WHERE id = ?').run(lastYear.toISOString(), practice.requestId);
-  await save('clients, due to be asked', '/clients?due=1', client);
-  await save('ask everyone, due pre-ticked', '/ask-everyone?due=1', client);
   await save('new request', '/requests/new', client);
   await save('new request, duplicated', `/requests/new?from=${practice.requestId}`, client);
   await save('keys', '/keys', client);
@@ -98,6 +89,14 @@ await withServer(async ({ base, agent, db }) => {
   await save('client page, one sent', `/r/${token}`, anonymous);
   await save('request, one received', `/requests/${practice.requestId}`, client);
 
+  // A contact recorded by hand: the form, the confirmation, and the line that says when they were last in touch.
+  // This is the state a practice is in after phoning somebody, and it is the state the chase cadence reads.
+  const contacted = await client.post(`/requests/${practice.requestId}/contact`, {
+    note: 'Phoned — Sarah says the statements are with the bank',
+  });
+  if (contacted.status !== 303) throw new Error(`the snapshot could not record a contact: ${contacted.status}`);
+  await save('request, a call recorded', `/requests/${practice.requestId}?contacted=1`, client);
+
   // The practice looks at what arrived, so the request is no longer "files to check"...
   const checked = await client.post(`/requests/${practice.requestId}/items/${itemId}/check`, {});
   if (checked.status !== 303) throw new Error(`the snapshot could not check the item: ${checked.status}`);
@@ -126,6 +125,20 @@ await withServer(async ({ base, agent, db }) => {
   if (notingLink.token) {
     await save("client page, with the practice's note", `/r/${notingLink.token}`, anonymous);
   }
+
+  // The year coming round, captured **last** — and the ordering is the whole reason it is here.
+  //
+  // Showing it means backdating the first request by a year and closing it, because that is what "due an ask"
+  // means: nothing open, last asked in this month of an earlier year. A closed request suppresses most of the
+  // states worth looking at — the review prose, the bulk-check button, the contact form's context — so while this
+  // block sat in the middle, every client-page and request-page screenshot after it was quietly a picture of a
+  // closed request, and the bulk-check button appeared in none of them.
+  const lastYear = new Date();
+  lastYear.setFullYear(lastYear.getFullYear() - 1);
+  db.prepare('UPDATE request SET created_at = ? WHERE id = ?').run(lastYear.toISOString(), practice.requestId);
+  db.prepare('UPDATE request SET closed_at = ? WHERE id = ?').run(lastYear.toISOString(), practice.requestId);
+  await save('clients, due to be asked', '/clients?due=1', client);
+  await save('ask everyone, due pre-ticked', '/ask-everyone?due=1', client);
 });
 
 writeFileSync(join(out, 'INDEX.txt'), `${pages.join('\n')}\n`);

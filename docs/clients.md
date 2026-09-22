@@ -53,7 +53,7 @@ silently because a form was filled in twice — so the practice is told, and cho
 
 | Page | What it is for |
 | --- | --- |
-| `/clients` | The directory: everyone the practice asks, with the address the chase will use, how many requests are open, how much is still outstanding, and when they were last written to. A client with no address is a badge on the row rather than a surprise on the chase page. |
+| `/clients` | The directory: everyone the practice asks, with the address the chase will use, how many requests are open, how much is still outstanding, and **when they were last in contact** — an email from here or a call recorded by hand, because those are the same question. A client with no address is a badge on the row rather than a surprise on the chase page. |
 | `/clients/:id` | One client: their requests (open and closed, with the state of each), their details — name and address, editable — and their most recent checklist, offered for "the same as last year". |
 | `/requests/new?for=<id>` | The same form as ever, with the client already chosen and **carried in a hidden field**. |
 

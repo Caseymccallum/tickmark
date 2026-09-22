@@ -33,6 +33,8 @@ Phase 2   Make it usable in the field
           2s being told what arrived  COMPLETE — the practice hears when a client does their part
           2t an answer is a state   COMPLETE — the client replied, so the request needs the practice
           2u the year coming round  COMPLETE — who is due an ask, and the seasonal bulk ask that follows
+          2v the contact that was not an email  COMPLETE — a call in the record, and the cadence counts it
+          2w the review loop         COMPLETE — one press to check off what arrived, and a "ready" that no longer lies
 Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -853,6 +855,86 @@ templates and *ask everyone* and does not need this.
 for exactly one test run, because a test that backdates a request by a year and expects the client to appear is
 the only thing that could have caught it. The comment in `src/store.js` says so, next to the two lines that get
 it right.
+
+## Phase 2v — The contact that was not an email
+
+The product could only represent one kind of contact: an email it had sent itself. Everything else a practice does
+— the phone call, the letter, the conversation in the office — left no trace, which meant two things were quietly
+wrong:
+
+- **The chase cadence could contradict a person.** A practice that rang a client on Monday, wrote the call in
+  their diary and forgot about it, would be told on Tuesday that this client "has not been written to" and invited
+  to send them a chase email. The setting exists to stop a client hearing from the practice twice in an afternoon;
+  it was only ever counting half the ways a client hears from the practice.
+- **The record was incomplete in the place the research says the work actually happens.** *50% of tax
+  practitioners name "uncooperative clients" their #1 concern*, above staffing — and uncooperative clients are the
+  ones who do not answer email. A product for chasing clients that can only remember emails is a product that
+  forgets the calls that worked.
+
+**So: one action, one event, and it sends nothing.** The request page's chasing card asks what happened, in the
+practice's own words — *"Phoned — Sarah says the statements are with the bank"* — and records `request.contacted`.
+Three decisions in that:
+
+1. **It is a record, not a message.** The client is not told, nothing goes near the mail relay, and a test proves
+   it: the whole point is that the *practice's* view becomes true, not that a client receives anything. A tool that
+   emailed somebody because a note was written about a phone call would be a different and much worse thing.
+2. **The note is required.** It is the entire content of the event. A row reading `request.contacted` with nothing
+   after it is a row somebody has to open the request to interpret, which is the opposite of what a record is for.
+3. **It counts against the cadence, and the wording changed to match.** The cadence now reads *any* contact, and
+   everywhere it explained itself it no longer says "reminded" or "written to" — the clients page column is **Last
+   contact**, the CSV header with it, and the chase page says *"in touch 3 days ago"* and *"held back by your
+   cadence — in touch just now"*. `last_reminded_at` became `last_contact_at`. **A column name that lies about its
+   contents is the defect this project keeps finding**, and this one would have started lying the moment a phone
+   call could land in it.
+
+What it deliberately does not do: record *who* the contact was with, or how it happened. A dropdown of channels
+would be the software guessing at a distinction the practice makes in the sentence they type anyway.
+
+## Phase 2w — The review loop: a bug found by looking, and one press instead of eight
+
+This pass started as friction and turned into a bug report, which is the usual order of these things.
+
+**The bug: "ready" could be a lie.** A request whose documents had all arrived and been checked — but where one of
+them had been **flagged as unusable** — reported itself as *ready to work on*. `received` counts a file that
+arrived, and a document the practice rejected has arrived; so the state machine saw a complete packet. The chase
+page, reading the same request, saw `outstandingOf` and listed the client as owing something. **Two screens,
+one request, disagreeing** — the board said "ready", the chase said the client owed a document, and the chase was
+right. It is the same defect as the `answered` gap in 2t, one layer down: a fact the record holds that the state
+did not.
+
+It was found by asking what a practice actually sees when they open a request in the morning, and then writing a
+throwaway script that produced the sequence a real rejection produces — file arrives, practice checks it, practice
+flags it, client re-sends, practice checks the replacement — and printing the state. **277 tests had nothing to
+say about the flagged case**, which is exactly why it lived as long as it did.
+
+The fix is one condition: `needsAttention` keeps a request off `ready`, because something has arrived *and has to
+arrive again*. What it becomes is `waiting on the client`, which is true. The naive fix would have produced the
+sentence *"Waiting on the client for 0 of 3 documents"*, so the request page got its own honest line instead:
+**"Waiting on a replacement. Everything asked for has arrived, but one of them is going to be sent again."**
+
+**The friction: eight page loads for eight documents.** The morning's work is opening a request, downloading what
+arrived, and ticking it off — and each tick was a form post and a full re-render, which loses your place in the
+list. One press now does the usual case: **"Mark all 3 as checked"**, on the page that already says there are files
+to check. Four decisions in it:
+
+1. **It goes through `setItemReviewed`, once per document.** Not an `UPDATE` over the table: a request's history
+   must not depend on which way the checking was done, so there is no second implementation of a check.
+2. **Only what has arrived.** An item with no file cannot be checked — the rule that stops a request reporting
+   itself ready while the client has sent nothing.
+3. **A flagged document is checked and stays outstanding**, because "somebody looked at this file" and "this file is
+   no use" are different facts. That interaction is the bug above, and it has its own test.
+4. **It says how many it did** — `?checked=3` and a confirmation — so a press that did nothing cannot look like one
+   that worked.
+
+**And the snapshot tool was lying about what it showed.** The cycle demo from 2u backdates and closes the request
+the rest of the fixture is built on, and it sat in the middle of the file — so eight screenshots, including every
+request page and both client pages, were quietly pictures of a **closed** request, and the bulk-check button
+appeared in none of them. Moved to the end, with a comment saying why the order matters. A development tool that
+misrepresents the page is worse than no tool, because the whole reason it exists is to check the page.
+
+**The honest note on the friction half:** this saves a handful of minutes a season, not hours. It is worth having
+because the review loop is the one thing a practice does every single morning, but it is not a headline, and
+`docs/product-needs.md` does not pretend otherwise.
 
 ## Phase 3 — Find out if anyone wants it
 

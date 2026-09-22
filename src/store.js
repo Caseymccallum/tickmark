@@ -237,9 +237,13 @@ export function clientSummaries(db, practiceId) {
               (SELECT COUNT(*) FROM request r WHERE r.client_id = c.id AND r.closed_at IS NULL) AS open_requests,
               (SELECT COUNT(*) FROM request r WHERE r.client_id = c.id AND r.closed_at IS NOT NULL) AS closed_requests,
               (SELECT MAX(r.created_at) FROM request r WHERE r.client_id = c.id) AS last_request_at,
+              -- When this client was last on the receiving end of anything the practice did: an email sent from
+              -- here, or a contact recorded by hand. Both count, because the question this answers is "have we
+              -- been in touch", and a phone call answers it just as well as a reminder does — which is why the
+              -- column is not called last_reminded_at any more. See logContact.
               (SELECT MAX(e.at) FROM event e
                  JOIN request r2 ON r2.id = e.request_id
-                WHERE r2.client_id = c.id AND e.kind = 'reminder.sent') AS last_reminded_at
+                WHERE r2.client_id = c.id AND e.kind IN ('reminder.sent', 'request.contacted')) AS last_contact_at
          FROM client c
         WHERE c.practice_id = ?
         ORDER BY c.name COLLATE NOCASE`,
@@ -251,6 +255,38 @@ export function clientSummaries(db, practiceId) {
       // disagree about how much is outstanding — the failure mode that would make this list untrusted.
       progress: { outstanding: outstandingForClient(db, practiceId, row.id) },
     }));
+}
+
+/**
+ * Check off everything that has arrived, in one action.
+ *
+ * The practice's own sentence — *"I have looked at them all"* — for the case that is the whole reason they open a
+ * request in the morning. Eight documents used to mean eight page loads and eight scroll-backs to find your place
+ * in the list; this is one press for the usual case, which is everything arrived, everything is fine.
+ *
+ * Four things it is careful about, and each is a way this could have been wrong:
+ *
+ * 1. **It goes through `setItemReviewed`, one item at a time.** Not an `UPDATE` over the table: the events have to
+ *    be the same ones the per-document button writes, or a request's history would depend on which way the
+ *    checking was done. Nothing here is a second implementation of a check.
+ * 2. **Only what has arrived.** An item with no file cannot be checked — `setItemReviewed` refuses it, which is the
+ *    rule that stops a request reporting itself ready while the client has sent nothing.
+ * 3. **A flagged document is checked and stays outstanding.** Checking means somebody looked at the file; the flag
+ *    means the file is no use. Those are different facts, so the item keeps being asked for — and the state stays
+ *    off "ready", which is a bug this pass fixed.
+ * 4. **It counts what it did**, so the page can say "3 documents checked" rather than leaving the practice to
+ *    count rows.
+ */
+export function markArrivalsChecked(db, practiceId, requestId, at = now()) {
+  if (!requestFor(db, practiceId, requestId)) return 0;
+  return inTransaction(db, () => {
+    let checked = 0;
+    for (const item of itemStatus(db, requestId)) {
+      if (item.withdrawn || !item.received || item.checked) continue;
+      if (setItemReviewed(db, practiceId, requestId, item.id, true, at)) checked += 1;
+    }
+    return checked;
+  });
 }
 
 /**
@@ -430,6 +466,30 @@ export function clientsDueForAsking(db, practiceId, { timezone = null, now = new
     const asked = dateIn(timezone, new Date(client.last_request_at));
     return asked.slice(5, 7) === monthOfYear && Number(asked.slice(0, 4)) < year;
   });
+}
+
+/**
+ * Note that the practice was in touch some other way — a phone call, a letter, a conversation in the office.
+ *
+ * **This is a record, not a message.** Nothing is sent, and the client is not told: the point is that the
+ * *practice's* view of a client becomes true. Until this existed the only contact the product could represent was
+ * an email it had sent itself, so a practice that chased by phone had two bad options — nag by email an hour
+ * after the call, or stop trusting the software. The research is specific that this matters: half of the
+ * practitioners surveyed name "uncooperative clients" their first concern, and uncooperative clients are the ones
+ * who do not answer email.
+ *
+ * The note is required because it is the whole content of the event. A row reading `request.contacted` with
+ * nothing after it is a row somebody has to open the request to interpret, which is the opposite of what a record
+ * is for.
+ */
+export function logContact(db, practiceId, requestId, { note, at = now() }) {
+  const found = requestFor(db, practiceId, requestId);
+  if (!found) return false;
+  const text = (note ?? '').trim();
+  if (text.length === 0) return false;
+
+  recordEvent(db, { requestId, kind: 'request.contacted', detail: text.slice(0, 200), at });
+  return true;
 }
 
 export function outstandingOf(db, requestId) {
@@ -870,15 +930,21 @@ export function requestProgress(db, requestId) {
   // calls "the fastest way to make a client stop answering".
   //
   // Order: material nobody has looked at comes first, because that is the work. Then a client's answer, because
-  // somebody has to decide something and the client is waiting. Then simply waiting. Completion is last and
-  // final — an item the client answered is never received, so a request with an answer cannot be ready.
+  // somebody has to decide something and the client is waiting. Then simply waiting.
+  //
+  // **A flagged document is not ready, and that took a bug report to notice.** `received` counts a file that
+  // arrived; a document the practice rejected has arrived and is not usable, so for a while a request whose
+  // documents had all come in and been checked went to *ready to work on* while a document was still being asked
+  // for again. Two screens disagreed about one request — the board said "ready", the chase said the client owed
+  // something, and the chase was right — which is the same defect as the `answered` gap, one layer down. Hence
+  // `needsAttention` below: something has arrived, and it has to arrive again.
   const state = counts.items === 0
     ? 'ready'
     : counts.toCheck > 0
       ? 'to-check'
       : counts.clientSaid > 0
         ? 'answered'
-        : counts.received < counts.items
+        : counts.received < counts.items || counts.needsAttention > 0
           ? 'waiting'
           : 'ready';
 

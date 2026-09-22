@@ -76,6 +76,8 @@ import {
   invitesOf,
   issueToken,
   claimInvite,
+  logContact,
+  markArrivalsChecked,
   membersOf,
   outstandingOf,
   lastNoticeAt,
@@ -264,6 +266,8 @@ export const ROUTES = [
   ['POST', /^\/requests\/([^/]+)\/send-request$/, sendOpening],
   ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
+  ['POST', /^\/requests\/([^/]+)\/check-all$/, checkAllArrivalsPage],
+  ['POST', /^\/requests\/([^/]+)\/contact$/, logContactPage],
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
   ['POST', /^\/requests\/([^/]+)\/send-reminder$/, sendReminder],
   ['POST', /^\/requests\/([^/]+)\/close$/, closeRequestPage],
@@ -1498,6 +1502,8 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   const sent = new URL(request.url, 'http://localhost').searchParams.get('sent');
   const sentWithoutLink = new URL(request.url, 'http://localhost').searchParams.get('nolink') === '1';
   const emailed = new URL(request.url, 'http://localhost').searchParams.get('emailed');
+  const justContacted = new URL(request.url, 'http://localhost').searchParams.get('contacted') === '1';
+  const checkedCount = new URL(request.url, 'http://localhost').searchParams.get('checked');
 
   const allItems = itemsOf(db, found.id);
   const live = allItems.filter((item) => !item.withdrawn);
@@ -1516,6 +1522,14 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
   // Computed from the same function the list uses, so the page and the board cannot disagree.
   const progress = requestProgress(db, found.id);
   const events = history(db, found.id);
+  // When this client was last in touch by any means, for the line in the chasing card: the question the practice
+  // asks before pressing "Draft a reminder" is "have I already spoken to them?", and until 2v the page could not
+  // answer it for a phone call.
+  const lastContact = events
+    .filter((event) => event.kind === 'reminder.sent' || event.kind === 'request.contacted')
+    .map((event) => event.at)
+    .sort()
+    .at(-1) ?? null;
 
   // The confirmation line, when the practice has just arrived from a send. Two of them, because "we asked
   // for it" and "we chased them for it" are different acts and the page should say which just happened.
@@ -1634,6 +1648,16 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
         </div>
       </div>
       ${emailedNotice}
+      ${checkedCount && /^\d+$/.test(checkedCount)
+        ? html`<p class="success"><strong>${checkedCount} document${checkedCount === '1' ? '' : 's'} checked.</strong>
+            Each one is recorded against the document it belongs to, so the history below says who looked at what and
+            when — the same rows the per-document buttons write.</p>`
+        : ''}
+      ${justContacted
+        ? html`<p class="success"><strong>Recorded.</strong> Nothing was sent — this is in the record, and it
+            counts against your chase cadence, so the batch run will leave them alone until you would be back in
+            touch anyway.</p>`
+        : ''}
       ${found.client_note ? html`<div class="greeting">${found.client_note}</div>` : ''}
       ${sentNotice}
       <p class="count">${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
@@ -1653,15 +1677,29 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
                 ${progress.toCheck === 1 ? 'document has' : 'documents have'} arrived and nothing has looked
                 at ${progress.toCheck === 1 ? 'it' : 'them'} yet. "Received" is not "ready" — do this before
                 chasing anything else, because what is already here is the thing a client is least likely
-                to send twice.</p>`
+                to send twice.</p>
+              <form method="post" action="/requests/${found.id}/check-all">
+                <div class="actions">
+                  <button type="submit" class="primary">Mark all ${progress.toCheck} as checked</button>
+                </div>
+                <p class="note">One press for the usual case: you downloaded them, read them, and they are fine.
+                Each one is still checked off on its own in the record, exactly as the buttons beside it do. If a
+                document needs sending again, use that button instead — checking it says somebody looked, and the
+                flag is what keeps it outstanding.</p>
+              </form>`
             : progress.state === 'answered'
               ? html`<p class="warning"><strong>The client has answered.</strong> ${progress.clientSaid}
                   ${progress.clientSaid === 1 ? 'document has' : 'documents have'} an answer from them —
                   see the list below. They are waiting on a decision: if the answer is fine, take the
                   document off the list; if it is not, that is a conversation rather than another
                   reminder.</p>`
-              : html`<p class="note">Waiting on the client for ${progress.outstanding} of
-                  ${progress.items} ${progress.items === 1 ? 'document' : 'documents'}.</p>`}
+              : progress.needsAttention > 0 && progress.received === progress.items
+                ? html`<p class="warning"><strong>Waiting on a replacement.</strong> Everything asked for has
+                    arrived, but ${progress.needsAttention} of them
+                    ${progress.needsAttention === 1 ? 'is' : 'are'} going to be sent again — the list below says
+                    which and why, and the client's page says the same. The next reminder asks for them.</p>`
+                : html`<p class="note">Waiting on the client for ${progress.outstanding} of
+                    ${progress.items} ${progress.items === 1 ? 'document' : 'documents'}.</p>`}
       ${attention.length > 0
         ? html`<p class="warning"><strong>${attention.length === 1 ? 'One document needs attention' : `${attention.length} documents need attention`}:</strong>
             ${attention.map((item) => item.label).join(', ')}. The client's page says what is wrong with
@@ -1750,7 +1788,7 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
         </form>
       </section>
       <section class="card">
-        <h2>Chase this client</h2>
+        <h2>Chasing this client</h2>
         ${outstanding.length > 0
           ? html`<p>${outstanding.length} still outstanding:
                 ${outstanding.map((item) => item.label).join(', ')}.</p>
@@ -1765,6 +1803,20 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
                 <button type="submit">Draft a reminder</button>
               </form>`
           : html`<p><strong>Everything asked for has arrived.</strong> There is nothing to chase.</p>`}
+        ${lastContact
+          ? html`<p class="note">Last contact: ${agoWords(lastContact, now())}.</p>`
+          : ''}
+
+        <h3>Been in touch another way?</h3>
+        <form method="post" action="/requests/${found.id}/contact" class="stack">
+          <label for="contact-note">What happened? <span class="note">it goes in the record, and it is what stops the chase writing to them again</span></label>
+          <input id="contact-note" name="note" maxlength="200" required
+            placeholder="Phoned — Sarah says the statements are with the bank">
+          <div class="row tight"><button type="submit">Record it</button></div>
+        </form>
+        <p class="note">A phone call, a letter, a conversation in the office — anything that is not an email from
+        here. <strong>Nothing is sent and the client is not told:</strong> this is you making the record true, so the
+        tool knows you have already spoken to them.</p>
       </section>
       <section class="card">
         <h2>What has happened</h2>
@@ -2622,7 +2674,7 @@ function listClients({ db, response, practitioner, practiceId, url }) {
             <th align="left">Address</th>
             <th align="right">Open</th>
             <th align="right">Outstanding</th>
-            <th align="left">Last written to</th>
+            <th align="left">Last contact</th>
             <th align="left"></th>
           </tr>
         </thead>
@@ -2645,8 +2697,8 @@ function listClients({ db, response, practitioner, practiceId, url }) {
             <td align="right">${row.progress.outstanding === 0
               ? html`<span class="muted">—</span>`
               : html`<strong>${row.progress.outstanding}</strong>`}</td>
-            <td>${row.last_reminded_at
-              ? html`<span class="muted">${row.last_reminded_at.slice(0, 10)}</span>`
+            <td>${row.last_contact_at
+              ? html`<span class="muted">${dateIn(timezone, new Date(row.last_contact_at))}</span>`
               : html`<span class="muted">never</span>`}</td>
             <td>
               <a class="btn sm" href="/requests/new?for=${row.id}">New request</a>
@@ -2748,12 +2800,12 @@ function clientsCsv({ db, response, practitioner, practiceId, url }) {
       row.open_requests,
       row.closed_requests,
       row.progress.outstanding,
-      row.last_reminded_at ? row.last_reminded_at.slice(0, 10) : '',
+      row.last_contact_at ? row.last_contact_at.slice(0, 10) : '',
       row.created_at.slice(0, 10),
     ]);
 
   return sendCsv(response, 'tickmark-clients.csv', [
-    ['Client', 'Address', 'Open requests', 'Closed requests', 'Outstanding', 'Last written to', 'First asked'],
+    ['Client', 'Address', 'Open requests', 'Closed requests', 'Outstanding', 'Last contact', 'First asked'],
     ...rows,
   ]);
 }
@@ -3512,12 +3564,14 @@ function chaseList(db, practiceId) {
     .map((row) => ({
       ...row,
       outstanding: outstandingOf(db, row.id),
-      // When this request was last reminded, so that the page can say it. The run does not refuse to
-      // remind somebody twice — chasing is what a practice does, and a second nudge a week later is
-      // normal — but it should never be a surprise, and a client written to twice in an hour by accident
-      // is exactly the kind of thing a practice would stop trusting the button over.
-      lastRemindedAt: db
-        .prepare("SELECT MAX(at) AS at FROM event WHERE request_id = ? AND kind = 'reminder.sent'")
+      // When this request was last *contacted* — an email the run sent, or a call the practice recorded. Both,
+      // because the practice's question is "have we been in touch about this", and the cadence exists to stop the
+      // software contradicting what a person already did. A practice that phoned a client yesterday and is then
+      // told to write to them today would conclude, correctly, that the tool was not paying attention.
+      lastContactAt: db
+        .prepare(
+          "SELECT MAX(at) AS at FROM event WHERE request_id = ? AND kind IN ('reminder.sent', 'request.contacted')",
+        )
         .get(row.id).at,
     }))
     .filter((row) => row.outstanding.length > 0)
@@ -3529,15 +3583,68 @@ function chaseList(db, practiceId) {
 }
 
 /**
+ * Check off everything that has arrived, in one action, and say how many.
+ *
+ * The count in the redirect is what makes this honest: the page the practice lands on says "3 documents checked"
+ * rather than leaving them to work out whether the press did anything.
+ */
+function checkAllArrivalsPage({ db, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const checked = markArrivalsChecked(db, practiceId, params[0]);
+  if (checked === 0) {
+    return fail(
+      response,
+      404,
+      'There was nothing to check: either that request does not exist, or nothing on it has arrived that nobody has looked at yet.',
+      practitioner,
+    );
+  }
+  return redirect(response, `/requests/${params[0]}?checked=${checked}`);
+}
+
+/**
+ * Record a contact that was not an email from here.
+ *
+ * Nothing is sent — this is the practice writing down something they already did, and the client is not told. The
+ * only sign of it is in the record and in the cadence, which is exactly the point: the tool stops offering to
+ * chase somebody the practice spoke to this morning.
+ */
+async function logContactPage({ db, request, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const note = (field(fields, 'note') ?? '').trim();
+
+  if (note.length === 0) {
+    return fail(
+      response,
+      400,
+      'Say what happened in a few words — "phoned, sending the rest Friday". The note is the record; a row with nothing in it is a row somebody has to interpret later.',
+      practitioner,
+    );
+  }
+  if (note.length > 200) {
+    return fail(response, 400, 'That note is longer than 200 characters. Keep it to what you would write on the file.', practitioner);
+  }
+  if (!logContact(db, practiceId, params[0], { note })) {
+    return fail(response, 404, 'There is no request at that address.', practitioner);
+  }
+
+  return redirect(response, `/requests/${params[0]}?contacted=1`);
+}
+
+/**
  * Whether the practice's own cadence holds a reminder back.
  *
- * The rule is one line and it lives in one place, because the page and the run must agree about it: a page
- * that says "this sends 4" over a run that sends 2 would be the same class of lie as a banner that
- * overstates itself anywhere else.
+ * The rule is one line and it lives in one place, because the page and the run must agree about it: a page that
+ * says "this sends 4" over a run that sends 2 would be the same class of lie as a banner that overstates itself
+ * anywhere else.
+ *
+ * It reads **any** contact rather than only the emails this tool sent, which is the change 2v made: the setting is
+ * about how often a client hears from the practice, and a phone call is hearing from the practice.
  */
 function heldBackBy(line, cadenceDays, nowIso = now()) {
-  if (cadenceDays <= 0 || !line.lastRemindedAt) return false;
-  const days = (Date.parse(nowIso) - Date.parse(line.lastRemindedAt)) / 86400000;
+  if (cadenceDays <= 0 || !line.lastContactAt) return false;
+  const days = (Date.parse(nowIso) - Date.parse(line.lastContactAt)) / 86400000;
   return days < cadenceDays;
 }
 
@@ -3617,9 +3724,9 @@ function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
                     repeats that back rather than asking again</span>`
                 : ''}</td>
             <td>${row.client_email ?? html`<span class="badge bad">no email address on this client</span>`}</td>
-            <td>${row.lastRemindedAt
-              ? html`<span class="cell-s">reminded ${agoWords(row.lastRemindedAt, now())}</span>`
-              : html`<span class="cell-s muted">never reminded</span>`}
+            <td>${row.lastContactAt
+              ? html`<span class="cell-s">in touch ${agoWords(row.lastContactAt, now())}</span>`
+              : html`<span class="cell-s muted">never in touch</span>`}
               ${held.includes(row) ? html`${badge('held back — inside your cadence', TONES.waiting)}` : ''}</td>
           </tr>`)}
         </tbody>
@@ -3635,7 +3742,7 @@ function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
           request and copy its reminder by hand.</p>`
       : sendable.length === 0
         ? html`<p class="note">Nothing would be sent at the moment${held.length > 0
-            ? html`, because every client who owes something was written to inside your
+            ? html`, because every client who owes something was in touch inside your
                 ${cadenceDays}-day cadence`
             : ''}. <a href="/requests">The board</a> shows what is outstanding.</p>`
         : html`<p class="warning">This sends <strong>${sendable.length}</strong>
@@ -3683,7 +3790,9 @@ function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
         <p class="note"><strong>0 means no limit, and that is where this starts.</strong> How often it is
         acceptable to chase a client is your judgement about your clients, not a number this should pick for
         you — which is why there is no default. Any number of days holds a repeat back: even 1 day stops the
-        same client being written to twice in one afternoon, which is the accident worth preventing.
+        same client being contacted twice in one afternoon, which is the accident worth preventing.
+        <strong>It counts every kind of contact</strong>, including a call you record by hand, because the
+        question is how often a client hears from you rather than how many emails the tool sent.
         <strong>It applies to this page only.</strong> Opening one request and sending that reminder by hand
         is never held back, because there you are looking at that client.</p>
 
@@ -3957,10 +4066,11 @@ function chaseReportPage({ practitioner, results, skipped, held = [], cadenceDay
         : ''}
       ${held.length > 0
         ? html`<p class="note"><strong>${held.length} ${held.length === 1 ? 'client was' : 'clients were'}
-            not written to</strong>, because you asked not to remind the same client more often than every
-            ${cadenceDays} ${cadenceDays === 1 ? 'day' : 'days'} and they were reminded more recently than
-            that. Nothing is wrong: they are still on <a href="/chase">the chase list</a>, and the setting
-            is on that page if you want to change it.</p>`
+            not written to</strong>, because you asked not to be in touch with the same client more often than
+            every ${cadenceDays} ${cadenceDays === 1 ? 'day' : 'days'} and they were contacted more recently
+            than that — by an email from here, or by something you recorded yourself. Nothing is wrong: they
+            are still on <a href="/chase">the chase list</a>, and the setting is on that page if you want to
+            change it.</p>`
         : ''}
       ${later.length > 0
         ? html`<p class="warning"><strong>The run stopped before it finished.</strong> It reached its time
@@ -3984,7 +4094,7 @@ function chaseReportPage({ practitioner, results, skipped, held = [], cadenceDay
               ${held.map((row) => html`<tr>
                 <td><span class="cell-t">${row.client_name}</span></td>
                 <td><a href="/requests/${row.id}">${row.title}</a></td>
-                <td>${badge(`held back by your cadence — reminded ${agoWords(row.lastRemindedAt, now())}`, TONES.waiting)}</td>
+                <td>${badge(`held back by your cadence — in touch ${agoWords(row.lastContactAt, now())}`, TONES.waiting)}</td>
               </tr>`)}
               ${skipped.map((row) => html`<tr>
                 <td><span class="cell-t">${row.client_name}</span></td>

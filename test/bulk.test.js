@@ -88,7 +88,7 @@ test('the list before the button names everyone, and says who cannot be reached'
     assert.match(page, /This sends <strong>1<\/strong>/, 'the banner counts what can actually be sent');
     assert.match(page, /1 client is\s+left out for want of an email address/, 'and counts what cannot');
     assert.match(page, /Send 1\s+reminder/, 'the button says how many');
-    assert.match(page, /never reminded/, 'and the list says nobody has been reminded yet');
+    assert.match(page, /never in touch/, 'and the list says nobody has been contacted yet');
     assert.match(page, /127\.0\.0\.1:\d+ \(the test relay\)/, 'the relay is named, so the practice knows what will send');
   }, { mailer: mailerFor(relay) });
 });
