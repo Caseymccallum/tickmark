@@ -28,6 +28,42 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+/**
+ * The invitation table, in its own constant because **two things need it**: the schema a fresh database is
+ * built from, and the migration that rebuilds it on an upgrade. SQLite cannot relax a `NOT NULL` in place,
+ * so the only way to let an invitation exist without a key in it is to build the table again and copy the
+ * rows across — and two copies of this DDL would drift, leaving migrated and fresh databases quietly
+ * different from each other. One definition, used by both, is the only version of this that stays true.
+ */
+const INVITE_TABLE = `CREATE TABLE IF NOT EXISTS invite (
+  id          TEXT PRIMARY KEY,
+  practice_id TEXT NOT NULL REFERENCES practice(id),
+  created_by  TEXT NOT NULL REFERENCES practitioner(id),
+  -- **Nullable**, because an invitation does not always hand over a key. An assistant is being asked to
+  -- chase documents, not to read them, so there is nothing to seal and nothing for their browser to open —
+  -- and an invitation that carried a key anyway would put the practice's private key in a browser that has
+  -- no business holding it, whatever the server later chose to store.
+  --
+  -- Which is also why the two are constrained together: an invitation either carries a key or it does not,
+  -- and a row with one of these set and the other empty is a bug rather than a state. The CHECK is what
+  -- makes the schema's claim true rather than aspirational; it is also why this table is rebuilt on
+  -- upgrade, since SQLite cannot relax NOT NULL in place (see \`sealedInvites\` below).
+  key_id      TEXT REFERENCES practice_key(id),
+  token_hash  TEXT NOT NULL UNIQUE,
+  sealed_key  TEXT,
+  expires_at  TEXT NOT NULL,
+  used_at     TEXT,
+  used_by     TEXT REFERENCES practitioner(id),
+  created_at  TEXT NOT NULL,
+  -- What the person who accepts this will be. Nullable, and null reads as 'owner' — the powers an
+  -- invitation granted before roles existed, which is the convention everywhere else in this file. It
+  -- barely matters in practice: an invitation lives fourteen days, so the window in which a null means
+  -- anything closes almost immediately.
+  role        TEXT,
+  CHECK ((key_id IS NULL) = (sealed_key IS NULL))
+);
+`;
+
 export const SCHEMA = `
 -- A practice: the firm, which is the thing that owns client records, keys and requests.
 --
@@ -78,7 +114,14 @@ CREATE TABLE IF NOT EXISTS practitioner (
   --
   -- Nullable, and null means "a member". A database written before this column existed has no removals,
   -- which is the only honest reading of it.
-  removed_at          TEXT
+  removed_at          TEXT,
+  -- What this person may do: 'owner', 'accountant' or 'assistant' — see src/roles.js, which is where the
+  -- model is written down and where the one interesting role is explained.
+  --
+  -- Nullable, and null reads as 'owner': the behaviour before this column existed, when every member of a
+  -- practice could do everything. An install that upgrades keeps every power it already had and tightens
+  -- its roles deliberately, rather than discovering a silent downgrade nobody asked for.
+  role                TEXT
 );
 
 -- A practice's keys, as a history rather than a single value.
@@ -136,18 +179,7 @@ CREATE INDEX IF NOT EXISTS wrap_member ON key_wrapping(practitioner_id);
 --
 -- Rows are marked used rather than deleted, because "someone was invited, and accepted" is part of the
 -- record of a firm.
-CREATE TABLE IF NOT EXISTS invite (
-  id          TEXT PRIMARY KEY,
-  practice_id TEXT NOT NULL REFERENCES practice(id),
-  created_by  TEXT NOT NULL REFERENCES practitioner(id),
-  key_id      TEXT NOT NULL REFERENCES practice_key(id),
-  token_hash  TEXT NOT NULL UNIQUE,
-  sealed_key  TEXT NOT NULL,
-  expires_at  TEXT NOT NULL,
-  used_at     TEXT,
-  used_by     TEXT REFERENCES practitioner(id),
-  created_at  TEXT NOT NULL
-);
+${INVITE_TABLE}
 
 CREATE INDEX IF NOT EXISTS invite_token ON invite(token_hash);
 
@@ -389,7 +421,7 @@ function migrate(db) {
   // and adding the practice migration silently made `migratedKeys` mean something else — which a test
   // caught, and which would have been a lie in the one place an operator looks to see what happened to
   // their database.
-  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0, wrappings: 0 };
+  const changes = { keys: singleKeyColumnsToTable(db), columns: 0, tenancy: 0, session: 0, wrappings: 0, invites: 0 };
   for (const [table, column, definition] of [
     ['request_item', 'withdrawn_at', 'TEXT'],
     ['request_item', 'attention_at', 'TEXT'],
@@ -408,10 +440,14 @@ function migrate(db) {
     ['practice', 'cadence_days', 'INTEGER'],
     ['practice', 'timezone', 'TEXT'],
     ['practice', 'notify_on_upload', 'INTEGER'],
+    ['practitioner', 'role', 'TEXT'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }
   changes.tenancy = practitionerGetsAPractice(db);
+  // After the column loop and before anything reads an invitation, because an invitation's shape is what
+  // changed here rather than its contents.
+  changes.invites = sealedInvites(db);
   changes.session = sessionPracticeColumnGoes(db);
   // After tenancy, because a wrapping needs the practitioner's practice to make sense of — and the
   // person who made the key is exactly the person the copy belongs to.
@@ -481,6 +517,52 @@ function practitionerGetsAPractice(db) {
     throw error;
   }
   return changed;
+}
+
+/**
+ * An invitation can now exist without a key in it, so the two key columns have to become nullable.
+ *
+ * An assistant is asked to chase documents, not to read them, so their invitation carries nothing to
+ * unseal — and an invitation that carried a key anyway would put the practice's private key into a browser
+ * that has no business holding it, whatever the server afterwards decided to store. That is the whole
+ * reason this migration exists: not tidiness, but not handing a key to somebody who will not be keeping it.
+ *
+ * **SQLite cannot relax a `NOT NULL` in place**, so the table is built again and the rows copied across.
+ * This is the first migration in this file to do that, and what makes it safe is worth writing down rather
+ * than assuming. `invite` has **no incoming foreign keys** — nothing in the schema references it — so there
+ * is no web of constraints to unhook and the copy cannot break a row somewhere else. And all of it runs in
+ * one transaction, so a process that dies halfway leaves the old table exactly as it was rather than a
+ * half-built replacement nobody reads.
+ *
+ * What it checks for is the thing it actually cares about — whether `sealed_key` is *still* NOT NULL —
+ * rather than a version number. A database that has been through this stays through it, and a database
+ * built by the current `SCHEMA` never enters.
+ */
+function sealedInvites(db) {
+  const sealed = db
+    .prepare(`SELECT name, "notnull" FROM pragma_table_info('invite')`)
+    .all()
+    .find((column) => column.name === 'sealed_key');
+  if (!sealed || sealed.notnull === 0) return 0;
+
+  // Named columns rather than `SELECT *`, because the two tables differ by exactly one column and this is
+  // where that is said out loud. The new `role` is deliberately not carried: there is nothing to carry it
+  // from, and null reads as the powers an invitation granted before roles existed (`src/roles.js`).
+  const carried =
+    'id, practice_id, created_by, key_id, token_hash, sealed_key, expires_at, used_at, used_by, created_at';
+
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE invite RENAME TO invite_narrow');
+    db.exec(INVITE_TABLE);
+    db.exec(`INSERT INTO invite (${carried}) SELECT ${carried} FROM invite_narrow`);
+    db.exec('DROP TABLE invite_narrow');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return 1;
 }
 
 function columnsOf(db, table) {

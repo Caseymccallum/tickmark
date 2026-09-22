@@ -139,6 +139,8 @@ await withServer(async ({ base, agent, db }) => {
   db.prepare('UPDATE request SET closed_at = ? WHERE id = ?').run(lastYear.toISOString(), practice.requestId);
   await save('clients, due to be asked', '/clients?due=1', client);
   await save('ask everyone, due pre-ticked', '/ask-everyone?due=1', client);
+  // The half that lived only on the clients page until now: the board saying the year has come round.
+  await save('board, the season coming round', '/requests', client);
 });
 
 writeFileSync(join(out, 'INDEX.txt'), `${pages.join('\n')}\n`);

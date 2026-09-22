@@ -101,6 +101,63 @@ test('asking a client takes them off the list, which is what makes it a to-do li
   }, [['Due Ltd', `${year - 1}-${day}-05T09:00:00.000Z`, { open: false }]]);
 });
 
+test('the board tells the practice the year has come round, because that is the page they open', async () => {
+  const month = thisMonth();
+  const year = Number(month.slice(0, 4));
+  const day = month.slice(5);
+
+  await withHistory(async ({ client }) => {
+    // The gap this closes: `clientsDueForAsking` was accurate and lived only on the clients page, so a practice
+    // who works from the board every morning would never be told. No scheduler, no email — the software notices
+    // when it is used, on the screen the practice actually starts from.
+    const board = await (await client.get('/requests')).text();
+    assert.match(board, /due to be asked/, 'the board says so');
+    assert.match(board, /1\s+client is/, 'and counts exactly one, in the singular');
+    assert.match(board, /href="\/ask-everyone\?due=1"/, 'linking straight to the ask, already ticked');
+    assert.match(board, /nothing is sent until you press it/, 'and saying plainly that nothing sends itself');
+
+    // Shown on the home state only. A notice that follows somebody into a filtered list stops being a notice.
+    //
+    // Each of these negative assertions is paired with a positive one, and that is not decoration: an assertion
+    // that a page *does not* contain something passes on a 500 as happily as on a correct page. The first
+    // version of this test did exactly that — the filtered board was throwing, and "not while a filter is on"
+    // was green because the error page has no season notice on it either.
+    const filtered = await client.get('/requests?state=waiting');
+    assert.equal(filtered.status, 200, 'the filtered board renders at all');
+    const filteredPage = await filtered.text();
+    assert.match(filteredPage, /Nothing is in that state|waiting on clients/, 'and is the board, not an error');
+    assert.ok(!/due to be asked/.test(filteredPage), 'not while a filter is on');
+
+    const searched = await client.get('/requests?q=northwind');
+    assert.equal(searched.status, 200, 'the searched board renders at all');
+    const searchedPage = await searched.text();
+    assert.match(searchedPage, /1 request|Nothing matches/, 'and is the board, not an error');
+    assert.ok(!/due to be asked/.test(searchedPage), 'and not while searching');
+
+    const closed = await client.get('/requests?closed=1');
+    assert.equal(closed.status, 200, 'the closed tab renders at all');
+    const closedPage = await closed.text();
+    assert.match(closedPage, /Closed is a status, not a deletion/, 'and is the closed board, not an error');
+    assert.ok(!/due to be asked/.test(closedPage), 'and never on the closed tab, which is about the past');
+  }, [['Due Ltd', `${year - 1}-${day}-05T09:00:00.000Z`, { open: false }]]);
+});
+
+test('the board says nothing when nobody is due', async () => {
+  // Silence is the correct state for most of the year, and a notice that appeared anyway would be the noise
+  // this product's chase rules exist to avoid.
+  const month = thisMonth();
+  const year = Number(month.slice(0, 4));
+
+  await withHistory(async ({ client }) => {
+    // The empty case has its own name because it is the one that broke first: an empty array is *truthy*, so
+    // the first version of this notice rendered as "0 clients are due to be asked" on every board all year.
+    // A notice that is wrong most of the time is worse than no notice, which is the whole reason this test is
+    // separate from the one above.
+    const board = await (await client.get('/requests')).text();
+    assert.ok(!/due to be asked/.test(board), 'nothing to say, so nothing is said');
+  }, [['Not Yet Ltd', `${year - 1}-${previousMonth().slice(5)}-05T09:00:00.000Z`, { open: false }]]);
+});
+
 test('the clients page counts who is due, filters to them, and says the rule out loud', async () => {
   const month = thisMonth();
   const year = Number(month.slice(0, 4));

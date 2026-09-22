@@ -35,7 +35,9 @@ Phase 2   Make it usable in the field
           2u the year coming round  COMPLETE — who is due an ask, and the seasonal bulk ask that follows
           2v the contact that was not an email  COMPLETE — a call in the record, and the cadence counts it
           2w the review loop         COMPLETE — one press to check off what arrived, and a "ready" that no longer lies
-Phase 3   Find out if anyone wants it  NOT STARTED — and it is Phase 0
+          2x the season notice       COMPLETE — the board says the year has come round, where the practice looks
+          2y looking inside a file   COMPLETE — locked PDFs and duplicate files, caught in the browser, before upload
+Phase 3   Find out if anyone wants it  RUNNING — posted to two practitioner groups; see docs/verify-demand.md
 Phase 4   Grow the surface             NOT PLANNED
 ```
 
@@ -936,7 +938,72 @@ misrepresents the page is worse than no tool, because the whole reason it exists
 because the review loop is the one thing a practice does every single morning, but it is not a headline, and
 `docs/product-needs.md` does not pretend otherwise.
 
+## Phase 2x — The season notice where the practice actually looks
+
+2u built the rule and put it on the clients page. **The weakness was placement, not logic:** a practice that
+starts every morning on `/requests` was never told the year had come round, because the notice lived on a page
+they had no reason to open. This is the third of 2u's three properties finally delivered — "it cannot nag
+anybody" was always true, and "the practice is told" was only true if they happened to look.
+
+The board now carries it, on its **home state only** — not the closed tab, not a filtered list, not a search —
+because a notice that follows somebody around stops being a notice. It is one sentence with the count, and a
+link straight into the pre-ticked bulk ask. **No cron, no daemon, no scheduler:** the software notices when
+somebody uses it, which is exactly when somebody needs telling, and the send stays a thing a person presses.
+
+**The bug that shipped for one test run was `[].length`.** `seasonNotice` is `null` on a filtered view, and the
+first version asked `seasonNotice.length > 0` — a `TypeError` that made **the board return a 500 on every
+filtered, searched and closed view**. The pre-existing suite caught it in six other files while the new test
+went green, because that test asserted the *absence* of text and an error page has no season notice on it
+either. Both halves of that are now fixed: the guard is `seasonNotice?.length`, and every negative assertion in
+the new test is paired with a positive one so a broken page cannot pass by being empty. **A test that only
+asserts what is missing cannot tell a correct page from a 500** — worth remembering the next time the easy
+assertion is the negative one.
+
+The empty case has its own test for the same reason: an empty array is truthy, so the first draft would have
+said *"0 clients are due to be asked"* on every board in the country for eleven months of the year.
+
+## Phase 2y — Looking inside a file, without sending it anywhere
+
+Straight out of the demand research. Suralink's front page sells *"AI agents… pre-screen client documents and
+data as they arrive"* — which only works if the platform reads every file, in full, server-side. That is the one
+thing this product can never do, so it looked like a capability gap. It is not: **the plaintext is already in the
+browser when the client picks a file**, so the file can be looked at there, and nothing has to be read by a
+server for the client to be warned before they send it.
+
+Two checks, in `web/preflight.js` — a pure module, so it is tested in node rather than by clicking:
+
+1. **A password-protected PDF.** Bank statements arrive locked more often than not — the password is a date of
+   birth or a postcode — and the client has no idea, because it opens fine on their machine. The practice gets a
+   file it cannot open and the document goes round the reviewing loop again. A PDF that is encrypted says so in
+   its trailer dictionary, and that entry **cannot itself be encrypted**, because a reader has to find it before
+   it can decrypt anything — so `/Encrypt` is plain text in the file and can be found without a parser. Both ends
+   are searched, because a linearised PDF keeps a copy of the trailer at the start.
+2. **The same file twice.** *"Clients re-sending the same thing"* is a named pain in this product's own research.
+
+**Both warn rather than refuse**, and that is the design rather than a compromise. The browser's judgement is a
+heuristic — a document that merely *mentions* `/Encrypt` would be a false positive — and the client may not be
+able to do anything about it. A warning that stops somebody sending the only copy they have would be worse than
+the problem it prevents. The size limit stays the one refusal, because the server would refuse it anyway and a
+dead button is the honest signal.
+
+**The duplicate check compares filename and size, not a hash, and that is the interesting decision.** A hash of
+the contents would catch more — a re-scan, the same file renamed — and it is precisely what this product must
+never hold: a hash of a scanned bank statement is a *verifier* for that statement, and a server that holds one
+can be asked to confirm whether a given file is yours. Filename and size are already displayed on the client's
+own page, so comparing them discloses nothing new. `test/preflight.test.js` asserts that no digest appears in
+the payload the page hands the browser, so the day somebody adds one for a good reason, it fails and the
+argument has to be had again.
+
+**The research that produced it, recorded because it is also the competitive picture.** Suralink — 1,300 firms,
+800,000 clients, and *"so nothing gets chased twice"* on their front page — has moved upmarket into audit
+automation, prices behind a demo, and reads every document with AI. **The demand is therefore confirmed by
+somebody else's revenue, and the question is no longer whether this is needed but which segment is not buying
+that.** What this product can do that they cannot is look at a file it is not allowed to keep. `docs/verify-demand.md`
+has the whole reading, including the honest note that two respondents in, nobody has raised where their clients'
+documents sit.
+
 ## Phase 3 — Find out if anyone wants it
+
 
 **Status: not started, and it is Phase 0.** Running the demand check, and then the first session
 `docs/first-user.md` describes in spirit: a practitioner with a document that matters, watched without

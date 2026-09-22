@@ -550,6 +550,8 @@ const CLIENT_AND_MISC = `
   .client .badge { height: 22px; font-size: var(--fs-sm); }
   .client .upload { display: flex; flex-direction: column; gap: .4rem; margin: 0; }
   .client .upload .status { font-size: var(--fs-sm); }
+  /* A check the browser made and the client can act on: not a refusal, so not the error colour either. */
+  .client .upload .status.warn { color: var(--warn-ink); }
   .client .says { margin-top: .35rem; }
 
   /* --- misc --------------------------------------------------------------------------------- */

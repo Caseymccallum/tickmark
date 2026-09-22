@@ -183,8 +183,8 @@ Tickmark's answer is: **on your server, and nobody else.**
   and a document flagged for re-sending keeps the request off "ready", because a file that
   is no use is not a file that is in
 - **clients as records**: a directory of everyone you ask, with what each still owes and
-  whether they can be written to at all, and **who is due an ask** now that the year has come
-  round. See [docs/clients.md](docs/clients.md).
+  whether they can be written to at all, and **who is due an ask** — shown on the board when the year
+  has come round, and with the ask already ticked. See [docs/clients.md](docs/clients.md).
 - **a list you use again**: a checklist saved under a name, and **ask everyone at once** —
   one list, one deadline, a request per client with its own link, and a report naming every
   outcome
@@ -202,7 +202,18 @@ Tickmark's answer is: **on your server, and nobody else.**
   added mid-season and open the documents that arrived before they did. An invitation
   carries a copy of that key without the server ever seeing it, and **removing a member**
   destroys their copies and ends their sessions without deleting the record of what they
-  did. There are no roles or permissions; see [docs/members.md](docs/members.md).
+  did.
+- **three roles** (see [docs/roles.md](docs/roles.md)): an **owner** who holds the keys and decides who else
+  is in the practice, an **accountant** who does the client work, and an **assistant** who can ask clients for
+  documents, chase them and record a phone call — **and cannot open what comes back.** That last one is not a
+  checkbox: files are sealed to the practice's key, a key is opened by a copy that belongs to a *member*, and
+  an assistant holds no copy. The permission is enforced by the same arithmetic that keeps the server out, so
+  there is no setting to get wrong and no operator — including us — who could grant it.
+- **two checks before a file is even encrypted**: a **password-protected PDF** (bank statements arrive locked
+  more often than not, and the client has no idea, because it opens fine on their machine) and **the same file
+  sent twice**. Both happen in the browser, because the file is still there — the alternative is reading every
+  document on the server, which this design rules out. Both warn rather than refuse, because stopping somebody
+  sending the only copy they have would be worse than the problem.
 
 ## What it will not do
 
@@ -217,15 +228,17 @@ first version, not an oversight:
 - **no compliance badges.** No SOC 2, no "IRS-compliant", no "GDPR-certified". The
   honest claim is narrower and better for this buyer: your data is on your hardware,
   and the operator cannot read the files.
-- **no roles or permissions.** Several people can be in one practice, each with their own login and
-  their own passphrase — but everyone can see and do everything. There are no seats, no per-user
-  pricing, and no "read only" colleague. If you need permissions rather than shared access, this is not
-  it yet.
+- **no read-only seat, and no per-client permissions.** Three roles cover the boundaries that exist in a real
+  practice — see [docs/roles.md](docs/roles.md) for the two that were considered and refused. Everybody sees
+  the board, because somebody who cannot see that a document is outstanding cannot help collect it.
 - **no mobile app.** Responsive pages only.
-- **no AI.** Nothing here sends a client's documents anywhere.
-- **no scheduled requests.** The year coming round is a list on your clients page and a button you press,
-  not a robot that writes to your clients because a date arrived. If you want something that acts while
-  nobody is looking, this is deliberately not it.
+- **no AI.** Nothing here sends a client's documents anywhere. The browser-side checks above are the only
+  document inspection this product can ever do, and they are possible *because* nothing is uploaded to a
+  server to be read — see [docs/roadmap.md](docs/roadmap.md) 2y for the reading of a competitor that took the
+  opposite route.
+- **no scheduled requests.** The year coming round is a notice on your board — with the count, and one link
+  into the ask you press — not a robot that writes to your clients because a date arrived. If you want
+  something that acts while nobody is looking, this is deliberately not it.
 
 ## The honest limits of the encryption
 
@@ -246,6 +259,19 @@ Worth being precise, because it is the product's main claim:
   who uploaded it was who they claimed to be.
 
 ## Documents
+
+- [mvp.md](docs/mvp.md) — the data model, the event vocabulary, and what version one does not have
+- [roadmap.md](docs/roadmap.md) — what was built, in what order, and the reasoning for each refusal
+- [product-needs.md](docs/product-needs.md) — the needs, and what meets them
+- [encryption.md](docs/encryption.md) — the envelope, the key hierarchy, and what a compromise would mean
+- [members.md](docs/members.md) — several people in one practice, and how a key reaches a second one
+- [roles.md](docs/roles.md) — who can do what, and why an assistant genuinely cannot open a file
+- [clients.md](docs/clients.md) — clients as records rather than strings
+- [design.md](docs/design.md) — the look, and the rules that keep it consistent
+- [mail.md](docs/mail.md) — configuring a relay, and testing it
+- [saas.md](docs/saas.md) — the hosted layer, and what is not proven about it
+- [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
+- [demand-posts.md](docs/demand-posts.md) — where to ask, and what the room rules actually say
 
 | File | What it is |
 | --- | --- |

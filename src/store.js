@@ -14,6 +14,9 @@ import { endAllSessions } from './auth.js';
 // For the one read that compares a stored timestamp against a calendar rather than against a number of days:
 // whether the year has come round for a client. Same reasoning as the overdue date in `src/app.js`.
 import { dateIn, monthIn } from './clock.js';
+// For the one question a role change asks of the model rather than of the database: whether the new role
+// holds the key. Store and policy stay separate — this imports the answer, it does not restate it.
+import { holdsKey } from './roles.js';
 
 /** Run `fn` in a transaction, rolling back on any throw. */
 export function inTransaction(db, fn) {
@@ -38,12 +41,12 @@ export function inTransaction(db, fn) {
  * client link has, for the same reason: a person who needs an account should not have to be found in a
  * directory first.
  */
-export function createInvite(db, { practiceId, createdBy, keyId, sealedKey, tokenHash, expiresAt, at = now() }) {
+export function createInvite(db, { practiceId, createdBy, keyId = null, sealedKey = null, role = null, tokenHash, expiresAt, at = now() }) {
   const id = newId();
   db.prepare(
-    `INSERT INTO invite (id, practice_id, created_by, key_id, token_hash, sealed_key, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, practiceId, createdBy, keyId, tokenHash, sealedKey, expiresAt, at);
+    `INSERT INTO invite (id, practice_id, created_by, key_id, token_hash, sealed_key, expires_at, created_at, role)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, practiceId, createdBy, keyId, tokenHash, sealedKey, expiresAt, at, role);
   return id;
 }
 
@@ -104,16 +107,34 @@ export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey,
 
     const practitionerId = existing
       ? existing.id
-      : createPractitioner(db, { practiceId: invite.practice_id, email, passwordHash, at });
+      : createPractitioner(db, { practiceId: invite.practice_id, email, passwordHash, role: invite.role, at });
 
     if (existing) {
       // Back, with a new password and no memory of the removal date. Losing that date is a named limit
       // rather than an oversight: a membership history would need its own table, and docs/members.md
       // says so rather than this half-building one.
-      db.prepare('UPDATE practitioner SET password_hash = ?, removed_at = NULL WHERE id = ?').run(passwordHash, practitionerId);
+      //
+      // The role is only touched when the invitation carries one. An invitation made before roles existed
+      // says nothing about them, and reading its silence as "owner" on a *rejoin* would quietly promote
+      // somebody who had been an assistant — which is the one thing a permission system must never do by
+      // accident.
+      if (invite.role) {
+        db.prepare('UPDATE practitioner SET password_hash = ?, removed_at = NULL, role = ? WHERE id = ?')
+          .run(passwordHash, invite.role, practitionerId);
+      } else {
+        db.prepare('UPDATE practitioner SET password_hash = ?, removed_at = NULL WHERE id = ?')
+          .run(passwordHash, practitionerId);
+      }
     }
 
-    addKeyWrapping(db, { keyId: invite.key_id, practitionerId, wrappedPrivateKey, at });
+    // **A key is handed over only if the invitation carried one.** This is the line that makes an assistant
+    // an assistant: no wrapping is written, so nothing in this practice opens anything for them — not
+    // because a rule says so, but because they hold nothing that decrypts. An invitation made without a key
+    // has no `wrappedPrivateKey` to store, and one made before this column was nullable always has one, so
+    // both kinds of invitation pass through here unchanged.
+    if (invite.key_id !== null && wrappedPrivateKey) {
+      addKeyWrapping(db, { keyId: invite.key_id, practitionerId, wrappedPrivateKey, at });
+    }
     db.prepare('UPDATE invite SET used_at = ?, used_by = ? WHERE id = ?').run(at, practitionerId, invite.id);
 
     return { state: existing ? 'rejoined' : 'joined', practitionerId, practiceId: invite.practice_id };
@@ -154,11 +175,11 @@ export function createPractice(db, { name, at = now() }) {
  * firm to belong to by forgetting an argument — the insert fails loudly instead of writing a row that
  * belongs to nobody.
  */
-export function createPractitioner(db, { practiceId, email, passwordHash, at = now() }) {
+export function createPractitioner(db, { practiceId, email, passwordHash, role = null, at = now() }) {
   const id = newId();
   db.prepare(
-    'INSERT INTO practitioner (id, practice_id, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, practiceId, email, passwordHash, at);
+    'INSERT INTO practitioner (id, practice_id, email, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, practiceId, email, passwordHash, at, role);
   return id;
 }
 
@@ -1073,9 +1094,71 @@ export function setCadence(db, practiceId, days) {
 export function membersOf(db, practiceId) {
   return db
     .prepare(
-      'SELECT id, email, created_at FROM practitioner WHERE practice_id = ? AND removed_at IS NULL ORDER BY created_at, id',
+      `SELECT id, email, created_at, role FROM practitioner
+        WHERE practice_id = ? AND removed_at IS NULL
+        ORDER BY created_at, id`,
     )
     .all(practiceId);
+}
+
+/**
+ * The people who can still manage this practice: an owner, or anybody whose role predates roles.
+ *
+ * Exists for one guard — the last owner cannot be demoted or removed. Without it a practice can be left
+ * with nobody who may invite a replacement, and the only way back in is a hand-edit of the database. That
+ * is a bad enough outcome to warrant a query, and this is it.
+ */
+export function ownersOf(db, practiceId) {
+  return db
+    .prepare(
+      `SELECT id, email FROM practitioner
+        WHERE practice_id = ? AND removed_at IS NULL AND (role = 'owner' OR role IS NULL)
+        ORDER BY created_at, id`,
+    )
+    .all(practiceId);
+}
+
+/**
+ * Change what a member may do.
+ *
+ * Returns a state rather than a boolean, because the two ways this can be refused want different
+ * sentences in front of a person: "there is no such member" and "that would leave the practice with no
+ * owner" are not the same news.
+ *
+ * The promotion this cannot do on its own is worth knowing about: making somebody an accountant gives them
+ * the *authority* to hold the key, not the key itself. A wrapping has to be made for them, by somebody who
+ * holds one, and that is the flow on the Keys page — the same one a member uses when they have forgotten
+ * their passphrase. The members page says so beside the picker rather than leaving an owner to wonder why
+ * their new accountant still cannot open anything.
+ */
+export function setRole(db, practiceId, practitionerId, role) {
+  return inTransaction(db, () => {
+    const member = memberIn(db, practiceId, practitionerId);
+    if (!member || member.removed_at) return { state: 'no-such-member' };
+
+    // Null and 'owner' both mean owner — see src/roles.js for why an absent role reads that way.
+    const isOwner = !member.role || member.role === 'owner';
+    const staysOwner = !role || role === 'owner';
+    if (isOwner && !staysOwner && ownersOf(db, practiceId).length <= 1) return { state: 'last-owner' };
+
+    db.prepare('UPDATE practitioner SET role = ? WHERE id = ? AND practice_id = ?').run(role, practitionerId, practiceId);
+
+    // **A demotion takes the key away, rather than only saying it has.** Moving somebody to a role that does
+    // not hold the key destroys the wrapped copies they hold, exactly as removing them does — because
+    // otherwise "this person cannot open what clients send" would be a rule the server politely follows
+    // while the thing that actually decrypts sits untouched in their passphrase's keeping. The copy is not
+    // hidden, it is gone.
+    //
+    // It is reversible, and it costs something: promoting them back does not restore it, so somebody who
+    // holds a copy has to make a new one — which needs a passphrase from them. The members page says so
+    // before it happens rather than leaving it to be discovered.
+    let copies = 0;
+    if (!holdsKey(role)) {
+      copies = db.prepare('DELETE FROM key_wrapping WHERE practitioner_id = ?').run(practitionerId).changes;
+    }
+
+    return { state: 'changed', copies };
+  });
 }
 
 /** People who were removed from this practice, most recently removed first. For the members page. */
@@ -1096,7 +1179,7 @@ export function removedMembersOf(db, practiceId) {
 export function memberIn(db, practiceId, practitionerId) {
   return (
     db
-      .prepare('SELECT id, email, created_at, removed_at FROM practitioner WHERE id = ? AND practice_id = ?')
+      .prepare('SELECT id, email, created_at, removed_at, role FROM practitioner WHERE id = ? AND practice_id = ?')
       .get(practitionerId, practiceId) ?? null
   );
 }

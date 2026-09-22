@@ -46,6 +46,7 @@ import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickm
 import { MailError, sendMail } from './mailer.js';
 import { COMMON_ZONES, dateIn, knownZone, monthIn, todayIn } from './clock.js';
 import { createAttemptLimiter } from './ratelimit.js';
+import { ROLE_BLURBS, ROLE_WORDS, ROLES, holdsKey, refusalFor, roleMeets, roleName } from './roles.js';
 import {
   addItems,
   addPracticeKey,
@@ -87,7 +88,9 @@ import {
   requestOwner,
   requestsForClient,
   setPracticeNotify,
+  ownersOf,
   setPracticeTimezone,
+  setRole,
   updateClient,
   wrappingHoldersOf,
   itemInRequest,
@@ -219,17 +222,20 @@ export const ROUTES = [
   ['GET', '/signin', signInForm],
   ['POST', '/signin', signIn],
   ['POST', '/signout', signOut],
-  ['GET', '/setup', setupForm],
-  ['POST', '/setup', saveKeys],
-  ['GET', '/keys', keysPage],
-  ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase],
-  ['GET', '/members', membersPage],
-  ['POST', '/members/invite', createInvitePage],
-  ['POST', '/members/name', renamePracticePage],
-  ['POST', '/members/notify', setNotifyPage],
+  ['GET', '/setup', setupForm, 'owner'],
+  ['POST', '/setup', saveKeys, 'owner'],
+  ['GET', '/keys', keysPage, 'owner'],
+  ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase, 'owner'],
+  ['GET', '/members', membersPage, 'owner'],
+  ['POST', '/members/invite', createInvitePage, 'owner'],
+  ['POST', '/members/name', renamePracticePage, 'owner'],
+  ['POST', '/members/notify', setNotifyPage, 'owner'],
   // Removal is two steps on purpose: a page that says what will happen (and what will not), then the act.
-  ['GET', /^\/members\/([^/]+)\/remove$/, removeMemberPage],
-  ['POST', /^\/members\/([^/]+)\/remove$/, removeMemberAction],
+  ['GET', /^\/members\/([^/]+)\/remove$/, removeMemberPage, 'owner'],
+  ['POST', /^\/members\/([^/]+)\/remove$/, removeMemberAction, 'owner'],
+  // What a member may do, changed by an owner. It sits beside removal because it is the same question —
+  // who is in this practice, and what they may do while they are.
+  ['POST', /^\/members\/([^/]+)\/role$/, changeRolePage, 'owner'],
   ['GET', /^\/assets\/([A-Za-z0-9._-]+)$/, asset],
   ['GET', '/requests', listRequests],
   // The same two lists as files. Accountants reconcile a season in a spreadsheet, so a list that cannot
@@ -264,9 +270,9 @@ export const ROUTES = [
   ['POST', /^\/requests\/([^/]+)\/edit$/, saveRequest],
   ['POST', /^\/requests\/([^/]+)\/send$/, draftOpening],
   ['POST', /^\/requests\/([^/]+)\/send-request$/, sendOpening],
-  ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope],
+  ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope, 'accountant'],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
-  ['POST', /^\/requests\/([^/]+)\/check-all$/, checkAllArrivalsPage],
+  ['POST', /^\/requests\/([^/]+)\/check-all$/, checkAllArrivalsPage, 'accountant'],
   ['POST', /^\/requests\/([^/]+)\/contact$/, logContactPage],
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
   ['POST', /^\/requests\/([^/]+)\/send-reminder$/, sendReminder],
@@ -282,13 +288,14 @@ export const ROUTES = [
   // The mail relay's test bench: a real send against whatever the environment configures, with the
   // relay's own reply when it refuses. Off the nav on purpose — the people who need it arrive from
   // docs/mail.md, and the rest of the practice never has to see it.
-  ['GET', '/admin/test-email', testEmailForm],
-  ['POST', '/admin/test-email', testEmailSend],
-  // Re-sealing a stored document to a newer key, and retiring a key that no longer opens anything.
-  ['GET', /^\/keys\/([^/]+)\/pending$/, pendingFor],
-  ['POST', /^\/keys\/([^/]+)\/move$/, moveWithoutScript],
-  ['POST', /^\/files\/([^/]+)\/reencrypt$/, reencryptFile],
-  ['POST', /^\/keys\/([^/]+)\/retire$/, retireKey],
+  ['GET', '/admin/test-email', testEmailForm, 'owner'],
+  ['POST', '/admin/test-email', testEmailSend, 'owner'],
+  // Re-sealing a stored document to a newer key, and retiring a key that no longer opens anything. The
+  // whole of a key's life belongs to an owner, because it decides who can read what from here on.
+  ['GET', /^\/keys\/([^/]+)\/pending$/, pendingFor, 'owner'],
+  ['POST', /^\/keys\/([^/]+)\/move$/, moveWithoutScript, 'owner'],
+  ['POST', /^\/files\/([^/]+)\/reencrypt$/, reencryptFile, 'owner'],
+  ['POST', /^\/keys\/([^/]+)\/retire$/, retireKey, 'owner'],
   // Public: no session, gated by the token in the path.
   ['GET', /^\/r\/([^/]+)$/, clientPage],
   ['POST', /^\/r\/([^/]+)\/items\/([^/]+)\/says$/, clientSays],
@@ -441,7 +448,7 @@ export function createApp(db, {
         };
       }
 
-      for (const [method, pattern, handler] of ROUTES) {
+      for (const [method, pattern, handler, needed = null] of ROUTES) {
         if (request.method !== method) continue;
         let params = null;
         if (typeof pattern === 'string') {
@@ -452,6 +459,20 @@ export function createApp(db, {
         if (!params) continue;
 
         const context = await contextFor(scoped.db, request, response, url, params.slice(1));
+
+        // **The permission check lives here rather than in fifteen handlers**, and that is the point of it:
+        // a check written inside a handler is invisible from everywhere except that handler, so the way to
+        // find out what an assistant can do would be to read the whole file and hope. The role a route needs
+        // is on the route, so the model can be read off the table in one screen — and there is a test that
+        // walks it and fails when a sensitive address has no role beside it.
+        //
+        // A signed-out visitor is sent to sign in rather than told they lack permission: they may well have
+        // the right role, and they have simply not said who they are yet.
+        if (needed && !roleMeets(context.practitioner?.role, needed)) {
+          if (!requireSignIn(context)) return;
+          return fail(response, 403, refusalFor(needed, context.practitioner.role), context.practitioner);
+        }
+
         await handler({
           ...context,
           blobDir: scoped.blobDir,
@@ -1072,6 +1093,22 @@ function listRequests({ db, response, practitioner, url, practiceId }) {
   // direction that says "overdue" a day early in Auckland and a day late in Honolulu.
   const today = todayIn(practiceFor(db, practiceId).timezone);
 
+  /**
+   * The season notice: who is due an ask, said on the page a practice actually opens.
+   *
+   * `clientsDueForAsking` has existed since 2u and is accurate, and its one weakness was that it lived only on
+   * the clients page — a practice who works from the board every morning would never be told that the year had
+   * come round, which is the remembering half of "no scheduled requests" and the only half this product wants.
+   *
+   * Shown only on the board's home state — not the closed tab, not a filtered or searched list — because a
+   * notice that follows somebody around stops being a notice. And it is information rather than a nag: it
+   * appears when there is season work, and asking the clients removes them from the list, so it clears itself.
+   */
+  const seasonNotice =
+    showingClosed || wanted || query
+      ? null
+      : clientsDueForAsking(db, practiceId, { timezone: practiceFor(db, practiceId).timezone });
+
   const counts = {};
   for (const row of all) counts[row.progress.state] = (counts[row.progress.state] ?? 0) + 1;
   // Search before the state filter, so the count under the search box is "what matched" rather than
@@ -1194,6 +1231,13 @@ function listRequests({ db, response, practitioner, url, practiceId }) {
           ${showingClosed ? '' : html`<a class="btn primary" href="/requests/new">New request</a>`}
         </div>
       </div>
+      ${seasonNotice?.length
+        ? html`<p class="info"><strong>${seasonNotice.length}
+            ${seasonNotice.length === 1 ? 'client is' : 'clients are'} due to be asked.</strong>
+            Nothing is open for them, and you asked around this time of year last time —
+            <a href="/ask-everyone?due=1">start the ask</a>. The list arrives with those clients ticked,
+            and nothing is sent until you press it.</p>`
+        : ''}
       <div class="bar">
         <div class="seg">
           <a href="${href({ closed: '' })}"${showingClosed ? '' : raw(' aria-current="page"')}>Open</a>
@@ -1838,8 +1882,15 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
                 <form method="post" action="/requests/${found.id}/close"><button type="submit">Close this request</button></form>
               </div>`}
       </section>
+      ${received > 0 && !holdsKey(practitioner.role)
+        ? html`<p class="note"><strong>${received} ${received === 1 ? 'document has' : 'documents have'} arrived,
+            and you cannot open ${received === 1 ? 'it' : 'them'}.</strong> Your role holds no copy of the
+            practice key, so nothing here decrypts for you — that is what the role means rather than a
+            setting somebody chose. An owner can make you a copy; it needs a passphrase from you, and it
+            takes a moment on the members page.</p>`
+        : ''}
       ${keys.length > 0 ? jsonTag('key-records', { keys: keys.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey })) }) : ''}
-      ${received > 0 ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
+      ${received > 0 && holdsKey(practitioner.role) ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
   }));
 }
 
@@ -4355,6 +4406,15 @@ async function changeItemPage({ db, request, response, practitioner, params, pra
     return fail(response, 400, `"${action}" is not something that can be said about a document.`, practitioner);
   }
 
+  // The one route whose permission depends on *which* action it is: `/items/:id/:action` carries withdraw,
+  // restore, attention, relabel — all coordination, all an assistant's to do — and `check`, which is a
+  // statement that somebody has read the file. A member who holds no key cannot have read it, so the check
+  // is refused here rather than tagged on the route. The dispatcher cannot know which action this is; the
+  // handler can, and this is where it does.
+  if (!holdsKey(practitioner.role) && (action === 'check' || action === 'check-clear')) {
+    return fail(response, 403, refusalFor('accountant', practitioner.role), practitioner);
+  }
+
   const fields = formFields(await readBody(request));
   const changed = change({
     db,
@@ -4429,6 +4489,17 @@ function clientPage({ db, response, params, maxUploadBytes }) {
     sent.set(upload.request_item_id, list);
   }
   const received = items.filter((item) => (sent.get(item.id) ?? []).length > 0).length;
+
+  // What the browser is allowed to compare a newly picked file against. Deliberately **name, size and date
+  // only** — the three facts this page already shows the client on the rows below, so the check discloses
+  // nothing that was not already on the screen. A hash of the contents would catch more and is the one thing
+  // this product will not hold; the reasoning is in web/preflight.js, and there is a test that fails if a hash
+  // ever appears in this payload.
+  const alreadySent = [...sent.values()].flat().map((upload) => ({
+    name: upload.filename,
+    bytes: upload.size_bytes,
+    at: dateIn(practice?.timezone, new Date(upload.uploaded_at)),
+  }));
 
   if (!open.practice_public_key) {
     return sendPage(response, 503, page({
@@ -4511,6 +4582,7 @@ function clientPage({ db, response, params, maxUploadBytes }) {
       </div>
       ${jsonTag('practice-key', { keyId: open.practice_key_id, publicKey: JSON.parse(open.practice_public_key) })}
       ${jsonTag('upload-limit', { maxBytes: maxUploadBytes })}
+      ${jsonTag('already-sent', alreadySent)}
       ${raw('<script type="module" src="/assets/upload.js"></script>')}`,
   }));
 }
@@ -4807,6 +4879,10 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
   const practice = practiceFor(db, practiceId);
   const justRemoved = url.searchParams.get('removed');
   const saved = url.searchParams.get('saved');
+  const roleChanged = url.searchParams.get('changed');
+  // Whose role cannot be changed: the only owner. Computed once for the whole table rather than per row.
+  const owners = ownersOf(db, practiceId);
+  const soleOwner = (person) => owners.length === 1 && owners[0].id === person.id;
 
   return sendPage(response, 200, page({
     title: 'Members',
@@ -4816,7 +4892,11 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
       ? html`<p class="warning"><strong>${justRemoved} was removed.</strong> Their key copies are gone and
           their sessions have ended, so they cannot sign in again. Anything they already downloaded is
           still theirs — removal changes what happens next, not what has already happened.</p>`
-      : saved === 'notify'
+      : roleChanged
+        ? html`<p class="success"><strong>That member's role was changed.</strong> What each person may do is
+            listed beside their name. Moving somebody to a role that does not hold the key destroys the
+            copies they held — giving it back means making a new one, which needs a passphrase from them.</p>`
+        : saved === 'notify'
         ? html`<p class="success">Saved. ${practice.notifyOnUpload
             ? html`You will be told when a client sends something.`
             : html`You will not be emailed about what clients send. The board still shows it, of course.`}</p>`
@@ -4863,7 +4943,16 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
         </thead>
         <tbody>
           ${members.map((person) => html`<tr>
-            <td><span class="cell-t">${person.email}</span>${person.id === practitioner.id ? html`<span class="cell-s">you</span>` : ''}</td>
+            <td><span class="cell-t">${person.email}</span>${person.id === practitioner.id ? html`<span class="cell-s">you</span>` : ''}
+              ${soleOwner(person)
+                ? html`<span class="cell-s">${ROLE_WORDS[roleName(person.role)]} — the only owner, so this cannot be changed. Make somebody else an owner first.</span>`
+                : html`<form method="post" action="/members/${person.id}/role" class="inline">
+                    <select name="role" aria-label="What ${person.email} may do">
+                      ${ROLES.map((role) => html`<option value="${role}"${roleName(person.role) === role ? ' selected' : ''}>${ROLE_WORDS[role]}</option>`)}
+                    </select>
+                    <button type="submit">Set</button>
+                  </form>`}
+            </td>
             <td><span class="muted">${person.created_at.slice(0, 10)}</span></td>
             <td>${newest
               ? holders.has(person.id)
@@ -4964,6 +5053,18 @@ async function createInvitePage({ db, request, response, practitioner, practiceI
 
   const keyId = field(fields, 'key_id');
   const sealedKey = field(fields, 'sealed_key');
+
+  // **What an invitation grants when it does not say.** A keyed invitation is the old flow, which handed
+  // over a key and therefore made a member who could do the client work — so that is what it still makes,
+  // rather than the *owner* a null role reads as. The difference matters: null-as-owner is the honest
+  // reading of a row that predates roles, and the wrong reading of a form that simply forgot to ask.
+  //
+  // An assistant invitation is the opposite: no key at all, which is the only way a new member who cannot
+  // read client documents can be invited. Nothing in the browser sends one yet — `web/members.js` always
+  // seals a key — so an assistant is made today by inviting somebody and then moving them, and the members
+  // page says so. That is a two-step workaround rather than a missing capability, and it is named here
+  // rather than left to be discovered by somebody reading this function.
+  const role = ROLES.includes(field(fields, 'role')) ? field(fields, 'role') : 'accountant';
 
   if (!/^invite\$sha-256\$/.test(sealedKey ?? '')) {
     return sendJson(response, 400, { error: 'that is not a sealed invitation' });
@@ -5137,6 +5238,44 @@ async function acceptInvite({ db, request, response, params }) {
  * with nobody in it, and anything else calling the store gets it. `test/removal.test.js` says where each
  * one is exercised, and says that the UI cannot reach the second.
  */
+/**
+ * Change what a member may do.
+ *
+ * Refusals are sentences rather than codes, because the two ways this can be turned down are not the same
+ * news: "there is nobody by that name" and "that is the only owner" want different things done about them.
+ * The second is the one that matters — demoting the last owner would leave a practice with nobody who can
+ * invite a replacement, and the only way back in would be a hand-edit of the database.
+ */
+async function changeRolePage({ db, request, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const wanted = field(fields, 'role') ?? '';
+
+  if (!ROLES.includes(wanted)) {
+    return fail(
+      response,
+      400,
+      `"${wanted}" is not one of the roles. It has to be one of: ${ROLES.join(', ')}.`,
+      practitioner,
+    );
+  }
+
+  const changed = setRole(db, practiceId, params[0], wanted);
+  if (changed.state === 'no-such-member') {
+    return fail(response, 404, 'There is nobody by that name in this practice.', practitioner);
+  }
+  if (changed.state === 'last-owner') {
+    return fail(
+      response,
+      400,
+      'That is the only owner. Make somebody else an owner first — otherwise there would be nobody left who can invite, remove, or change a member.',
+      practitioner,
+    );
+  }
+
+  return redirect(response, '/members?changed=1');
+}
+
 function removeMemberPage({ db, response, practitioner, practiceId, params, url }) {
   if (!requireSignIn({ practitioner, response })) return;
   const member = memberIn(db, practiceId, params[0]);

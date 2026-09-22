@@ -174,6 +174,19 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   in this month of an earlier year — and *ask everyone* arrives with them already ticked. No scheduler, no
   automatic email, and no cycle length to configure: the rule reads the practice's own history, and asking
   somebody takes them off the list.
+- **The board saying the year has come round** (2x): 2u was accurate and lived only on the clients page, so a
+  practice who works from the board every morning was never told. The board now carries it — on its home state
+  only, when there is season work — with the count and a link straight into the pre-ticked ask. This is the
+  remembering half of "scheduled requests" and the only half this product wants: no cron, no daemon, and nothing
+  that sends itself. The software notices when somebody uses it, which is exactly when somebody needs telling.
+- **Two checks the browser makes before anything is encrypted** (2y): a **password-protected PDF** — bank
+  statements arrive locked more often than not, and the client has no idea it is a problem because it opens
+  fine on their machine — and **the same file sent twice**. Both are the *only* kind of document inspection this
+  product can ever do, because the plaintext is still in the browser when the check happens: the alternative is
+  Suralink's model, where the platform reads every file server-side so it can pre-screen it. Both warn rather
+  than refuse, because a warning that stops somebody sending the only copy they have would be worse than the
+  problem. The duplicate check compares filename and size — facts already on the client's own page — rather than
+  a hash of the contents, which is the one thing a server holding this product's promises must never keep.
 
 **Not built, and named rather than implied:**
 
@@ -182,7 +195,8 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   namely what happens when it fires while last year's request is still open. **What 2u does instead** is answer
   the question the schedule was standing in for: the practice is told who is *due* an ask, and the send is one
   action they press. A robot that emails a client without a person reading the list first is not a thing this
-  product is going to grow.
+  product is going to grow. **(2x)** put that rule on the board as well as the clients page, so the practice is
+  told on the screen they actually open rather than only where they might look.
 - **Reading the documents** — extraction, reconciliation, "is this the current year". That is the
   translation problem Chronexa names and it is an OCR-and-AI product. It would also mean sending a
   client's financial records to a third party, which makes this product's central claim false. **Named

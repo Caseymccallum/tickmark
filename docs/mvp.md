@@ -157,13 +157,18 @@ able to answer questions about the past.
 
 - `practice` — the firm, which is what owns clients, keys, requests, the chase cadence, and where the practice
   is (`timezone`, an IANA zone name, or null for UTC — see `src/clock.js`)
-- `practitioner` — a person's email and password hash. **No key columns**: a practice's keys are a history,
-  in `practice_key`, and a schema that cannot hold a second key cannot rotate
+- `practitioner` — a person's email, password hash and **role** (`owner`, `accountant` or `assistant`; null
+  reads as owner, which is what every member could do before the column existed — `src/roles.js`). **No key
+  columns**: a practice's keys are a history, in `practice_key`, and a schema that cannot hold a second key
+  cannot rotate
 - `practice_key` — a key the practice holds: the public half, the private half already wrapped under a
   passphrase the server has never seen, and when it was made. The newest is the one new uploads use
 - `key_wrapping` — one sealed copy of one key, per member, so two people can each have their own passphrase
-  over the same key
-- `invite` — a one-use invitation, carrying a copy of the key to whoever opens it
+  over the same key. **A member with no wrapping cannot open anything**, which is not a permission the
+  software enforces but a fact it cannot undo — see `src/roles.js`
+- `invite` — a one-use invitation. It carries a copy of the key **or** a role that does not need one, and a
+  `CHECK` refuses a row that tries to be half of each: an assistant invitation has no key at all, which is the
+  only way to invite somebody who cannot read what clients send
 - `client` — belongs to a practice; name and optional email. A request points here rather than carrying a
   copy, and `docs/clients.md` says what that made possible once the screens caught up with the schema
 - `request` — belongs to a client; title, due date, closed date, and the practice's own note to the client
