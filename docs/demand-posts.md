@@ -38,6 +38,51 @@ blocks automated reads; the tracker last verified each of these between May and 
 **Verify every one of these in the sidebar before posting.** Moderators change rules and
 the tracker is not authoritative — twenty seconds each, against an account ban.
 
+### Checked again on 20 September 2026, and what changed
+
+Reddit blocks automated reads of its rules pages, so these rules **cannot be checked from a script** —
+the sidebar is the only authoritative source and the check is manual. What a fresh look did find:
+
+- **r/taxpros is not small.** 91,000 members — not the "smaller, more senior" room the earlier note
+  assumed. Its most common discussion types are advice requests and software questions, and
+  practice-management software is discussed constantly: TaxDome against Canopy, Lacerte price rises,
+  CCH Axcess outages. That makes it the most promising room on the list *and* the one most crowded
+  with vendors, so the question has to read as a real one to survive contact with a moderator.
+- **Its neighbouring rooms still ban this by name.** r/Accounting's rule — *"no self-promotion,
+  advertising, solicitations, or research ideas"* — was re-quoted unchanged as recently as July 2026.
+  Nothing suggests r/taxpros differs, and the "Self-Promotion" flavour of its recent posts is an
+  observation about tolerance, not permission.
+- **The tracker's own last check was 13 July 2026**, and ours was earlier. Two months stale on a
+  rules set is stale enough to matter, which is why the sidebar check is step one rather than a
+  reassurance.
+
+### Timing, which the drafts did not consider
+
+- **Today is a Sunday.** Professional subreddits are quiet at weekends, but a question that asks
+  people to describe their process does well on a Sunday evening — it is when people have the time to
+  write a long answer. If the first post lands badly, **Monday morning US Eastern** is the peak.
+- **It is mid-September.** For US practitioners that is the three weeks before the 15 October
+  extended deadline: they have the least time to spare and the pain is at its sharpest. Both matter.
+  A question about *this* season's stragglers gets a better answer than the general case — and right
+  now, "which clients have never sent their documents" is not a hypothetical to them, it is a live
+  list of names. If a draft feels abstract in the room, that is the specific that earns a reply.
+
+### Getting past the spam filter, which is the first thing that will stop this
+
+Item 1 below says low-karma accounts get removed automatically. That is not a footnote — it is the
+most likely reason a post never appears. In order:
+
+1. **Check the account is old enough and has karma.** If it is new, posting this today will probably
+   not work, and a removed post is not a data point.
+2. **If it is new, comment first.** A few genuine comments in r/Bookkeeping — answering somebody
+   else's question about software, not about this — takes an evening and makes the account look like
+   a person. **Do not do this as a technique; do it because the alternative is a removed post.**
+3. **Post the question with no link, no product name, and no "I'm building".** In the Reddit rooms
+   the drafts below already comply. A removed *product-free question* is much less likely than a
+   removed pitch, and if it does go, the mods will usually say why if asked politely.
+4. **If a post is removed, record it and move on.** A removal is a room saying no, which belongs in
+   the table — and the same text in a different room is a different question.
+
 The drafts below were written **before** this check, and the check changed them. Recorded here
 rather than quietly rewritten, because the same mistake is cheap to repeat: an honest
 "here's what I'm building, would you use it?" is the single most rule-breaking shape a
@@ -103,6 +148,26 @@ room where it is a **PBC list**, not "the list of things we're waiting on".
 > - What slips through most often, and how do you find out — at review, or later?
 > - Do you send the list once, or chase it in rounds?
 > - Does anything you pay for handle this now, and what does it cost you per year?
+> - Has anyone here run a self-hosted tool rather than a subscription, and would you again?
+>
+> Most useful answer I could get: **what would make you stop using a tool for this?**
+
+**If you post this in September or early October, lead with the season instead of the general case.**
+They are three weeks from the 15 October extended deadline, and "how do you keep track of what has come
+back" is much weaker than the question they are living:
+
+> **Three weeks from 15 October — how are you tracking what clients still owe you?**
+>
+> Not an accountant — I build software and I'm trying to understand the practice rather than assume it.
+> Nothing to sell, nothing to link.
+>
+> The extended deadline is close enough that this is probably an unpleasant question right now: which
+> clients have never sent the documents, and how do you know? A spreadsheet, the portal's own list,
+> memory, or finding out at review?
+>
+> - **What slips through, and how do you find out** — while there is still time, or when it is too late?
+> - Do you send the PBC list once, or chase it in rounds, and who does the chasing?
+> - Has anything you pay for solved this? What does it cost you a year, and what does it still get wrong?
 > - Has anyone here run a self-hosted tool rather than a subscription, and would you again?
 >
 > Most useful answer I could get: **what would make you stop using a tool for this?**

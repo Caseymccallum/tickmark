@@ -32,9 +32,11 @@ Practitioners, not developers. This is a working tool for a profession, and the 
 people who can say whether it is useful are people who currently chase clients for
 documents:
 
-- **r/Bookkeeping** and **r/Accounting** — the trade subreddits, where the same
-  complaints recur every season
-- **r/taxpros** — smaller, more senior, more likely to answer a serious question
+- **r/Bookkeeping** — the trade subreddit, where the same complaints recur every season
+- **r/taxpros** — 91,000 members, and heavily software-focused for a trade room: practice-management
+  suites like TaxDome and Canopy are compared and complained about there constantly. Worth knowing
+  before reading the answers: this is a room that already pays for software, which makes it the best
+  place to hear "I would never self-host" and the worst place to expect a free tool to impress anyone
 - **AccountingWEB** (Any Answers forum, UK) and **AccountingWEB US** — where practice
   management is actually discussed by owners
 - one or two practitioner Facebook groups or a Slack community for bookkeepers
@@ -83,5 +85,40 @@ The posts, the dates, the answers, and the decision — with the same discipline
 author's other projects apply to their claims. If the answers say stop, that goes in
 this file and the repository is archived with it intact, because a recorded "no" is
 worth more than a silent abandoned repository.
+
+## Where the answers go
+
+Written here as they arrive. The replies are the whole point of asking, and a good one read once and
+not recorded becomes an impression by the following week — which is how the eighth project happens.
+
+### Posts made
+
+| Room | Version used | Date and time | Replies | Removed? |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+### What they said, in their own words
+
+The valuable ones describe a season and a client, not a feeling. Quote them; paraphrase loses the
+specifics that make an answer evidence.
+
+- *"…"* — room, and whether they said what they do now
+- *"…"*
+
+### Counted against the table above
+
+Not an impression — a count, so the decision below is arithmetic and not mood.
+
+- Named the chase in their top three pains: **0 of 5**
+- Would run it on their own server: **0 of 2**
+- Already pay for a portal and described it as fine: **0**
+- Named something that would make them close the tab: **0**
+- Named something they or their clients would refuse to put in a tool: **0**
+
+### The decision
+
+**Not yet taken.** Written here when the answers are in, against the table above — including if the
+answer is stop. A recorded no is the one outcome this file can produce that is worth more than the
+repository.
 
 **Status: not yet run.** Nothing under `docs/` claims otherwise.
