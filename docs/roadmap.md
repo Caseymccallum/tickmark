@@ -37,6 +37,7 @@ Phase 2   Make it usable in the field
           2w the review loop         COMPLETE — one press to check off what arrived, and a "ready" that no longer lies
           2x the season notice       COMPLETE — the board says the year has come round, where the practice looks
           2y looking inside a file   COMPLETE — locked PDFs and duplicate files, caught in the browser, before upload
+          2z inviting an assistant  COMPLETE — a role on the invite form, and a link that carries no key
 Phase 3   Find out if anyone wants it  RUNNING — posted to two practitioner groups; see docs/verify-demand.md
 Phase 4   Grow the surface             NOT PLANNED
 ```
@@ -1002,7 +1003,45 @@ that.** What this product can do that they cannot is look at a file it is not al
 has the whole reading, including the honest note that two respondents in, nobody has raised where their clients'
 documents sit.
 
+## Phase 2z — Inviting an assistant, and the bug that was hiding behind a dead local
+
+2d built the roles; this is the piece that was named as *not finished* in the previous commit, and finishing it
+found something worse than the gap.
+
+**The gap itself was small.** An assistant's invitation carries no key, and the browser is the only place that
+decision can be made — the server has no key to withhold, so "do not seal a copy" is an instruction only the
+page holding the key can follow. Three changes: a role picker on the invite form, no unwrapping or sealing when
+the choice is *assistant*, and a `LEFT JOIN` in `inviteByToken`. That last one was a live bug rather than
+groundwork: the query joined `practice_key` innermost, so a keyless invitation resolved to **`unknown`** — the
+person holding a perfectly good link would have been told there was nothing at theirs, which is the least
+useful of the three ways an invitation can fail.
+
+**And the thing the fix exposed.** `createInvitePage` computed the invited role, documented that an invitation
+which says nothing grants *accountant*, and then **never passed it to `createInvite`** — so the column stayed
+`null`, and `null` reads as **owner**. Invitations made from the form granted *more* than the form said, and the
+docs had claimed the opposite for a commit.
+
+Nothing caught it because the only reader was a rejoin path. It surfaced the moment the value was passed
+through, and it surfaced as a **failure in an unrelated file**: `test/removal.test.js` had been relying on the
+accident — its two-person fixture's second member was an owner while the test believed they were a colleague,
+and an accountant may not open a removal page at all. The fixture now promotes them explicitly, which is both
+what a real practice does and the only truthful shape for a test about removing somebody.
+
+**A value computed and then dropped is worse than no value**, because the code reads as though the decision is
+made. That is the durable lesson, and it is in `docs/roles.md` rather than here alone.
+
+One more thing the invitation page now says out loud. It has two shapes, and they promise opposite things: the
+keyed one says *"you will be able to open the documents clients have already sent"*, and the other says *"you
+will not be able to open the documents themselves"* — with the reason, because somebody who accepted an
+assistant invitation and later expected the files was misled by a page rather than by a permission. The
+assistant's page needs no JavaScript at all: there is no key to open, which is the entire reason the fragment
+exists for the other kind.
+
+Also fixed while in there: the members page rendered its "Removed" heading and paragraph **twice**, from an
+earlier edit.
+
 ## Phase 3 — Find out if anyone wants it
+
 
 
 **Status: not started, and it is Phase 0.** Running the demand check, and then the first session

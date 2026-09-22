@@ -55,6 +55,29 @@ named. If a firm asks for it, it is one line in `RANKS` — inventing it now wou
 outstanding cannot help collect it, and the board holds no document contents — only labels and dates. Hiding
 one client from one colleague is a different feature with a different name (a caseload, not a permission).
 
+## Inviting somebody in
+
+The members page offers the role on the invite form, and **the choice decides what the link carries**:
+
+- **Accountant or owner** — the inviter's browser unwraps their own copy of the practice key and seals it
+  under a secret generated in the page, which travels in the link's *fragment*. The server receives a blob it
+  cannot open. That is the flow `docs/members.md` describes.
+- **Assistant** — no key is unwrapped and nothing is sealed, because there is no key to hand over. The link is
+  a plain address with no fragment.
+
+**That decision can only be made in the browser**, which is why it lives there: the server has no key to
+withhold — it never had one — and "do not seal a copy" is an instruction only the page holding the key could
+follow. The server does the one thing it can do, which is refuse to record half of a keyed invitation.
+
+The invitation page therefore has two shapes, and it says different things on each. The keyed one promises
+*"you will be able to open the documents clients have already sent"* and asks for a passphrase. The other says
+*"you will not be able to open the documents themselves"* — and explains that this is not a setting, because
+somebody who accepted an assistant invitation and later expected the files is somebody who was misled by a
+page rather than by a permission.
+
+The accepting page needs no JavaScript at all for an assistant: there is no key to open in the browser, which
+is the whole reason the fragment exists for the other kind.
+
 ## What an assistant can actually do
 
 Worth being concrete, because "coordination without reading" sounds thinner than it is:
@@ -89,15 +112,16 @@ Two guardrails:
 - **A role is read from the session**, so a demotion takes effect at the next request rather than at the next
   sign-in — which matters, because the member is still signed in when it happens.
 
-## What is not finished
+## The bug that hid this, recorded because it is the shape to watch for
 
-**Inviting somebody straight in as an assistant.** The database supports it — `invite.role`, and a nullable
-sealed key with a `CHECK` that refuses a half-keyed row — and the handler reads the role. But the browser form
-(`web/members.js`) always seals a key, so an assistant invitation cannot be made from the UI yet. Today the
-path is: invite normally, then change the role on the members page, which destroys the key copies they have
-just been given.
+`createInvitePage` computed the invited role and then **never passed it to `createInvite`**, so the column
+stayed `null` — and `null` reads as **owner**. An invitation made from the form therefore granted more than
+the form said, and `docs/roles.md` claimed the opposite for one commit.
 
-That is a two-step workaround rather than a missing capability, and it is written here rather than left to be
-discovered. The work is small: a role choice on the invite form, no sealing when it is *assistant*, and a
-`LEFT JOIN` in `inviteByToken`, which currently joins `practice_key` innermost and would report a keyless
-invitation as an unknown address.
+Nothing caught it, because the only thing that read the column was a *rejoin* path. It surfaced the moment the
+role was passed through: `test/removal.test.js` started failing, because its two-person fixture had been
+relying on the accident — the second member was an owner when the test believed they were a colleague, and an
+accountant may not open a removal page at all.
+
+**A value computed and then dropped is worse than no value**, because the code reads as though the decision is
+made. The test that found it was not looking for it.

@@ -208,6 +208,133 @@ test('the last owner cannot be moved or removed, and a practice cannot be left w
 
     // A role that is not one of the three is refused rather than stored, and so is a member who is not here.
     assert.equal((await practice.client.post(`/members/${secondId}/role`, { role: 'superuser' })).status, 400);
+// --- inviting somebody straight in as an assistant ----------------------------------------------
+
+test('an assistant is invited without a key, and arrives with nothing that opens a file', async () => {
+  await withServer(async ({ base, agent, db }) => {
+    const firm = await practiceWithRequest({ agent, db });
+    const link = await createLink(firm.client, firm.requestId);
+    const sent = await upload({
+      base,
+      token: link.token,
+      itemId: firm.itemIds[0],
+      publicKey: firm.keys.publicKey,
+      plaintext: Buffer.from('a bank statement'),
+      filename: 'statement.pdf',
+    });
+    assert.ok(sent.response.ok, 'a document is waiting for them');
+
+    // What the inviter's browser does when the picker says "assistant": no key is unwrapped and nothing is
+    // sealed, so the request carries a role and no blob at all.
+    const made = await firm.client.request('/members/invite', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({ role: 'assistant' }).toString(),
+    });
+    assert.equal(made.status, 201);
+    const body = await made.json();
+    assert.equal(body.keyed, false, 'the server says plainly that no key was handed over');
+
+    const row = db.prepare('SELECT key_id, sealed_key, role FROM invite').get();
+    assert.equal(row.key_id, null, 'no key');
+    assert.equal(row.sealed_key, null, 'and nothing sealed');
+    assert.equal(row.role, 'assistant', 'and the role the inviter chose was actually recorded');
+
+    // The invitation must resolve. This is the bug the LEFT JOIN fixed: an inner join on `practice_key`
+    // reported a keyless invitation as an *unknown address*, which would have told somebody holding a
+    // perfectly good link that there was nothing at theirs.
+    const page = await agent().get(`/invite/${body.token}`);
+    assert.equal(page.status, 200, 'the invitation page opens');
+    const html = await page.text();
+    assert.match(html, /You will not be able to open the documents themselves/, 'and says what they are not getting');
+    assert.match(html, /Nothing on this page needs JavaScript/, 'and needs none, because there is no key to open');
+    assert.ok(!/id="passphrase"/.test(html), 'and asks for no passphrase, because there is no key to protect');
+
+    // They accept it, and arrive with a login and no key.
+    const accepted = await agent().post(`/invite/${body.token}`, {
+      email: 'chaser@practice.example',
+      password: PASSWORD,
+    });
+    assert.equal(accepted.status, 303, 'they join');
+    const chaser = db.prepare('SELECT id, role FROM practitioner WHERE email = ?').get('chaser@practice.example');
+    assert.equal(chaser.role, 'assistant', 'as an assistant');
+    assert.equal(
+      db.prepare('SELECT COUNT(*) n FROM key_wrapping WHERE practitioner_id = ?').get(chaser.id).n,
+      0,
+      'holding nothing that opens anything — which is the whole point, and is a fact rather than a rule',
+    );
+
+    // And the fact is enforced where it matters: the document itself.
+    const asAssistant = agent(base);
+    await asAssistant.post('/signin', { email: 'chaser@practice.example', password: PASSWORD });
+    const fileId = db.prepare('SELECT id FROM upload WHERE filename = ?').get('statement.pdf').id;
+    const refused = await asAssistant.get(`/requests/${firm.requestId}/files/${fileId}`);
+    assert.equal(refused.status, 403, 'the file is refused');
+    assert.match(await refused.text(), /do not hold a copy/, 'and the reason given is the true one');
+
+    // While the work they were invited to do is theirs.
+    assert.equal((await asAssistant.get('/requests')).status, 200, 'they can see the board');
+    assert.equal((await asAssistant.get('/clients')).status, 200, 'and the clients');
+
+test('an assistant invitation cannot smuggle a key, and a keyed one still carries one', async () => {
+  await withServer(async ({ agent, db }) => {
+    const firm = await practiceWithRequest({ agent, db });
+
+    // The role and the blob disagree, which is the one thing the schema's CHECK also refuses. The server
+    // says so at the door rather than silently discarding a key the browser went to the trouble of sealing.
+    const smuggled = await firm.client.request('/members/invite', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({ role: 'assistant', sealed_key: 'invite$sha-256$nonsense' }).toString(),
+    });
+    assert.equal(smuggled.status, 400);
+    assert.match((await smuggled.json()).error, /does not carry a key/);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM invite').get().n, 0, 'and nothing was recorded');
+
+    // The keyed path is unchanged, including the role it now writes — which it computed and dropped before.
+    const keyed = await firm.client.request('/members/invite', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({
+        role: 'accountant',
+        key_id: db.prepare('SELECT id FROM practice_key').get().id,
+        sealed_key: 'invite$sha-256$whatever',
+      }).toString(),
+    });
+    assert.equal(keyed.status, 201, 'a keyed invitation still needs a key the inviter holds');
+    assert.equal((await keyed.json()).keyed, true);
+    const row = db.prepare('SELECT role, sealed_key FROM invite').get();
+    assert.equal(row.role, 'accountant', 'and records the chosen role rather than dropping it on the floor');
+    assert.equal(row.sealed_key, 'invite$sha-256$whatever', 'and the blob');
+  });
+});
+
+test('a member who joins with a key is told the opposite thing, on a page that has the fields', async () => {
+  await withServer(async ({ agent, db }) => {
+    const firm = await practiceWithRequest({ agent, db });
+    const keyId = db.prepare('SELECT id FROM practice_key').get().id;
+    const made = await firm.client.request('/members/invite', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({ role: 'accountant', key_id: keyId, sealed_key: 'invite$sha-256$whatever' }).toString(),
+    });
+    const { token } = await made.json();
+
+    const html = await (await agent().get(`/invite/${token}`)).text();
+    assert.match(html, /you will be able to open the documents clients have already sent/, 'the keyed promise');
+    assert.match(html, /id="passphrase"/, 'and the field that makes it true');
+    assert.ok(!/You will not be able to open the documents/.test(html), 'and not the assistant sentence');
+
+    // The members page offers the choice, because a capability nobody can reach is not a capability.
+    const members = await (await firm.client.get('/members')).text();
+    assert.match(members, /id="invite-role"/, 'the picker is on the form');
+    assert.match(members, /value="assistant"/, 'including the role that carries no key');
+  });
+});
+
+  });
+});
+
     assert.equal((await practice.client.post('/members/nobody/role', { role: 'owner' })).status, 404);
   });
 });

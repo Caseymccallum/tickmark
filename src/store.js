@@ -61,12 +61,15 @@ export function inviteByToken(db, token, at = new Date()) {
   if (typeof token !== 'string' || token.length === 0) return { state: 'unknown' };
   const row = db
     .prepare(
-      `SELECT i.id, i.key_id, i.sealed_key, i.expires_at, i.used_at,
+      `SELECT i.id, i.key_id, i.sealed_key, i.expires_at, i.used_at, i.role,
               p.name AS practice_name, p.id AS practice_id,
               k.public_key
          FROM invite i
          JOIN practice p ON p.id = i.practice_id
-         JOIN practice_key k ON k.id = i.key_id
+         -- **LEFT**, because an assistant invitation carries no key at all. An inner join here reported one
+         -- as an unknown address, which is the least useful of the three ways an invitation can fail: the
+         -- person holding a perfectly good link would be told there was nothing at theirs.
+         LEFT JOIN practice_key k ON k.id = i.key_id
         WHERE i.token_hash = ?`,
     )
     .get(hashToken(token));

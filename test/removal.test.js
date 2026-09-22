@@ -237,6 +237,15 @@ test('the page warns when the person being removed is the last who can open the 
   await withServer(async ({ agent, db }) => {
     const firm = await firmOfTwo({ agent, db });
 
+    // The second member is promoted to owner first, and that is the fixture catching up with a fix rather
+    // than a convenience. `firmOfTwo` invites through the browser, which sends no role; the server's default
+    // is *accountant*, and an accountant may not look at a removal page at all. Before the role was passed
+    // through to `createInvite`, the column stayed null — and null reads as owner — so this test was passing
+    // on a bug. Promoting explicitly is what a real practice does, and it is also the truthful fixture: only
+    // an owner can remove anybody.
+    const promoted = await firm.client.post(`/members/${firm.secondId}/role`, { role: 'owner' });
+    assert.equal(promoted.status, 303, 'the second member is made an owner');
+
     // Rotate: the owner gets a copy of the new key and the second member does not, so the owner is the
     // only person who can open anything encrypted to it.
     const rotated = await firm.client.post('/setup', {

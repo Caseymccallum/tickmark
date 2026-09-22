@@ -208,7 +208,8 @@ Tickmark's answer is: **on your server, and nobody else.**
   documents, chase them and record a phone call — **and cannot open what comes back.** That last one is not a
   checkbox: files are sealed to the practice's key, a key is opened by a copy that belongs to a *member*, and
   an assistant holds no copy. The permission is enforced by the same arithmetic that keeps the server out, so
-  there is no setting to get wrong and no operator — including us — who could grant it.
+  there is no setting to get wrong and no operator — including us — who could grant it. Inviting one is a
+  choice on the invite form, and the link then carries no key at all.
 - **two checks before a file is even encrypted**: a **password-protected PDF** (bank statements arrive locked
   more often than not, and the client has no idea, because it opens fine on their machine) and **the same file
   sent twice**. Both happen in the browser, because the file is still there — the alternative is reading every

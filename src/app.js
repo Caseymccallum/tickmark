@@ -4974,9 +4974,6 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
         : html`<h2>Removed</h2>
             <p class="note">No longer members. Their names stay in the records, because the requests they
               made and the files they uploaded say who did what. Someone still here can invite them back.</p>
-            <h2>Removed</h2>
-            <p class="note">No longer members. Their names stay in the records, because the requests they
-              made and the files they uploaded say who did what. Someone still here can invite them back.</p>
             <div class="scroll"><table>
               <thead><tr><th align="left">Email</th><th align="left">Joined</th><th align="left">Removed</th></tr></thead>
               <tbody>
@@ -5007,8 +5004,15 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
               a particular person, it works once, and it stops working after ${INVITE_DAYS} days. Send it
               the way you would send a password, not the way you would send a link.</p>
             <form id="invite-form" class="inline">
-              <label for="passphrase">Your passphrase <span class="note">used in this browser, sent nowhere</span></label>
-              <input id="passphrase" name="passphrase" type="password" autocomplete="current-password">
+              <label for="invite-role">What will they do? <span class="note">you can change it later</span></label>
+              <select id="invite-role" name="role">
+                <option value="accountant" selected>Accountant — the client work, and can open what clients send</option>
+                <option value="assistant">Assistant — can chase documents, cannot open them</option>
+              </select>
+              <div id="passphrase-row">
+                <label for="passphrase">Your passphrase <span class="note">used in this browser, sent nowhere</span></label>
+                <input id="passphrase" name="passphrase" type="password" autocomplete="current-password">
+              </div>
               <button type="submit">Create an invitation</button>
             </form>
             <p class="status" id="invite-status"></p>
@@ -5058,13 +5062,28 @@ async function createInvitePage({ db, request, response, practitioner, practiceI
   // over a key and therefore made a member who could do the client work — so that is what it still makes,
   // rather than the *owner* a null role reads as. The difference matters: null-as-owner is the honest
   // reading of a row that predates roles, and the wrong reading of a form that simply forgot to ask.
-  //
-  // An assistant invitation is the opposite: no key at all, which is the only way a new member who cannot
-  // read client documents can be invited. Nothing in the browser sends one yet — `web/members.js` always
-  // seals a key — so an assistant is made today by inviting somebody and then moving them, and the members
-  // page says so. That is a two-step workaround rather than a missing capability, and it is named here
-  // rather than left to be discovered by somebody reading this function.
   const role = ROLES.includes(field(fields, 'role')) ? field(fields, 'role') : 'accountant';
+
+  // **An assistant's invitation carries no key, and that is the whole point.** The key is sealed in the
+  // inviter's browser, so "no key" is not something the server could do on its own — it is the browser being
+  // told not to seal one, and the server refusing to record half of a keyed invitation.
+  if (role === 'assistant') {
+    if (sealedKey) {
+      return sendJson(response, 400, { error: 'an assistant invitation does not carry a key' });
+    }
+    const token = newToken();
+    const expiresAt = new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    createInvite(db, {
+      practiceId,
+      createdBy: practitioner.id,
+      sealedKey: null,
+      keyId: null,
+      role,
+      tokenHash: hashToken(token),
+      expiresAt,
+    });
+    return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS, keyed: false });
+  }
 
   if (!/^invite\$sha-256\$/.test(sealedKey ?? '')) {
     return sendJson(response, 400, { error: 'that is not a sealed invitation' });
@@ -5084,20 +5103,28 @@ async function createInvitePage({ db, request, response, practitioner, practiceI
     createdBy: practitioner.id,
     keyId,
     sealedKey,
+    role,
     tokenHash: hashToken(token),
     expiresAt,
   });
 
-  return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS });
+  return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS, keyed: true });
 }
 
 /**
  * The page someone lands on from an invitation link.
  *
- * The secret is in the fragment, which the server never receives — so this page cannot know whether the
- * link is valid in the way that matters. It can know whether the *token* is live, and it hands the
- * browser the sealed blob to try. If the fragment is missing or wrong, the browser finds out when the
- * blob refuses to open, which is the only place that can find out.
+ * **Two shapes, because there are two kinds of invitation.** A keyed one hands over a copy of the practice's
+ * key, and the browser does the opening: the secret that unseals the blob travels in the link's fragment,
+ * which the server never receives. An assistant's invitation carries no key at all — there is nothing to open
+ * and nothing to seal — so it asks for a password and nothing else, and it says plainly that they will not be
+ * able to read what clients send. Asking for a passphrase that protects a key they are not being given would
+ * be worse than useless: it would imply they were getting one.
+ *
+ * The secret is in the fragment for the keyed shape, which the server never receives — so that page cannot
+ * know whether the link is valid in the way that matters. It can know whether the *token* is live, and it
+ * hands the browser the sealed blob to try. If the fragment is missing or wrong, the browser finds out when
+ * the blob refuses to open, which is the only place that can find out.
  */
 async function invitePage({ db, response, params, error = null }) {
   const found = inviteByToken(db, params[0]);
@@ -5115,12 +5142,23 @@ async function invitePage({ db, response, params, error = null }) {
     }));
   }
 
+  // Whether this invitation carries a key is read from the invitation rather than from its role: the
+  // database has a `CHECK` that the two go together, and the thing the page actually depends on is the blob.
+  const keyed = found.invite.sealed_key !== null;
+
   return sendPage(response, 200, page({
     title: `Join ${found.invite.practice_name}`,
     body: html`
       <h1>Join ${found.invite.practice_name}</h1>
-      <p>You have been invited to a practice on this Tickmark. You will get your own login and your own
-        passphrase, and you will be able to open the documents clients have already sent.</p>
+      ${keyed
+        ? html`<p>You have been invited to a practice on this Tickmark. You will get your own login and your
+            own passphrase, and you will be able to open the documents clients have already sent.</p>`
+        : html`<p>You have been invited to help ${found.invite.practice_name} collect documents from their
+            clients — asking for them, chasing them, and keeping track of what has arrived.</p>
+            <p class="info"><strong>You will not be able to open the documents themselves.</strong> That is not
+            a setting: what clients send is sealed to a key you are not being given, so nobody — not the
+            practice, not whoever runs the server — can grant it to you later. It is also why this invitation
+            asks for fewer things than the other kind.</p>`}
       ${error ? html`<p class="error">${error}</p>` : ''}
       <form method="post" action="/invite/${params[0]}" id="accept-form">
         <label for="email">Email</label>
@@ -5128,18 +5166,22 @@ async function invitePage({ db, response, params, error = null }) {
         <label for="password">Password <span class="note">for signing in</span></label>
         <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
           autocomplete="new-password">
-        <label for="passphrase">Passphrase <span class="note">protects the key; it is not stored anywhere</span></label>
-        <input id="passphrase" name="passphrase" type="password" autocomplete="new-password">
-        <label for="again">Passphrase again</label>
-        <input id="again" name="again" type="password" autocomplete="new-password">
+        ${keyed
+          ? html`<label for="passphrase">Passphrase <span class="note">protects the key; it is not stored anywhere</span></label>
+              <input id="passphrase" name="passphrase" type="password" autocomplete="new-password">
+              <label for="again">Passphrase again</label>
+              <input id="again" name="again" type="password" autocomplete="new-password">`
+          : ''}
         <input type="hidden" name="wrapped_private_key" id="wrapped_private_key">
         <button type="submit">Join</button>
       </form>
       <p class="status" id="accept-status"></p>
-      <p class="note">Your browser opens the invitation with a secret that came in the link itself. That
-        secret is never sent to the server, which is why this page needs JavaScript.</p>
+      ${keyed
+        ? html`<p class="note">Your browser opens the invitation with a secret that came in the link itself.
+            That secret is never sent to the server, which is why this page needs JavaScript.</p>`
+        : html`<p class="note">Nothing on this page needs JavaScript — there is no key to open.</p>`}
       <script type="application/json" id="invite-blob">${raw(JSON.stringify({ sealed: found.invite.sealed_key }))}</script>
-      ${raw('<script type="module" src="/assets/invite.js"></script>')}`,
+      ${keyed ? raw('<script type="module" src="/assets/invite.js"></script>') : ''}`,
   }));
 }
 
@@ -5160,19 +5202,27 @@ async function acceptInvite({ db, request, response, params }) {
   const wrapped = field(fields, 'wrapped_private_key');
 
   const refuse = (problem) => invitePage({ db, response, params, error: problem });
+  const keyed = found.invite.sealed_key !== null;
 
-  if (field(fields, 'passphrase') || field(fields, 'again')) {
+  if (keyed && (field(fields, 'passphrase') || field(fields, 'again'))) {
     // A filled passphrase field means the browser did not run: the form posts those fields only because
     // they exist, and the script clears them before submitting. Saying so is better than creating a
-    // member whose key copy is empty.
+    // member whose key copy is empty. An assistant's invitation has no such fields, so this cannot fire
+    // for one — which is why it is asked only of the shape that has them.
     return refuse('That did not arrive the way it should have. This page needs JavaScript, because the key is sealed in your browser.');
   }
 
   const problem = validateCredentials(email, password);
   if (problem) return refuse(problem);
 
-  if (!/^pbkdf2\$sha-256\$/.test(wrapped ?? '')) {
+  // The one shape check the server can make: a keyed invitation must arrive with a sealed copy, and a
+  // keyless one must not be given one. `claimInvite` would ignore a key on a keyless invitation anyway,
+  // and refusing it here says so at the door rather than silently discarding it.
+  if (keyed && !/^pbkdf2\$sha-256\$/.test(wrapped ?? '')) {
     return refuse('That did not arrive with a sealed copy of the key. If this page is open in an old tab, reload it from the link.');
+  }
+  if (!keyed && wrapped) {
+    return refuse('That invitation does not carry a key, so there is nothing to seal. Reload the page from the link and try again.');
   }
 
   // An existing account is refused the invitation — unless it is a **removed member of this same

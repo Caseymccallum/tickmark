@@ -179,6 +179,11 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   only, when there is season work — with the count and a link straight into the pre-ticked ask. This is the
   remembering half of "scheduled requests" and the only half this product wants: no cron, no daemon, and nothing
   that sends itself. The software notices when somebody uses it, which is exactly when somebody needs telling.
+- **Three roles** (2d, finished in 2z): an owner holds the keys and decides who else is in the practice, an
+  accountant does the client work, and an **assistant** can ask clients for documents, chase them and record a
+  phone call while being unable to open what comes back. That last part is not a permission the server
+  enforces — a member with no wrapped copy of the practice key holds nothing that decrypts — which is why
+  inviting an assistant is a choice on the invite form that changes what the *link* carries: no key at all.
 - **Two checks the browser makes before anything is encrypted** (2y): a **password-protected PDF** — bank
   statements arrive locked more often than not, and the client has no idea it is a problem because it opens
   fine on their machine — and **the same file sent twice**. Both are the *only* kind of document inspection this
