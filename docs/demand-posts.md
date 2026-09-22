@@ -30,13 +30,52 @@ blocks automated reads; the tracker last verified each of these between May and 
 | Room | What its rules say | Verdict |
 | --- | --- | --- |
 | **r/Accounting** | *"No self-promotion, advertising, solicitations, or research ideas"* | **Do not post.** "Research ideas" is what this was going to be. |
-| **r/Bookkeeping** | *"No self-promotion, advertising, or solicitation. Do not post your own blog, website, app, whatever."* | **Only a product-free question.** |
+| **r/Bookkeeping** | *Rule 7: "No 'research' questions for your software, online tool, etc. Posts seeking information from users to be used in development of your software… Breaking this rule may result in a permanent ban."* | **Do not post.** Checked by hand, 20 September 2026 — see below. |
 | **r/tax** | *"Do not post or otherwise link to content intended to benefit any business"* | **Do not post.** |
 | **r/taxpros** | Not on the tracker; **check the sidebar before posting** | Probably the same as the others |
 | **AccountingWEB Any Answers** | Has software-and-suppliers areas; suppliers are expected to disclose | **The best room for the version that names what is being built** |
 
 **Verify every one of these in the sidebar before posting.** Moderators change rules and
 the tracker is not authoritative — twenty seconds each, against an account ban.
+
+### Where to actually go — checked, 20 September 2026, after the first list failed twice
+
+The tracked rooms were wrong in both directions: one banned research outright (r/Bookkeeping, Rule 7), and
+r/Accounting and r/tax were already ruled out. **The list below is where practitioners actually are, and it
+was found by looking for the conversation rather than for a room.** The best lead is not a forum at all:
+
+- **A thread that already exists.** *Bookkeepers Helping Bookkeepers* (Facebook) has a live post that reads
+  *"Curious how other bookkeepers here handle the constant back-and-forth with clients — chasing missing
+  documents, approvals, answering the same billing…"* That is the question, asked by a practitioner, with no
+  prompt from anybody. **Replying to it is worth more than any post on this page**, and no rule anywhere bans
+  answering a question.
+- **ICB's forum has a software topic**: *"Software — Practice Management, Tax, Client Portal, Document
+  Management Solutions"* (`bookkeepers.org.uk/Forum`). A room where discussing software **is the subject** is
+  a better home for the disclosed version than any general trade forum, because nobody has to be persuaded
+  that the topic is allowed.
+- **Facebook groups, where bookkeepers actually talk**: Bookkeepers Helping Bookkeepers · Bookkeepers Corner ·
+  Bookkeeping Practice Success · Innovative Accountants & Bookkeepers · Workflows for Tax Pros · 6 Figure
+  Bookkeepers' Club. Most are private and need joining, which is itself the answer to "is this allowed" —
+  read the group's rules when you join, and disclose in the first line if you post.
+- **AAT — a room where asking is the point**: `forums.aat.org.uk` has a bookkeeping community, and unlike the
+  subreddits its purpose is people asking each other things.
+- **AIPB forum** (`aipb.org/community`) — the US equivalent, for the American end of the profession.
+- **AccountingWEB** — the UK site, `accountingweb.co.uk/any-answers`. It exists and is busy; see the note
+  below, because the earlier claim about it was too confident.
+
+### AccountingWEB is real, and the earlier claim about it was still wrong
+
+`accountingweb.co.uk` is live and Any Answers is live — the search results include threads about 2026/27
+accounting. It blocks automated reads, so nothing here could verify its rules, and the honest position is
+that **its welcome for a disclosed supplier is unverified**. The evidence points the wrong way: the community
+has threads titled *"Practice Advertising"*, *"Is advertising allowed in the Opportunities section?"* and
+*"Are recruiters allowed to advertise on here?"* — which is what a community looks like when vendors try it
+often and are not entirely welcome. **Read
+`accountingweb.co.uk/any-answers/how-to-use-any-answers-and-community-guidelines` before posting there**, and
+expect the answer to be "only in specific places".
+
+The likely reason it could not be found at all: **`accountingweb.com` was the US site and is not the same
+thing.** If you searched for the American one, that is the confusion rather than the UK site being gone.
 
 ### Checked again on 20 September 2026, and what changed
 
@@ -97,7 +136,34 @@ distinction is not a technicality — the answers are better without the product
 The version that names the product belongs in the room built for it: **AccountingWEB**, and
 practitioner Facebook groups, where suppliers disclosing what they are working on is normal.
 
-## Version 1 — r/Bookkeeping (product-free, and the only version allowed there)
+## Version 1 — WITHDRAWN. Do not post to r/Bookkeeping.
+
+**Checked by hand on 20 September 2026, and it is worse than the tracker said.** r/Bookkeeping has a
+**Rule 7** that the third-party database did not have:
+
+> *No "research" questions for your software, online tool, etc. Posts seeking information from users to be
+> used in development of your software, online tool, etc. are not allowed. This includes questions like
+> "what part of ____ do you find most challenging" and "what would you like to see in a tool that does
+> ____". Breaking this rule may result in a permanent ban.*
+
+That is a description of this document. The draft below was written to be product-free precisely because
+the tracked rule was only about self-promotion — *"do not post your own blog, website, app, whatever"* —
+and a question with no product in it was read as compliant. It is not: **the rule bans the *asking*, not
+the *linking***. Two of the five numbered questions below ("what actually breaks?", "what would you like…")
+are named in it by shape, and the penalty is a permanent ban rather than a removal.
+
+It is kept here rather than deleted, because the mistake is cheap to repeat and the reasoning is the point:
+*the difference between "don't advertise here" and "don't ask here" is the entire difference between a
+compliant post and a banned account, and only the sidebar says which one a room means.* A tracker that
+summarises rules will flatten that distinction every time.
+
+**What replaces it** is not another question in another room. It is `docs/verify-demand.md`'s revised
+"who is asked": the rooms where a supplier disclosing what they are building is normal, and — on Reddit —
+answering people who are already asking, rather than asking them.
+
+### The withdrawn draft, kept for the record
+
+> **How do you chase clients for documents, and what actually goes wrong?**
 
 **No product, no link, no "I'm building".** The question is a real one a bookkeeper would ask,
 which is what makes it allowed — and it also gets better answers, because "what goes wrong?"
@@ -209,16 +275,47 @@ group. Here the product can be named, because you are talking to one person who 
 
 ## In what order, today
 
-1. **r/Bookkeeping** — Version 1, product-free. **Read the sidebar first.**
-2. **r/taxpros** — Version 2, same shape with the room's own words. **Read the sidebar first**,
-   and if it bans this the way its neighbours do, skip it rather than risk the account.
-3. **AccountingWEB Any Answers** — Version 3, the one that names the product. This is the room
-   built for it, and the one where a supplier asking practitioners a question is normal.
-4. **Practitioner Facebook groups** — Version 3. Many of these are where bookkeepers actually
-   talk to each other, and a disclosed "I'm building this, would you use it?" gets a straight
-   answer there.
+**Rewritten on 20 September 2026, after r/Bookkeeping's Rule 7 was read by hand.** The previous order began
+with two Reddit questions and that is no longer available: one room bans research outright with a permanent
+ban, and the others' rules point the same way. What is left is the rooms where a supplier disclosing what
+they are building is normal, and one Reddit route that is an **answer** rather than a question.
 
-**Do not post to r/Accounting or r/tax.** Their rules name this exact post.
+1. **Replying to threads that already exist** — the route Rule 7 does not close, and now the best one.
+2. **AccountingWEB Any Answers** — Version 3, the one that names the product. The room built for it.
+3. **Practitioner Facebook groups** — Version 3 as a post. Where bookkeepers actually talk to each other.
+4. **Version 4 as a DM** to anybody who replies anywhere above.
+
+**Do not post a research question to r/Bookkeeping, r/Accounting or r/tax.** All three name it. Assume
+r/taxpros does too until its sidebar says otherwise.
+
+### The route that is still open on Reddit: answering, rather than asking
+
+Rule 7 bans *seeking information to build software*. It does not ban helping somebody who has already asked
+for help — and practitioners post this exact question constantly, in every one of those rooms, with no
+prompt from anybody:
+
+> *"How does everyone chase clients for documents?" · "What do you use to track what clients owe you?" ·
+> "Client hasn't sent me anything and the deadline is Friday."*
+
+Those threads are the research, already written, by the people you want to hear from. Search for them —
+`chase clients documents`, `PBC list tracker`, `client hasn't sent`, sorted by new, over the last month in
+r/Bookkeeping, r/taxpros and r/Accounting — and **answer the question they actually asked.** Say what you
+have learned from building this, if it helps. Name nothing. If somebody asks *"are you building something?"*
+answer honestly, once, in a reply — that is a conversation, not a research post, and it is the conversation
+these rooms exist for.
+
+Three things worth knowing before doing it:
+
+- **The answers are better than a post would get.** Somebody asking a question they already have is
+  describing a live failure, not answering a hypothetical about your idea.
+- **It costs an evening and earns the account a history**, which is the thing the spam filter and the
+  moderators both look at.
+- **It is not a technique.** Contributing for a fortnight and then posting a question that these rules do
+  allow somewhere is fine; contributing twice with a pitch in each is what gets removed, and deservedly.
+
+**The most valuable replies** are to somebody describing a season and a client — *"three clients never sent
+the bank statements and I didn't notice until February"*. That thread, answered properly, is worth more than
+four posts, and it cannot be banned because it is not the thing these rules are aimed at.
 
 Adapt the text per room. Identical text in four places is the pattern spam filters and moderators
 look for, and it reads as an advertisement in every one of them.
