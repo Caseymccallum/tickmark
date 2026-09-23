@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 
 import { createLink, practiceWithRequest, withServer, plainBody } from './helpers.js';
-import { openingDraft, reminderDraft } from '../src/app.js';
+import { openingDraft, reminderDraft } from '../src/notices.js';
 
 test('a reminder is signed by the practice, and says nothing it was not told', () => {
   const named = reminderDraft({

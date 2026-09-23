@@ -336,6 +336,10 @@ every test touches — for a readability gain rather than a behaviour one.
 That leaves `app.js` as the route table, the dispatcher and the sign-in handlers — around 2,000 lines, which is a
 file somebody can read in an afternoon.
 
+**Since this was written, step one is done** — `src/notices.js` now holds the letters and
+`notifyPracticeOfChange`, and `app.js` is 320 lines shorter for it. The other three steps are unstarted;
+`CHANGELOG.md` has the entry.
+
 **Also found, and stated rather than fixed:** three things this audit *thought* were dead code and were not — a
 `href` helper in the board that is used eight times, an unused-looking binding in the first-run card that is live,
 and a duplicated doc comment in `roles.js` that is not duplicated. All three were found by a tool, not by eye,

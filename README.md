@@ -12,7 +12,7 @@ tracking and the record of what arrived and when are yours, on your own server.
 browser before it leaves it, and the server stores bytes it cannot read — checked by tests that
 read the file back off disk, require the document itself not to appear in it, and then open it with
 nothing but the passphrase. [What is encrypted, and what is not](docs/encryption.md) is the honest
-account of that, including four things it does not protect.
+account of that, including the seven things it does not protect.
 
 Every workflow step the research named is built, and `docs/roadmap.md` says where each one's reasoning lives.
 The demand check in `docs/verify-demand.md` has been run once and is still running: practitioners have been
@@ -313,6 +313,7 @@ Worth being precise, because it is the product's main claim:
 | File | What it is |
 | --- | --- |
 | `NAMING.md` | Why it is called Tickmark, and every name that was rejected with a reason |
+| `SECURITY.md` | How to report a vulnerability, what is already known and accepted, and what is in scope |
 | `docs/mvp.md` | The scope of the first version, the stack, the data model, and what is cut |
 | `docs/encryption.md` | What is encrypted, what is not, and why — the document the central claim rests on |
 | `docs/members.md` | The decision about several people in one practice: one key, wrapped once per person, and what it costs |

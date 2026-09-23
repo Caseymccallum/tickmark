@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { reminderDraft } from '../src/app.js';
+import { reminderDraft } from '../src/notices.js';
 import { createLink, practiceWithRequest, signUp, upload, withServer } from './helpers.js';
 
 const line = async (response) => response.text();

@@ -24,6 +24,8 @@
     "tables": "node tools/tables.mjs",
     "probe:repeats": "node tools/probe-repeats.mjs",
     "check:style": "node tools/check-style.mjs",
+    "check:docs": "node tools/check-docs.mjs",
+    "coverage": "node --test --experimental-test-coverage \"test/*.test.js\"",
     "preview:gateway": "node tools/preview-gateway.mjs",
     "check:nav": "node tools/check-nav.mjs",
     "transcript": "node tools/smtp-transcript.mjs"

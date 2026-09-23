@@ -50,6 +50,10 @@ jobs:
           node-version: 24
       - name: the stylesheet closes and every rule is whole
         run: npm run check:style
+      # The numbers a document states about another document, and the documents nothing links to. Both had
+      # gone wrong: the README advertised four encryption limits while the document listed seven.
+      - name: the documents agree with each other
+        run: npm run check:docs
       - name: every page is reachable and none is a dead end
         run: npm run check:nav
       - name: the site says what the product is
@@ -62,6 +66,11 @@ jobs:
       # either used or admitted in `tools/find-unused.mjs` with its reason.
       - name: no exports that nothing references
         run: npm run find:unused
+      # The number is *reported*, not asserted, and that is deliberate rather than an oversight: a threshold is a
+      # decision about what this project will not ship below, and inventing one here would be a number nobody chose.
+      # It runs here rather than in the tests job so the number arrives whatever the platform.
+      - name: what the suite covers
+        run: npm run coverage
 
   container:
     name: the container serves

@@ -7,6 +7,78 @@ Versions follow the ordinary convention: the first number changes when the schem
 when features arrive, the third for fixes. **Downgrading is not supported** — migrations only go forwards — so
 the entry that matters most is the one that says the schema changed.
 
+## Unreleased
+
+Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
+tag, because a changelog assembled at release time is one reconstructed from memory.
+
+### The first step of the split, taken
+
+`src/app.js` was **357 KB** — the one thing `docs/audit.md` called a real maintainability problem rather than a
+measured trade-off, with a four-step split proposed and nothing done about it. **Step one is done.** The letters now
+live in `src/notices.js`: `arrivalDraft`, `openingDraft`, `reminderDraft`, `notifyPracticeOfChange` (the only message
+the product sends by itself) and the `signOff` they share. `app.js` is 320 lines shorter, and the part of it with no
+routes in it is now a file with no routes in it.
+
+It was the audit's own chosen first step, for the audit's own reason: no route coupling, and the suite already owned
+it. The claim held — the new module lands at **100% of its lines and functions** covered, and three test files now
+import the drafts from where they live rather than through the application. The other three steps are named in the
+audit and unstarted.
+
+### The browser's half, executed rather than served
+
+`web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so
+`test/crypto.test.js` runs *the* implementation rather than a second one written to agree with it. **The glue around
+it was not.** `upload.js` and `download.js` were asserted to be *served* on every page and were executed by nothing,
+which is the difference between a claim and a check: a page can be served, be perfectly valid, and still encrypt
+nothing.
+
+`test/fake-dom.js` is a hand-written partial DOM — no dependency, for the same reason the SMTP client and the ZIP
+reader are hand-written — and `test/browser.test.js` drives both pages through it:
+
+- the client's page **encrypts before it sends**: the captured body is an envelope, the document does not survive in
+  it, the name and the sealing key travel as headers, and what went out **opens with the passphrase and nothing
+  else**;
+- a file over the practice's limit is refused *before* it is encrypted, once on the picker and again on submit;
+- the practice's page unwraps the key in the tab, fetches the envelope, and saves **the document rather than the
+  ciphertext** — releasing the object URL a minute later, which is asserted rather than waited for;
+- a wrong passphrase opens nothing and **fetches nothing**: a page that refuses instead of spending the practice's
+  bandwidth on an envelope it will not read;
+- and an envelope changed in storage is refused by the page whether the changed byte is in the ciphertext, in the
+  header (the ephemeral key an attacker would want to substitute), or in the authentication tag.
+
+What the shim does not implement throws rather than passing quietly, and its two limits are written down where they
+bite: events do not bubble, and a cache-busting import shows up in the coverage report as one partially-covered file
+per scenario.
+
+### The documents check each other now
+
+`README.md` advertised **four** things the encryption does not protect. `docs/encryption.md` lists **seven** — three
+arrived over later phases, and the one sentence a buyer reads first kept the old count. Fixed, and then made
+impossible to repeat: `tools/check-docs.mjs` counts the bullets in the document and compares them with the word in
+the README, requires every file in `docs/` to be linked from the README, and requires the policy below to be
+findable. It is a CI gate like the other checks, because a stale number here is not a typo — the whole claim is that
+the limits are stated rather than discovered, so a count that understates them *is* the failure mode.
+
+### SECURITY.md, and a way to report something
+
+The gap a review of this repository found and the repository itself had not noticed: **there was no disclosure
+process at all.** `SECURITY.md` now says how to report (GitHub's private advisories, with a fallback for a mirror
+that has them switched off), what to expect (days rather than hours, and a written reason rather than a dismissal
+when the answer is "that is a recorded limit"), what is **already known and accepted** with links to the two
+documents that argue it, what is in scope — the browser-side key first, because moving decryption to the server is
+the most serious finding this project can receive — and which versions are supported.
+
+### A coverage number, with no threshold invented for it
+
+`npm run coverage` wraps the suite in Node's own `--experimental-test-coverage`, and CI prints the table. There is
+deliberately **no threshold**: a number below which this will not ship is a decision about what the project is
+willing to accept, and inventing one to look rigorous would be exactly the kind of unearned claim the rest of this
+repository avoids. The browser tests moved the figure from 95.08% to **94.08% of lines** while making the suite
+strictly stronger — `upload.js` and `download.js` had never been loaded by a test, so previously unmeasured code is
+now measured and partly covered. A coverage number that only ever goes up is one that is being managed rather than
+read.
+
 ## 0.2.0 — 23 September 2026
 
 The first tagged release. By the convention above it is the *second* number that moves: features
