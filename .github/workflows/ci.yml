@@ -1,0 +1,93 @@
+# Everything that can be checked without a human, checked on every push — so that nothing here
+# depends on somebody remembering to run it before they commit.
+#
+# There is no `npm ci` anywhere in this file because there is nothing to install: the dependencies
+# are the runtime (see package.json, and the Dockerfile's comment about the supply chain). A CI job
+# that installs nothing is also a CI job that a registry outage or a supply-chain attack cannot
+# touch — the same property the product itself is proud of.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run at a time per ref: a push made while an earlier run is going supersedes it, and the
+# earlier run is cancelled rather than queueing minutes of work nobody will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: the suite, ${{ matrix.os }}
+    # Both platforms, because both are real: trials run on Windows and the documented deployment is
+    # a Linux container. Line-ending and path bugs are invisible on the other one — this repo's own
+    # .gitattributes exists because of that class of bug.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: run the tests
+        run: npm test
+
+  checks:
+    name: the checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: the stylesheet closes and every rule is whole
+        run: npm run check:style
+      - name: every page is reachable and none is a dead end
+        run: npm run check:nav
+      - name: the site says what the product is
+        run: npm run check:site
+      - name: render every page from the real server
+        run: npm run snapshot
+      - name: the rendered pages are structurally sound
+        run: npm run check:pages
+      # Informational on purpose: `find:unused` reports exports nothing references, and a few of
+      # those are deliberate API surface. It prints; it does not gate.
+      - name: unused exports (informational)
+        run: npm run find:unused
+
+  container:
+    name: the container serves
+    # The job that would have caught "the image builds and then cannot start" — the bug that made
+    # the Dockerfile's `COPY web` line exist. Building is not serving: this boots the documented
+    # `docker compose up` and asks the same checker an operator would.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: build and start it the documented way
+        run: docker compose up -d --build
+      - name: wait for it to answer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/healthz; then exit 0; fi
+            sleep 2
+          done
+          echo "nothing answered after a minute"
+          docker compose logs
+          exit 1
+      - name: check what it serves
+        run: npm run check:container
+      - name: if it went wrong, say why
+        if: failure()
+        run: docker compose logs

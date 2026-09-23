@@ -38,3 +38,7 @@ for (const file of files) {
 }
 
 console.log(problems === 0 ? `all ${files.length} pages look structurally sound` : `${problems} of ${files.length} pages need a look`);
+
+// A check that cannot fail is not a check — it is a comment. This tool is a gate in CI now, so a
+// page that needs a look has to be able to stop the build that shipped it.
+process.exit(problems === 0 ? 0 : 1);
