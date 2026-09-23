@@ -205,6 +205,16 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   somebody outside the practice. `src/totp.js` is RFC 6238 in a hundred lines of
   `node:crypto`, checked against the specification's own test vectors
 
+- **Every document in one list** (2ad): `/files` lists everything clients have sent, searchable by filename,
+  client or request, with a CSV that honours the same search. It says plainly that it searches *names* and not
+  contents, because a practice finding nothing needs to know which of those two it is.
+- **Who opened what** (2ad): serving a document records `file.opened` with the person and the filename, so a firm
+  that promises confidentiality can answer "who has seen this client's file?". Recorded after the file is sent,
+  never before.
+- **A first hour that says something** (2ad): a new practice's board lists what to do first — key, request, mail,
+  invite — with the state derived from the database rather than stored, and the card leaving on its own once the
+  first two are done.
+
 **Not built, and named rather than implied:**
 
 - **Recurring requests** on a schedule — a request that makes *itself*, and emails a client, because a date came

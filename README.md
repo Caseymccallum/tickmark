@@ -188,6 +188,10 @@ Tickmark's answer is: **on your server, and nobody else.**
   **One press checks off everything that arrived** — each document still recorded on its own —
   and a document flagged for re-sending keeps the request off "ready", because a file that
   is no use is not a file that is in
+- **every document in one place**: `/files` lists everything clients have sent — searchable by filename, client
+  or request, and exportable — and says plainly that it searches *names* rather than contents, because the server
+  has never seen inside a file. **Opening one is recorded too**, so a firm can say who has looked at a client's
+  file
 - **two-factor sign-in**: a six-digit code from any authenticator app, asked for after your
   password, with single-use recovery codes for the day the phone is gone. It is what stops
   a stolen password from becoming a stolen practice — somebody signed in as you can add a

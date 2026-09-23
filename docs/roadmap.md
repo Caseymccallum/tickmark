@@ -1278,6 +1278,83 @@ away from losing what is there now), the multi-tenant layout and the per-practic
 ceilings and how to raise them, and the one honest interaction — a backup taken during a re-encryption pass.
 
 Eight new tests. 330 in all.
+## Phase 2ad — Three absences that only show up in use
+
+None of these is a feature a practice asks for by name. Each is the kind of thing whose absence you notice on a
+particular Tuesday, and each was found by asking what somebody actually does with the product rather than what it
+can do.
+
+### Finding a document you know you have
+
+The board answers *whose turn is it* and the clients page answers *what does this one owe me*. Neither answers
+**"where is the file the client sent in March?"** — which is a real question once a practice has sixty clients and
+a season of uploads behind it, and it is a question about *documents*.
+
+`/files` is every upload, newest first, searchable by filename, client, request title and the note a client left
+beside a file. Plus a CSV that honours the same search, because an export that ignores the filter somebody just
+applied is an export they filter again by hand.
+
+**The page states its own limit, and that is the important part**: *"This searches the names, not the contents.
+The server has never seen inside a document — that is the whole point of the product — so it can find
+statements-oct.pdf and cannot find 'the page with the overdraft on it'."* Somebody searching for a phrase and
+finding nothing needs to know whether they have no such file or the search cannot read; a page that stays quiet
+about it turns a limitation into a suspicion. It is the product's central claim seen from an unusual angle: **a
+search that could read the files would be a search run by something that can read the files.**
+
+It is `accountant`, not `assistant`. An assistant's job is chasing, and the chase pages already say what has
+arrived for whom; a searchable index of every document the practice holds is more than that job needs, so the
+role does not get it. The roles test caught the omission — `/files` was already in `SENSITIVE_PATTERNS` from the
+pass that wrote them.
+
+### Saying who has looked at a client's file
+
+A firm that promises confidentiality should be able to answer *"who has seen these bank statements?"*, and until
+now it could not: the event log recorded what happened to a request — checked, relabelled, withdrawn, chased —
+and a document being **opened** left no trace at all.
+
+`file.opened` is now recorded by the route that serves a document, with the person and the filename in the
+detail, the way `notice.sent` carries its recipient. Three decisions in it:
+
+- **After the bytes are on their way, never before.** A failed read must not leave a record of a look that never
+  happened — that is worse than no audit at all, because it would be believed. There is a test that deletes the
+  blob and asserts nothing is recorded.
+- **In `detail`, not a new column.** The event table records what happened to a *request*; the schema has no
+  actor column, and adding one would be a migration for a fact that three callers already say in a sentence.
+- **It shows up in the request's history**, where somebody asking the question would already be looking.
+
+### The first hour, which used to say nothing
+
+A new practice lands on an empty board after making a key, and the things between them and a client sending a
+document are invisible from there: make a key, ask for something, and — the one nobody would guess — **configure a
+mail server, or the chase cannot reach anybody**. Every one is discoverable by reading the right page, and none is
+discoverable by looking at the board.
+
+Four decisions:
+
+1. **The state is derived, never stored.** A step is done when the database says so, so the card cannot fall out of
+   step with reality and there is no "onboarded" flag to find. A test proved this by deleting the work and watching
+   the card come back.
+2. **It disappears on its own.** No dismissal, no "hide this" — a checklist somebody has to close becomes
+   permanent furniture.
+3. **Email is on the list and is not essential.** It is the one step nothing else in the product can teach,
+   because everything works without it. So it is listed, explained in a sentence, marked `(optional)`, and does
+   not hold the card open on its own.
+4. **It never follows somebody into a filtered view**, the same rule the season notice follows.
+
+**And one thing the checklist taught me about the product:** there is no "add a client" page, because a client
+comes into existence through a request. The step says so rather than linking to something that does not exist —
+which is the kind of small dishonesty a checklist is uniquely good at introducing.
+
+### The bug, and it is the second of its kind in three passes
+
+**`mailer is not defined`**, and the board 500'd for everybody. Handlers in `src/app.js` are top-level functions
+that receive only the fields they name in their parameters, so a card built from facts a handler does not
+destructure cannot work — the same shape as the previous pass, where the two storage ceilings were never added to
+the dispatcher's handler context and silently did nothing. Two instances of one mistake is a pattern, and the
+comment left in `listRequests` says so.
+
+Seven new tests. 337 in all. 42 snapshot pages, including a board captured from a genuinely new practice.
+
 
 ## Phase 3 — Find out if anyone wants it
 

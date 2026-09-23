@@ -118,8 +118,13 @@ export function routePath(path) {
     .replace(/\\\//g, '/');
 }
 
-/** Whether an address is inside one of the areas that must declare who may use it. */
-/** Whether an address is one that must declare who may use it. */
+/**
+ * Whether an address is one that must declare who may use it.
+ *
+ * The list has grown twice, and the second growth is the one worth noting: the per-request document address
+ * hangs off `/requests/…/files/…` rather than under `/files`, so a prefix rule alone would have missed a
+ * client's actual documents. Patterns rather than prefixes, for that reason.
+ */
 export const isSensitive = (path) => SENSITIVE_PATTERNS.some((pattern) => pattern.test(routePath(path)));
 
 

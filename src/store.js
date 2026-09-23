@@ -264,6 +264,62 @@ export function clientFor(db, practiceId, clientId) {
  *
  * Ordered by name: this is a directory, and a directory is looked things up in.
  */
+/**
+ * Every document a practice holds, newest first, with somewhere to look for one.
+ *
+ * This is the page that answers "where is the file the client sent in March?", which is a real question once a
+ * practice has sixty clients and a season of uploads behind it — and it is a question about *documents* rather
+ * than about requests, which is why it is not simply a better board search.
+ *
+ * **What the search can look at is what the server has**: filenames, client names, request titles, and the note a
+ * client left beside a file. It cannot look inside a document, and the page says so rather than letting somebody
+ * conclude the search is broken. That limit is this product's central claim seen from an unusual angle: a search
+ * that could read the files would be a search run by something that can read the files.
+ */
+export function filesForPractice(db, practiceId, { query = '' } = {}) {
+  const like = `%${query.toLowerCase()}%`;
+  return db
+    .prepare(
+      `SELECT u.id, u.filename, u.size_bytes, u.uploaded_at, u.client_note,
+              r.id AS request_id, r.title, r.closed_at,
+              c.name AS client_name,
+              i.label AS item_label
+         FROM upload u
+         JOIN request r ON r.id = u.request_id
+         JOIN client c ON c.id = r.client_id
+         LEFT JOIN request_item i ON i.id = u.request_item_id
+        WHERE r.practice_id = ?
+          AND (
+            ? = ''
+            OR LOWER(u.filename) LIKE ?
+            OR LOWER(c.name) LIKE ?
+            OR LOWER(r.title) LIKE ?
+            OR LOWER(COALESCE(u.client_note, '')) LIKE ?
+          )
+        ORDER BY u.uploaded_at DESC`,
+    )
+    .all(practiceId, query, like, like, like, like)
+    .map((row) => ({
+      id: row.id,
+      filename: row.filename,
+      sizeBytes: row.size_bytes,
+      uploadedAt: row.uploaded_at,
+      clientNote: row.client_note,
+      // Null when nobody asked for it. That is a fact, and the page shows it rather than inventing a label.
+      item: row.item_label,
+      requestId: row.request_id,
+      title: row.title,
+      closed: Boolean(row.closed_at),
+      client: row.client_name,
+    }));
+}
+
+/** How many documents there are in total, for the line that says a search is showing a slice of them. */
+export const fileCountFor = (db, practiceId) =>
+  db
+    .prepare('SELECT COUNT(*) AS n FROM upload u JOIN request r ON r.id = u.request_id WHERE r.practice_id = ?')
+    .get(practiceId).n;
+
 export function clientSummaries(db, practiceId) {
   return db
     .prepare(

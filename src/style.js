@@ -230,6 +230,12 @@ const COMPONENTS = `
   .bar + .search, .search + .seg { margin-left: 0; }
   @media (max-width: 40rem) { .search { margin-left: 0; width: 100%; } .search input[type=search] { flex: 1; width: auto; } }
 
+  /* A page whose whole purpose is searching, rather than a search box in a toolbar: one wide field, and the
+     explanation of what it can and cannot look at underneath it rather than beside it. */
+  .search-page { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+  .search-page input[type=search] { flex: 1 1 18rem; width: auto; }
+  .search-page > p { flex: 1 0 100%; margin: .35rem 0 0; }
+
   /* --- a segmented switch, for two or three mutually exclusive views of one list ------------- */
   .seg {
     display: inline-flex; gap: 2px; padding: 2px;
@@ -606,6 +612,21 @@ const CLIENT_AND_MISC = `
     display: block; text-align: center; font-size: var(--fs-md); letter-spacing: .1em;
     padding: .5rem .6rem; background: var(--surface); border: 1px solid var(--line-2);
   }
+
+  /* The list of things to do before the product makes sense, each with a tick or a way to do it. */
+  .steps-list { list-style: none; padding: 0; margin: .5rem 0 0; display: grid; gap: .9rem; }
+  .steps-list > li { display: flex; gap: .75rem; align-items: flex-start; }
+  .steps-list .tick {
+    flex: none; width: 1.35rem; height: 1.35rem; margin-top: .1rem;
+    display: grid; place-items: center; border-radius: 50%;
+    font-size: var(--fs-sm); font-weight: 700;
+    background: var(--sunken); border: 1px solid var(--line-2); color: var(--soft);
+  }
+  .steps-list li.done .tick { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-ink); }
+  .steps-list li.done strong { color: var(--soft); text-decoration: line-through; }
+  .steps-list strong { display: block; }
+  .steps-list .cell-s { display: block; margin: .15rem 0 .5rem; max-width: 44rem; }
+  .steps-list .row.tight { margin: 0; }
 
   /* A correction hiding behind a word, rather than three inputs in every row. */
   details.rename { margin-top: .35rem; }

@@ -81,6 +81,7 @@ export function page({ title, practitioner = null, body, banner = null, signIn =
       ${practitioner
         ? html`${navLink('/requests', 'Requests')}
             ${navLink('/clients', 'Clients')}
+            ${navLink('/files', 'Documents')}
             ${navLink('/chase', 'Chase')}
             ${navLink('/templates', 'Templates')}
             ${navLink('/keys', 'Keys')}

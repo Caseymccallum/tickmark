@@ -19,12 +19,15 @@ stores what it cannot read.
 **The promises worth knowing before you rely on it:**
 
 - **The server cannot read the documents.** Not as a policy — it never receives a key. Anyone can check that by
-  reading `src/crypto.js` and the upload path.
+  reading `src/crypto.js` and the upload path. It also means `/files` searches filenames and never contents.
 - **Losing the passphrase destroys the documents.** There is no recovery, no backdoor and no reset. This is the
   one thing to tell a practice before they start.
 - **The self-hosted edition is free forever**, and the licence cannot be taken back: AGPL-3.0, with no clause
   that would let a future version be pulled.
 - **Backups are `node tools/backup.mjs`**, not a file copy. See `docs/operations.md`.
+- **Opening a document is recorded**, with who did it, so the practice can answer "who has seen this file?".
+- **Two-factor is available** per member, and worth turning on: a stolen password can otherwise add an encryption
+  key of its own, and every upload after that would be sealed to somebody outside the practice.
 
 **What it does not do**, stated rather than implied: it does not read or analyse documents, it will not email a
 client without somebody pressing a button, and it does not connect to tax software. Those are decisions, not

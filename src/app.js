@@ -93,6 +93,8 @@ import {
   deleteTemplate,
   removeTemplateItem,
   renameTemplate,
+  filesForPractice,
+  fileCountFor,
   templateFor,
   templateItemsOf,
   templatesOf,
@@ -306,6 +308,10 @@ export const ROUTES = [
   ['GET', '/clients.csv', clientsCsv],
   // Clients: a record of its own, and the page every request starts from when the client is known.
   ['GET', '/clients', listClients],
+  // Every document, searchable by name. Not a filter on the board: the board answers "whose turn is it" and this
+  // answers "where is that file" — different questions, with different useful orders.
+  ['GET', '/files', filesPage, 'accountant'],
+  ['GET', '/files.csv', filesCsv, 'accountant'],
   ['GET', /^\/clients\/([^/]+)$/, viewClient],
   ['POST', /^\/clients\/([^/]+)$/, saveClient],
   ['GET', '/requests/new', newRequestForm],
@@ -1519,7 +1525,87 @@ const REQUEST_ORDERS = {
   asked: (a, b) => b.created_at.localeCompare(a.created_at),
 };
 
-function listRequests({ db, response, practitioner, url, practiceId }) {
+/**
+ * What a practice sees when they have not finished setting themselves up.
+ *
+ * The problem this closes is a first hour that says nothing. A new practice lands on an empty board after making
+ * a key, and the things standing between them and a client sending a document are invisible: make a key, add a
+ * client, ask for something, and — the one nobody would guess — **configure a mail server, or the chase cannot
+ * reach anybody**. Each is discoverable by reading the right page, and none of them is discoverable by looking at
+ * the board.
+ *
+ * Four decisions in it:
+ *
+ * 1. **The state is derived, never stored.** There is no "onboarded" flag to fall out of step with reality: a
+ *    step is done when the database says so, so a practice arriving with a database already in use sees the right
+ *    list, and one that has finished sees nothing at all.
+ * 2. **It disappears on its own.** No dismissal and no "hide this" — a checklist somebody has to close becomes
+ *    permanent furniture. Once the three essential steps are done it is gone.
+ * 3. **Email is on the list and is not essential.** It is the one step a practice cannot deduce from the product,
+ *    because everything else works without it: reminders are drafted and shown in full, they just cannot be sent.
+ *    So it is listed, explained in a sentence, and does not hold the card open on its own.
+ * 4. **It is the only thing on the board that is not about a client**, and it says when it will leave.
+ */
+function firstRunCard({ db, practiceId, practitioner, mailer }) {
+  const requests = requestsFor(db, practiceId, { scope: 'all' }).length;
+  const team = membersOf(db, practiceId).filter((member) => !member.removedAt).length;
+
+  const steps = [
+    {
+      done: Boolean(practitioner?.hasKey),
+      title: 'Make your encryption key',
+      why: 'One passphrase, held by you. Clients’ files are encrypted to this key in their browser, which is what makes the central promise true — and it is the only thing that cannot be recovered if it is lost.',
+      href: '/setup',
+      action: 'Make the key',
+      essential: true,
+    },
+    {
+      done: requests > 0,
+      title: 'Ask a client for documents',
+      why: 'Name the client as you go: the first request is what creates them, and their history starts there. You get a link to send with no account needed on their side, and a list to chase against.',
+      href: '/requests/new',
+      action: 'Make a request',
+      essential: true,
+    },
+    {
+      done: Boolean(mailer),
+      title: 'Set up email, so the chase can reach a client',
+      why: 'Everything works without this — reminders are drafted and shown in full — but nothing can actually be sent. One relay, one page of documentation, and a test page to prove it works.',
+      href: '/admin/test-email',
+      action: 'Test the mail relay',
+      essential: false,
+    },
+    {
+      done: team > 1,
+      title: 'Invite someone, if there is someone',
+      why: 'A second member gets their own passphrase and their own copy of the key. An assistant can chase clients without ever holding one.',
+      href: '/members',
+      action: 'Invite a member',
+      essential: false,
+    },
+  ];
+
+  // Nothing until the three that matter are done, and nothing ever again after that.
+  if (steps.filter((step) => step.essential).every((step) => step.done)) return null;
+
+  const left = steps.filter((step) => !step.done).length;
+  return section(
+    'Getting started',
+    `${left} ${left === 1 ? 'thing' : 'things'} left. This goes away once the first two are done.`,
+    html`<ul class="steps-list">
+      ${steps.map((step) => html`<li class="${step.done ? 'done' : ''}">
+        <span class="tick">${step.done ? '✓' : ''}</span>
+        <span>
+          <strong>${step.title}</strong>${step.essential ? '' : html` <span class="note">(optional)</span>`}
+          ${step.done ? '' : html`<span class="cell-s">${step.why}</span>`}
+          ${step.done ? '' : html`<div class="row tight"><a class="btn sm" href="${step.href}">${step.action}</a></div>`}
+        </span>
+      </li>`)}
+    </ul>`,
+  );
+}
+
+function listRequests({ db, response, practitioner, url, practiceId, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
   const showingClosed = url.searchParams.get('closed') === '1';
   const wanted = url.searchParams.get('state');
@@ -1670,6 +1756,7 @@ function listRequests({ db, response, practitioner, url, practiceId }) {
           ${showingClosed ? '' : html`<a class="btn primary" href="/requests/new">New request</a>`}
         </div>
       </div>
+      ${showingClosed || wanted || query ? '' : firstRunCard({ db, practiceId, practitioner, mailer })}
       ${seasonNotice?.length
         ? html`<p class="info"><strong>${seasonNotice.length}
             ${seasonNotice.length === 1 ? 'client is' : 'clients are'} due to be asked.</strong>
@@ -3145,6 +3232,127 @@ async function closeSeveral({ db, request, response, practitioner, practiceId })
 }
 
 /**
+ * Every document, in one list, with a box to look for one.
+ *
+ * **The search looks at what the server has, and the page is honest about that.** Filenames, clients, request
+ * titles, and the note a client left beside a file — never the contents, because the server has never seen a
+ * document's contents. Somebody typing "2024 statement" and finding nothing needs to know whether that is
+ * because they have no such file or because the search cannot read, and a page that stays quiet about it turns a
+ * limitation into a suspicion.
+ *
+ * What it is for is the search a practice does in May: *which client sent the thing I am thinking of*, *what did
+ * they call it*, *when did it arrive*. All three are metadata, and all three are here.
+ */
+function filesPage({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const query = (url.searchParams.get('q') ?? '').trim();
+  const files = filesForPractice(db, practiceId, { query });
+  const total = fileCountFor(db, practiceId);
+  const practice = practiceFor(db, practiceId);
+
+  const rows = files.map((file) => html`<tr>
+    <td>
+      <span class="cell-t">${file.filename}</span>
+      ${file.clientNote ? html`<span class="cell-s">they said: ${file.clientNote}</span>` : ''}
+    </td>
+    <td class="cell-t">${file.client}</td>
+    <td>
+      <a href="/requests/${file.requestId}">${file.title}</a>
+      ${file.item
+        ? html`<span class="cell-s">${file.item}</span>`
+        : html`<span class="cell-s">sent without being asked</span>`}
+    </td>
+    <td class="note">${dateIn(practice?.timezone, new Date(file.uploadedAt))}</td>
+    <td class="num note">${readableSize(file.sizeBytes)}</td>
+    <td><a class="btn sm" href="/requests/${file.requestId}/files/${file.id}">Download</a></td>
+  </tr>`);
+
+  return sendPage(response, 200, page({
+    title: 'Documents',
+    practitioner,
+    here: '/files',
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <h1>Documents</h1>
+          <p class="sub">Everything clients have sent you, newest first. To ask for something, or to see what is
+          still outstanding, the <a href="/requests">board</a> is the place for that.</p>
+        </div>
+        <div class="do">
+          <a class="btn" href="/files.csv${query ? `?q=${encodeURIComponent(query)}` : ''}">Download as CSV</a>
+        </div>
+      </div>
+
+      <form method="get" action="/files" class="card search-page">
+        <input type="search" name="q" value="${query}" placeholder="A filename, a client, a request…"
+          aria-label="Search documents" autofocus>
+        <button type="submit">Search</button>
+        ${query ? html`<a class="btn ghost sm" href="/files">Clear</a>` : ''}
+        <p class="note"><strong>This searches the names, not the contents.</strong> The server has never seen
+        inside a document — that is the whole point of the product — so it can find
+        <code>statements-oct.pdf</code> and cannot find “the page with the overdraft on it”. Your own file names
+        and the notes clients leave are what it has to work with.</p>
+      </form>
+
+      ${files.length === 0
+        ? query
+          ? empty(
+              'Nothing matches that',
+              html`No document, client or request matches “${query}”. Remember that this searches names rather than
+              contents — try the client's name, or part of the filename.`,
+              html`<a class="btn" href="/files">Show everything</a>`,
+            )
+          : empty(
+              'No documents yet',
+              'When a client sends something through a link, it appears here — and it stays searchable by name.',
+              html`<a class="btn primary" href="/requests/new">Ask for something</a>`,
+            )
+        : html`
+            <p class="note">${files.length} ${files.length === 1 ? 'document' : 'documents'}${query
+              ? html` matching “${query}” of ${total} in total`
+              : ''}.</p>
+            <div class="scroll"><table class="wide">
+              <colgroup>
+                <col style="width:30%"><col style="width:17%"><col style="width:23%">
+                <col style="width:12%"><col style="width:8%"><col style="width:10%">
+              </colgroup>
+              <thead><tr>
+                <th align="left">File</th><th align="left">Client</th><th align="left">Request</th>
+                <th align="left">Arrived</th><th align="right">Size</th><th align="left"></th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>`}`,
+  }));
+}
+
+/** The same list as a spreadsheet, honouring the same search. */
+function filesCsv({ db, response, practitioner, practiceId, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const query = (url.searchParams.get('q') ?? '').trim();
+  const practice = practiceFor(db, practiceId);
+
+  return sendCsv(response, 'tickmark-documents.csv', [
+    ['File', 'Client', 'Request', 'Document asked for', 'Arrived', 'Size (bytes)', 'Client note'],
+    ...filesForPractice(db, practiceId, { query }).map((file) => [
+      file.filename,
+      file.client,
+      file.title,
+      file.item ?? 'sent without being asked',
+      dateIn(practice?.timezone, new Date(file.uploadedAt)),
+      file.sizeBytes,
+      file.clientNote ?? '',
+    ]),
+  ]);
+}
+
+/** Bytes in the units a person reads, for a table where "1048576" is not an answer. */
+function readableSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
  * The practice's clients: who they work for, and what each one still owes.
  *
  * Until this page existed a client was only reachable *through* one of their requests, which meant the
@@ -3527,7 +3735,22 @@ async function serveEnvelope({ db, response, practitioner, params, practiceId })
     'x-file-name': encodeURIComponent(row.filename),
     'cache-control': 'no-store',
   });
-  return response.end(bytes);
+  response.end(bytes);
+
+  // **Recorded after the bytes are on their way, never before.** Opening a document is the one thing this
+  // product lets somebody do that is worth an audit trail — a firm promising confidentiality should be able to
+  // answer "who has seen this client's bank statements?" — and the answer has to survive the file being read.
+  // Writing it first would mean a failed read left a record of a look that never happened, which is worse than
+  // no record at all.
+  //
+  // The person travels in `detail`, the way `notice.sent` does, because the event table records what happened to
+  // a *request* rather than who did it: the schema has no column for the actor, and adding one would be a
+  // migration for a fact that three callers need to say in a sentence.
+  recordEvent(db, {
+    requestId: found.id,
+    kind: 'file.opened',
+    detail: `${practitioner.email} — ${row.filename}`,
+  });
 }
 
 async function issueLink({ db, request, response, practitioner, params, practiceId, onLinkIssued }) {

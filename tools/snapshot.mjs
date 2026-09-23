@@ -11,7 +11,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createLink, practiceWithRequest, upload, withServer } from '../test/helpers.js';
+import { agent, createLink, practiceWithRequest, signUp, upload, withServer } from '../test/helpers.js';
 
 const out = process.argv[2] ?? 'tmp-snapshot';
 mkdirSync(out, { recursive: true });
@@ -126,6 +126,12 @@ await withServer(async ({ base, agent, db }) => {
     await save("client page, with the practice's note", `/r/${notingLink.token}`, anonymous);
   }
 
+  // Every document, and a search that finds one — captured **here, after the upload**, because a document index
+  // photographed before the fixture has any documents is a picture of an empty table. The ordering note above
+  // about the closed request is the same lesson; this file has now taught me it twice.
+  await save('documents', '/files', client);
+  await save('documents, searched', '/files?q=statements', client);
+
   // The three ways a client speaks, on the page where they do it: a message, a document nobody asked for, and
   // the practice's own contact details. Captured here rather than after the due-ask block below, because a
   // closed request suppresses most of what is worth looking at.
@@ -179,6 +185,15 @@ await withServer(async ({ base, agent, db }) => {
     await writeFileSync(join(out, 'two-factor-recovery-codes.html'), await confirmed.text());
     pages.push(`200  two-factor, recovery codes      /account/two-factor (post) -> two-factor-recovery-codes.html`);
     await save('two-factor, on', '/account/two-factor', client);
+  }
+
+  // The first hour, captured last of all — because it signs up a *second* practice in the same database, and
+  // every screenshot above expects the fixture's own state. A practice that has just arrived sees something
+  // none of the others do: a board that says what to do first.
+  const brandNew = agent(base);
+  const signedUp = await signUp(brandNew, 'new@practice.example');
+  if (signedUp.status === 303) {
+    await save('board, first run', '/requests', brandNew);
   }
 });
 
