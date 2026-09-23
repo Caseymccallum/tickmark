@@ -17,7 +17,7 @@
  */
 import { dateIn, todayIn } from './clock.js';
 import { sendMail } from './mailer.js';
-import { history, itemsOf, lastNoticeAt, ownersOf, practiceFor, recordEvent, requestOwner, uploadsOf } from './store.js';
+import { history, itemsOf, lastNoticeAt, outstandingOf, ownersOf, practiceFor, recordEvent, requestOwner, uploadsOf } from './store.js';
 
 /**
  * The message a practice gets when a client does something.
@@ -368,4 +368,38 @@ export async function tellOwners(db, practiceId, mailer, { subject, lines }) {
     console.error(`tickmark: could not tell the practice about "${subject}":`, error);
     return 'failed';
   }
+}
+
+/**
+ * The reminder for one request: the words, and the list they were built from.
+ *
+ * One function, used by the single-request page and by the run that writes to everybody. Two implementations of
+ * "what does a reminder say" would be two things free to disagree — and the place the disagreement would show up is a
+ * client's inbox.
+ */
+export function messageFor({ db, found, origin, token, practiceName = null }) {
+  const items = itemsOf(db, found.id);
+  const outstanding = outstandingOf(db, found.id);
+
+  return {
+    outstanding,
+    total: items.length,
+    ...reminderDraft({
+      clientName: found.client_name,
+      title: found.title,
+      dueAt: found.due_at,
+      practiceName,
+      outstanding: outstanding.filter((item) => !item.needsAttention).map((item) => item.label),
+      again: outstanding
+        .filter((item) => item.needsAttention)
+        .map((item) => ({ label: item.label, note: item.attentionNote })),
+      // Everything the client has said, not only the items still outstanding: what they said about an item that has
+      // since arrived is part of the record, and the practice should see it in the draft rather than discover it
+      // later.
+      theySaid: items
+        .filter((item) => !item.withdrawn && item.clientSays)
+        .map((item) => ({ label: item.label, says: item.clientSays })),
+      link: `${origin}/r/${token}`,
+    }),
+  };
 }

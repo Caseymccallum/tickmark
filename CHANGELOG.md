@@ -97,6 +97,26 @@ disagreeing with the code, and twice the only thing that noticed was the suite �
 The lesson is not about the analysis being wrong; it is that a mechanical move should stay mechanical, and that 392
 tests driving real pages remain the only check here that reads the whole system.
 
+### Two more subjects leave the file, and one of them takes a lesson with it
+
+`src/account-views.js` (261 lines) and `src/chase-views.js` (626 lines): a person's own password, address and sessions;
+and the chase list with every message it can send. `app.js` is **3,018 lines and 149 KB** against the 7,173 and 357 KB
+the audit measured — **58% of it gone** — with the sign-in and two-factor pages, the templates, the client records, the
+per-request actions, the assets and the route table left inside it.
+
+`messageFor` went to `src/notices.js` with the other letters, and for the same reason those exist: a reminder that says
+one thing on a single request's page and another in a run to fifty clients is a disagreement that shows up in a
+client's inbox. The chase's three constants went with the chase — days for a bulk link, a cap on the cadence, and the
+run's time budget — except the budget, which the bulk ask in `app.js` shares and therefore imports.
+
+**The mistake is worth recording, because the recovery is the part that worked.** The chase block was sliced with line
+numbers measured *before* two earlier edits had shifted the file, so both `app.js` and the new module were cut in the
+wrong places: the module began five lines into a doc comment and ended inside the function after it. Nothing was lost.
+`app.js` came back from the last commit with `git checkout`, the half-written module was deleted, and the account move
+that had already been done was simply done again from the restored file — with its boundaries **re-measured rather than
+remembered**. Fifteen minutes, no harm, and one rule worth keeping: measure the boundaries in the file you are about to
+edit, not in the one you measured an hour ago.
+
 ### The browser's half, executed rather than served
 
 `web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so

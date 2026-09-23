@@ -336,16 +336,16 @@ every test touches — for a readability gain rather than a behaviour one.
 That leaves `app.js` as the route table, the dispatcher and the sign-in handlers — around 2,000 lines, which is a
 file somebody can read in an afternoon.
 
-**Since this was written, all four steps are done, and a fifth besides** — `src/notices.js` holds the letters,
+**Since this was written, all four steps are done and three subjects besides** — `src/notices.js` holds the letters,
 `src/client-portal.js` the client's page and the five things a client can do on it, `src/keys-views.js` the key, and
-`src/board-views.js` the board and the request page. The fifth is `src/members-views.js`: who is in a practice, how
-somebody joins it, and what the practice is called — the one subject the table above did not name, and the largest
-thing the plan left behind.
+`src/board-views.js` the board and the request page. The three the table above did not name are
+`src/members-views.js` (who is in a practice, how somebody joins it, what it is called), `src/chase-views.js` (the
+chase list and every message it can send) and `src/account-views.js` (this person's password, address and sessions).
 
-`app.js` has gone from **7,173 lines to 3,901** (357 KB to 191 KB — 46% of it gone), and the helpers that more than one
-side needed moved out to `src/views.js`, `src/http.js`, `src/clock.js`, `src/store.js`, `src/auth.js` and a new
-`src/blobs.js`. What is left is the sign-in and two-factor pages, the account pages, the chase list, the templates and
-the client records, the assets and the route table. `CHANGELOG.md` has all five entries.
+`app.js` has gone from **7,173 lines to 3,018** (357 KB to 149 KB — **58% of it gone**), and the helpers that more than
+one side needed moved out to `src/views.js`, `src/http.js`, `src/clock.js`, `src/store.js`, `src/auth.js` and a new
+`src/blobs.js`. What is left is the sign-in and two-factor pages, the templates, the client records, the per-request
+actions, the assets and the route table. `CHANGELOG.md` carries the entries.
 
 **Also found, and stated rather than fixed:** three things this audit *thought* were dead code and were not — a
 `href` helper in the board that is used eight times, an unused-looking binding in the first-run card that is live,
