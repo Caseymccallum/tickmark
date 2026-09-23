@@ -25,7 +25,8 @@
     "probe:repeats": "node tools/probe-repeats.mjs",
     "check:style": "node tools/check-style.mjs",
     "preview:gateway": "node tools/preview-gateway.mjs",
-    "check:nav": "node tools/check-nav.mjs"
+    "check:nav": "node tools/check-nav.mjs",
+    "transcript": "node tools/smtp-transcript.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

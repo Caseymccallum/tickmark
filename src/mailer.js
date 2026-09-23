@@ -262,7 +262,10 @@ async function expect(session, codes, step) {
   const wanted = Array.isArray(codes) ? codes : [codes];
   const reply = await session.readReply();
   if (!wanted.includes(reply.code)) {
-    throw new MailError(step, `${reply.code} ${reply.lines.join(' ')}`.trim());
+    // The reply's own lines already carry its code, so the code is prefixed only when the server
+    // somehow did not: a sentence like "550 550 5.1.1 no such user" stutters in a support ticket.
+    const said = reply.lines.join(' ').trim();
+    throw new MailError(step, said.startsWith(String(reply.code)) ? said : `${reply.code} ${said}`);
   }
   return reply;
 }

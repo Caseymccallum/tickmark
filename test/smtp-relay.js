@@ -26,6 +26,8 @@ import { TLSSocket, createSecureContext, createServer as createTlsServer } from 
 function newLedger() {
   return {
     conversation: [],
+    /** The whole dialogue — client commands and server replies interleaved, with the TLS phase tagged. For transcripts. */
+    dialogue: [],
     messages: [],
     /** The most recent message, for the common case of one. */
     get message() {
@@ -50,8 +52,23 @@ function attach(socket, seen, options, { overTls = false } = {}) {
   let dataLines = [];
   let login = null;
 
+  // Every reply this double writes goes through one wrapper, so `dialogue` can be read as a wire log:
+  // server replies and client commands in order, each tagged with whether it travelled inside TLS.
+  // The write is shadowed on the instance so TLS's own handshaking (which never calls the public
+  // `write`) cannot leak in, and only strings are recorded — which is all an SMTP reply ever is.
+  const write = socket.write.bind(socket);
+  socket.write = (data) => {
+    if (typeof data === 'string') {
+      for (const line of data.split('\r\n')) {
+        if (line.length > 0) seen.dialogue.push({ from: 'server', text: line, tls: overTls });
+      }
+    }
+    return write(data);
+  };
+
   const record = (line) => {
     seen.conversation.push(line);
+    seen.dialogue.push({ from: 'client', text: line, tls: overTls });
     if (overTls) seen.afterUpgrade.push(line);
   };
 
@@ -175,12 +192,13 @@ export async function startRelay(t, options = {}) {
   const server = settings.tls
     ? createTlsServer({ cert: settings.tls.cert, key: settings.tls.key }, (socket) => {
         seen.upgraded = true;
-        socket.write(`${settings.greeting}\r\n`);
+        // `attach` before the greeting, so the greeting is wrapped and lands in the dialogue too.
         attach(socket, seen, settings, { overTls: true });
+        socket.write(`${settings.greeting}\r\n`);
       })
     : createServer((socket) => {
-        socket.write(`${settings.greeting}\r\n`);
         attach(socket, seen, settings);
+        socket.write(`${settings.greeting}\r\n`);
       });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
