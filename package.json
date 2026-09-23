@@ -16,7 +16,10 @@
     "check:site": "node tools/check-site.mjs",
     "snapshot": "node tools/snapshot.mjs",
     "reset-password": "node tools/reset-password.mjs",
-    "backup": "node tools/backup.mjs"
+    "backup": "node tools/backup.mjs",
+    "bench": "node tools/bench.mjs",
+    "find:unused": "node tools/find-unused.mjs",
+    "tables": "node tools/tables.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

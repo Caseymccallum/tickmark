@@ -285,6 +285,8 @@ Worth being precise, because it is the product's main claim:
 - [roles.md](docs/roles.md) — who can do what, and why an assistant genuinely cannot open a file
 - [clients.md](docs/clients.md) — clients as records rather than strings
 - [design.md](docs/design.md) — the look, and the rules that keep it consistent
+- [security.md](docs/security.md) and [audit.md](docs/audit.md) — what the product promises about security and
+  performance, how each claim is checked, and what is knowingly not done
 - [mail.md](docs/mail.md) — configuring a relay, and testing it
 - [saas.md](docs/saas.md) — the hosted layer, and what is not proven about it
 - [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
@@ -301,6 +303,8 @@ Worth being precise, because it is the product's main claim:
 | `docs/saas.md` | The audit of a multi-tenant codebase, and the plan for wrapping this one — including which parts of it are built and which are unproven |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
 | `docs/operations.md` | Running it for a practice: backup and restore, the storage ceilings, and what a restore means |
+| `docs/security.md` | The security posture: what is promised, how each promise is kept, and the one gap left open on purpose |
+| `docs/audit.md` | A full audit: the feature gaps, what was slow and what it measured, and the plan for the code that needs splitting |
 | `docs/roadmap.md` | What comes next and why, including what is deliberately not being built |
 | `docs/verify-demand.md` | The pre-build check: who is asked, what is asked, and what the answers decide |
 | `docs/demand-posts.md` | The posts for that check, ready to send |

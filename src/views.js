@@ -156,10 +156,54 @@ export function empty(heading, sentence, action = null) {
   </div>`;
 }
 
+/**
+ * Headers every response carries, and why each one is here rather than being a habit.
+ *
+ * This is a product whose *client* URLs are credentials: a link is `/r/<token>` and the token is the whole of
+ * the authentication. Three of these four exist because of that, and none of them is decoration.
+ *
+ * - **`Referrer-Policy: no-referrer`** — the one that matters most here. Without it, a browser sends the full
+ *   URL of the page a link was clicked from, so a client who clicked anything outward from their portal page
+ *   would hand that page's token to whoever was linked to. The page has no outbound links today; a policy that
+ *   depends on that staying true is not a policy.
+ * - **`X-Content-Type-Options: nosniff`** — a browser left to guess at a content type can decide an uploaded
+ *   envelope is HTML. It is served as `application/octet-stream` precisely so it cannot be, and this is what
+ *   tells the browser not to second-guess that.
+ * - **`X-Frame-Options: DENY`** — nobody should be able to put a Tickmark page in an iframe, because the buttons
+ *   on these pages are "close this request", "remove this member" and "turn two-factor off". Clickjacking a
+ *   practice into switching its own second factor off is a cheap attack and this is a cheap answer to it. (The
+ *   modern spelling of this is `frame-ancestors` in a CSP; there is no CSP yet, and one mechanism that works
+ *   today is worth more than one that would work if something else existed.)
+ * - **`Cross-Origin-Opener-Policy: same-origin`** — the encryption and decryption happen in this page's own
+ *   scripts. Nothing here opens a window or embeds a frame, so nothing needs a reference to one.
+ *
+ * **No `Content-Security-Policy` yet**, and that is a decision with a reason rather than an omission: the pages
+ * are built from inline `<style>` and small inline `<script type="application/json">` blocks, so a policy strict
+ * enough to be worth having needs a nonce per response threaded through every rendering path. That is a real
+ * piece of work rather than a header, and it is written down in `docs/security.md` as the next thing to do here
+ * rather than left for somebody to notice.
+ *
+ * **No `Strict-Transport-Security`** either, deliberately: this software is often run over plain HTTP on a
+ * local network, and a browser told to refuse HTTP for the host cannot be un-told for the length of the
+ * max-age. A product that bricks a practice's browser for six months to add a header would be getting the
+ * trade backwards. The deployment documentation says to put TLS in front of it, and HSTS belongs on that proxy
+ * where it can be removed.
+ */
+export const SECURITY_HEADERS = {
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'cross-origin-opener-policy': 'same-origin',
+};
+
 /** Send a rendered page. */
 export function sendPage(response, status, rendered, cookies = []) {
   const body = rendered.value;
-  const headers = { 'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(body) };
+  const headers = {
+    ...SECURITY_HEADERS,
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+  };
   if (cookies.length > 0) headers['set-cookie'] = cookies;
   response.writeHead(status, headers);
   response.end(body);
@@ -185,6 +229,7 @@ function csvCell(value) {
 export function sendCsv(response, filename, rows, cookies = []) {
   const body = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
   response.writeHead(200, {
+    ...SECURITY_HEADERS,
     'content-type': 'text/csv; charset=utf-8',
     // `attachment` rather than inline: this is a file to keep, not a page to read.
     'content-disposition': `attachment; filename="${filename}"`,

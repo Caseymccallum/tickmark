@@ -43,6 +43,7 @@ import {
   sessionCookie,
   setPendingSecret,
   spendRecoveryCode,
+  spendAttemptOn,
   startChallenge,
   twoFactorState,
   unusedRecoveryCodes,
@@ -55,7 +56,7 @@ import {
   otpauthUri,
 } from './totp.js';
 import { RequestError, field, formFields, readBody } from './http.js';
-import { TONES, badge, empty, html, page, raw, redirect, section, sendCsv, sendPage, tile } from './views.js';
+import { SECURITY_HEADERS, TONES, badge, empty, html, page, raw, redirect, section, sendCsv, sendPage, tile } from './views.js';
 
 /**
  * Data for the browser to read, inside a script element.
@@ -381,7 +382,11 @@ export const ROUTES = [
 
 function sendJson(response, status, value) {
   const body = JSON.stringify(value);
-  response.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+  response.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(body),
+  });
   response.end(body);
 }
 
@@ -1072,7 +1077,7 @@ async function signIn({ db, request, response, signInLimiter }) {
  * out of step deserves another go, and the challenge dies on its own in ten minutes; what stops a brute-force
  * is that there are a million codes and ten minutes.
  */
-async function signInCode({ db, request, response }) {
+async function signInCode({ db, request, response, signInLimiter }) {
   const jar = parseCookies(request.headers.cookie);
   const challenge = challengeFor(db, jar[CHALLENGE_COOKIE]);
   if (!challenge) {
@@ -1081,6 +1086,27 @@ async function signInCode({ db, request, response }) {
       body: html`<h1>That sign-in has expired</h1>
         <p>Nothing was signed in. Start again — it takes a moment.</p>
         <div class="actions"><a class="btn" href="/signin">Sign in again</a></div>`,
+    }));
+  }
+
+  // **The second half needs its own guard, and its absence was the most serious thing an audit of this code
+  // found.** Two-factor exists to stop somebody who already *knows the password* — that is the entire threat
+  // model — and a six-digit code with unlimited attempts is a million guesses against a door that stays open for
+  // ten minutes. The password limiter does not cover this: it is consulted before the password is checked, and
+  // here the password is long since accepted.
+  //
+  // Keyed by the practitioner rather than the challenge, so opening a fresh challenge by re-entering the password
+  // does not hand an attacker a fresh allowance. And keyed separately from the password bucket, so a person
+  // fat-fingering a code does not lock the password path they would use to start again.
+  const key = `two-factor:${challenge.practitionerId}`;
+  const blockedFor = signInLimiter?.blockedFor(key) ?? 0;
+  if (blockedFor > 0) {
+    const minutes = Math.ceil(blockedFor / 60000);
+    return sendPage(response, 429, page({
+      title: 'Too many codes tried',
+      body: codeForm({
+        error: `Too many wrong codes for that account. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or sign in again with your password and a fresh code.`,
+      }),
     }));
   }
 
@@ -1098,6 +1124,22 @@ async function signInCode({ db, request, response }) {
   const step = codeStepFor(person.secret, code);
   const fresh = step !== null && step !== person.lastStep;
   if (!fresh && !spendRecoveryCode(db, challenge.practitionerId, code)) {
+    // Two independent guards, because either alone would be a single point of failure: the limiter is injected
+    // and a hosted deployment may swap it, and this counter lives on the challenge so it cannot be reset by
+    // re-authenticating.
+    signInLimiter?.failed(key);
+    if (spendAttemptOn(db, challenge.id)) {
+      // Out of patience for *this* challenge. Destroyed rather than merely refused, so the budget is not a thing
+      // an attacker can sit inside. Signing in again costs the password, which they have — but it costs a fresh
+      // challenge with a small budget, and the account-level limiter above keeps counting across all of them.
+      endChallenge(db, challenge.id);
+      return sendPage(response, 401, page({
+        title: 'Too many wrong codes',
+        body: codeForm({
+          error: 'That was the last attempt for this sign-in, so it has been closed. Start again with your password and a current code.',
+        }),
+      }));
+    }
     return sendPage(response, 401, page({
       title: 'That code was not right',
       body: codeForm({
@@ -1107,6 +1149,7 @@ async function signInCode({ db, request, response }) {
   }
 
   if (fresh) recordAcceptedStep(db, challenge.practitionerId, step);
+  signInLimiter?.succeeded(key);
   endChallenge(db, challenge.id);
   const { token } = createSession(db, challenge.practitionerId);
   return redirect(response, '/requests', [sessionCookie(token), clearChallengeCookie()]);
@@ -3728,6 +3771,7 @@ async function serveEnvelope({ db, response, practitioner, params, practiceId })
   }
 
   response.writeHead(200, {
+    ...SECURITY_HEADERS,
     'content-type': 'application/octet-stream',
     'content-length': bytes.length,
     // The original filename, so the browser can offer it once the bytes are decrypted. It travels
@@ -5932,7 +5976,7 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
             </form>
             <p class="status" id="invite-status"></p>
             <p id="invite-link" hidden></p>
-            <script type="application/json" id="invite-key">${raw(JSON.stringify({ keyId: newest.id, wrapped: mine }))}</script>
+            ${jsonTag('invite-key', { keyId: newest.id, wrapped: mine })}
             ${raw('<script type="module" src="/assets/members.js"></script>')}
           </section>`}
 
@@ -6095,7 +6139,7 @@ async function invitePage({ db, response, params, error = null }) {
         ? html`<p class="note">Your browser opens the invitation with a secret that came in the link itself.
             That secret is never sent to the server, which is why this page needs JavaScript.</p>`
         : html`<p class="note">Nothing on this page needs JavaScript — there is no key to open.</p>`}
-      <script type="application/json" id="invite-blob">${raw(JSON.stringify({ sealed: found.invite.sealed_key }))}</script>
+      ${jsonTag('invite-blob', { sealed: found.invite.sealed_key })}
       ${keyed ? raw('<script type="module" src="/assets/invite.js"></script>') : ''}`,
   }));
 }

@@ -242,6 +242,23 @@ export function spendRecoveryCode(db, practitionerId, code, at = new Date()) {
   );
 }
 
+/**
+ * Count one wrong code against a challenge, and say whether the patience for it has run out.
+ *
+ * The account-level limiter is the main guard against walking a six-digit space; this is the second, and it is
+ * here because the limiter is *injected* — a hosted deployment may replace it, and a deployment whose limiter
+ * does nothing should still not offer a million free guesses.
+ */
+export const MAX_CODE_ATTEMPTS = 5;
+
+export function spendAttemptOn(db, challengeId) {
+  const row = db.prepare('SELECT attempts FROM login_challenge WHERE id = ?').get(challengeId);
+  if (!row) return true;
+  const attempts = (row.attempts ?? 0) + 1;
+  db.prepare('UPDATE login_challenge SET attempts = ? WHERE id = ?').run(attempts, challengeId);
+  return attempts >= MAX_CODE_ATTEMPTS;
+}
+
 /** How many are left, for the page that has to warn somebody before they run out. */
 export const unusedRecoveryCodes = (db, practitionerId) =>
   db.prepare('SELECT COUNT(*) AS n FROM recovery_code WHERE practitioner_id = ? AND used_at IS NULL').get(practitionerId).n;

@@ -81,6 +81,28 @@ test('the database is in write-ahead logging, and waits for a lock rather than f
   assert.equal(db.prepare('PRAGMA busy_timeout').get().timeout, 5000, 'and a lock is waited out, not refused');
   // Deliberately SQLite's default: NORMAL in WAL mode is safe against corruption but can lose recent commits on
   // a power cut, and this is an accounting tool. Asserted so nobody "optimises" it without noticing.
+test('a cached statement survives the schema changing underneath it', (t) => {
+  // The statement cache in `openDatabase` is only safe because SQLite's `prepare_v2` re-prepares a statement whose
+  // schema has moved. That is a fact about SQLite rather than about this code, which is exactly why it is tested:
+  // a cached statement that went stale after a migration would fail on somebody's upgrade and nowhere else.
+  const { directory } = fixture(t);
+  const db = openDatabase(join(directory, 'tickmark.db'));
+
+  const before = db.prepare('SELECT id, name FROM practice').all();
+  assert.equal(before.length, 1, 'the query works, and is now cached');
+
+  db.exec('ALTER TABLE practice ADD COLUMN motto TEXT');
+  db.prepare('UPDATE practice SET motto = ?').run('Numbers, quietly');
+
+  // The same SQL text, served from the cache, against a table that has gained a column.
+  const after = db.prepare('SELECT id, name, motto FROM practice').all();
+  assert.equal(after[0].motto, 'Numbers, quietly', 'a statement written before the change sees the new column');
+
+  const old = db.prepare('SELECT id, name FROM practice').all();
+  assert.equal(old.length, 1, 'and the old statement still works too, because its own shape is unchanged');
+  db.close();
+});
+
   assert.equal(db.prepare('PRAGMA synchronous').get().synchronous, 2, 'FULL — durability was not traded away');
   assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1, 'and foreign keys are still enforced');
   db.close();
