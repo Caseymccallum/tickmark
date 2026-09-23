@@ -83,9 +83,11 @@ doing before a hosted launch, where the pages sit on a public origin; less urgen
 
 Recorded so the next audit does not have to redo it:
 
-- **SQL injection: none.** Every value is a bound parameter. The only string interpolation into SQL is
-  `pragma_table_info('${table}')` in the migration, where `table` comes from a hard-coded list, and a migration
-  that inserts a list of column *names* which is also hard-coded.
+- **SQL injection: none.** Every value is a bound parameter. The SQL that varies — the `WHERE` clause in
+  `progressRows` and `outstandingRows` — takes its text from a **closed set of hard-coded strings** in the calling
+  functions and its values as bound parameters, so no request data reaches the statement text. The only string
+  interpolation into SQL is `pragma_table_info('${table}')` in the migration, where `table` comes from a hard-coded
+  list, and a migration that inserts a list of column *names* which is also hard-coded.
 - **Path traversal: none.** The asset route resolves a name against an allow-list *before* joining it to a
   directory, so the join can never see anything a person did not type into the source. Uploads are stored under an
   id this process generates, and a client's filename is never used to build a path.

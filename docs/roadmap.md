@@ -1414,6 +1414,64 @@ of its ideas are already this project's ideas arrived at independently:
 
 Neither needed hiring anybody. Which is the finding: **the kit's product is the structure, and the structure is
 readable.**
+## Phase 2ae — One definition of "outstanding", and the N+1s around it
+
+The performance work the audit deferred, and it turned up the same class of bug for the third time. This instance had
+been live for three passes.
+
+**What was wrong.** `progress.outstanding` counted documents with no file. `outstandingOf` — the chase's list —
+counted documents with no file **or** a flagged one. Two definitions of one word, both reading `request_item`, both
+correct in isolation, so the board showed **0 outstanding** beside a request the chase was asking a client about:
+
+```
+     progress.state         = to-check
+     progress.outstanding   = 0   <- the board
+     outstandingOf().length = 1   <- the chase
+```
+
+The state machine had already been fixed for exactly this case in 2w — the comment there says *"a flagged document is
+not ready, and that took a bug report to notice"* — and the count sitting next to that state kept the old rule. **The
+same fix applied to one place and not the other**, which is how two definitions of one word always end.
+
+**The fix has two halves, and the second is the one that lasts.**
+
+1. **One definition, in one place.** `const OUTSTANDING = '(COALESCE(u.files, 0) = 0 OR i.attention_at IS NOT NULL)'`
+   at the top of `store.js`, used by `outstandingRows` (which returns the documents) and `progressRows` (which counts
+   them). Neither writes the rule again.
+2. **The state is derived from the count**, not from a second copy of the same condition: `outstanding > 0` replaces
+   `received < items || needsAttention > 0`. That is why the number and the word beside it can no longer disagree —
+   there is nothing left to disagree with.
+
+**And the N+1s went with it.** `requestsFor`, `requestsForClient` and `clientSummaries` each ran a query per row; the
+clients page ran a query per row *per request*, which is three levels deep. All three now compute every request's
+counts in one query before drawing anything:
+
+| Page | 500 clients: before → after | 1,000 clients |
+| --- | --- | --- |
+| Board | 176 → **38 ms** | 59 ms |
+| Clients | 168 → **22 ms** | 53 ms |
+| Chase | 99 → **21 ms** | 40 ms |
+| Ask everyone | 79 → **10 ms** | 20 ms |
+
+The board is now *sub*linear — 38 ms at five hundred clients, 59 ms at a thousand — because what remains is a scan
+that does not grow with the number of requests. The chase went from three N+1s to two grouped queries.
+
+**The test that guards it asks the right question.** `test/progress-agreement.test.js` does not check a number against
+a hard-coded value; it asks *do these ways of counting agree*, over a fixture built to pull them apart — withdrawn
+documents, a flagged one, a client's answer, two files against one document, an extra that answers nothing, a closed
+request, an empty checklist, and a second practice. Eight assertions, and the fixture is walked rather than the cases
+named, so a shape nobody thought of is still checked.
+
+**It caught a flaw in the fix itself**: a request with *nothing on its list* produced no grouped row and was absent
+from the batch map entirely. Every caller guarded with `?? NOTHING` so nothing was broken, but a map documented as
+complete and not complete is a trap for whoever writes the next caller. Both batch functions are now total, and the
+test asserts the size.
+
+**One thing left, stated rather than discovered:** `/files` takes 100 ms at a thousand documents. Not an N+1 — one
+query — but the `LIKE` scan behind a substring search, which cannot use an index by definition. It is linear, and it
+is a page somebody opens deliberately rather than one in a morning's loop.
+
+
 
 
 Written down so that it does not get suggested in six months as though it were new:

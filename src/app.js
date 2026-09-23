@@ -112,6 +112,7 @@ import {
   logContact,
   markArrivalsChecked,
   membersOf,
+  outstandingForPractice,
   outstandingOf,
   lastNoticeAt,
   practiceFor,
@@ -4353,19 +4354,26 @@ async function sendReminder({ db, request, response, practitioner, params, maile
  * reached are the ones nearest their deadline.
  */
 function chaseList(db, practiceId) {
+  // Every document still wanted, and every client's last contact, in two queries rather than two per request. The
+  // three N+1s this replaces were the reason the chase page cost more than the board despite showing less.
+  const wanted = outstandingForPractice(db, practiceId);
+  const contacted = new Map();
+  for (const row of db
+    .prepare(
+      `SELECT e.request_id AS request_id, MAX(e.at) AS at
+         FROM event e JOIN request r ON r.id = e.request_id
+        WHERE r.practice_id = ? AND e.kind IN ('reminder.sent', 'request.contacted')
+        GROUP BY e.request_id`,
+    )
+    .all(practiceId)) {
+    contacted.set(row.request_id, row.at);
+  }
+
   return requestsFor(db, practiceId)
     .map((row) => ({
       ...row,
-      outstanding: outstandingOf(db, row.id),
-      // When this request was last *contacted* — an email the run sent, or a call the practice recorded. Both,
-      // because the practice's question is "have we been in touch about this", and the cadence exists to stop the
-      // software contradicting what a person already did. A practice that phoned a client yesterday and is then
-      // told to write to them today would conclude, correctly, that the tool was not paying attention.
-      lastContactAt: db
-        .prepare(
-          "SELECT MAX(at) AS at FROM event WHERE request_id = ? AND kind IN ('reminder.sent', 'request.contacted')",
-        )
-        .get(row.id).at,
+      outstanding: wanted.get(row.id) ?? [],
+      lastContactAt: contacted.get(row.id) ?? null,
     }))
     .filter((row) => row.outstanding.length > 0)
     .sort((a, b) => {

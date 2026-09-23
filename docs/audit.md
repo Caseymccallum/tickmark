@@ -78,7 +78,7 @@ prepared before an `ALTER TABLE ADD COLUMN` still sees the new column afterwards
 The 5.8× figure comes from `tools/bench-prepare.mjs`, which is kept rather than folded into a comment so the number
 can be re-derived on another machine. The figures in the table below come from `npm run bench N`.
 
-**After:**
+**After the statement cache, before the N+1 work** — the table further down has the cumulative result:
 
 | Page | 100 clients | 500 clients |
 | --- | --- | --- |
@@ -90,26 +90,64 @@ can be re-derived on another machine. The figures in the table below come from `
 Five hundred clients is a large bookkeeping practice. At that size every page a person uses daily is now under a
 tenth of a second.
 
-### The finding that is *not* fixed, and why
+### The N+1 patterns, fixed — and the bug that was hiding inside them
 
-**Two N+1 patterns remain.** `requestsFor` asks for each request's progress in its own query, and the clients page
-asks for each client's outstanding count in its own. At 500 clients that is around a thousand queries, and it is
-why the board is 94 ms rather than 30 ms.
+The first pass found two N+1s and did not fix them, with a plan written down instead: computing progress for every
+request in one aggregate query, and the risk being that the aggregate and the per-request version disagree.
 
-It scales linearly — 100 to 500 clients is 5× the rows and 5.2× the time — which puts the point where it hurts at
-roughly **5,000 clients**: about a second to render a board. That is a bigger firm than this product is aimed at,
-so this is a ceiling rather than a cliff.
+**Building that turned up a third instance of the bug class this project keeps finding, and a worse one.**
 
-Fixing it means computing progress for every request in one aggregate query instead of one per request. That is a
-change to the single most-depended-on function in `store.js` — fifteen call sites — and the risk is specific and
-familiar to this project: **the aggregate and the per-request version disagreeing**, which would put a count on the
-board that the request page contradicts. That is exactly the class of bug found in phases 2t and 2w, and it is not
-something to attempt at the end of a long session when the number in hand is tolerable.
+`progress.outstanding` counted documents with *no file*. The chase's `outstandingOf` counted documents with no file
+**or** a flagged one. Two definitions of one word, both reading the same table, both looking right on their own — so
+the board showed **0 outstanding** beside a request the chase was asking a client about. The number is worse than a
+state word, because it looks precise:
 
-**What it would take**, written down so it is a plan rather than a wish: one query grouping `request_item` and
-`upload` by request; `requestProgress` reading from it; and a test that walks every request in a deliberately messy
-fixture — withdrawn items, flagged items, answered items, an extra that answers nothing — asserting the aggregate
-agrees with the per-request computation. Only then can the call sites be pointed at it, one at a time.
+```
+   the practice flagged a document as unusable:
+     progress.state         = to-check
+     progress.outstanding   = 0   <- what the board shows
+     outstandingOf().length = 1   <- what the chase asks for
+```
+
+It had been there for three passes. The state machine had already been fixed for exactly this case in 2w — the comment
+even says *"a flagged document is not ready, and that took a bug report to notice"* — and the **count** beside that
+state kept the old rule. The same fix had been applied to one and not the other.
+
+**How it is fixed.** There is now one definition, in one SQL constant, and it reads:
+
+```sql
+COALESCE(u.files, 0) = 0 OR i.attention_at IS NOT NULL
+```
+
+It is used in two shapes — `outstandingRows`, which returns the documents, and `progressRows`, which counts them — and
+neither writes the rule again. The state is derived from the count rather than from a second copy of the same
+condition, so the number and the word beside it cannot say different things.
+
+**The N+1s are gone**, because the counting happens once per page rather than once per row:
+
+| Page | 100 clients (before → after) | 500 clients | 1,000 clients |
+| --- | --- | --- | --- |
+| Board | 34 → **12 ms** | 176 → **38 ms** | 59 ms |
+| Clients | 29 → **8 ms** | 168 → **22 ms** | 53 ms |
+| Chase | 22 → **7 ms** | 99 → **21 ms** | 40 ms |
+| Ask everyone | 16 → **3 ms** | 79 → **10 ms** | 20 ms |
+| CSV of requests | 12 → **3 ms** | 44 → **9 ms** | 17 ms |
+
+Against the numbers this audit started with, the board is **4.6× faster** at five hundred clients and the clients page
+**7.6×**. The board now scales *sub*linearly — 38 ms to 59 ms for double the rows — because the remaining cost is a
+scan that does not grow with the number of requests, and at a thousand clients it is still under 60 ms.
+
+The chase went from three N+1s to two queries: the documents wanted, and each client's last contact, both grouped.
+
+**One thing the new test caught in the fix itself.** The counts come from grouping `request_item` rows, so a request
+with *nothing on its list* produces no row and was simply absent from the batch map. Every caller happened to guard
+with `?? NOTHING`, so nothing was broken — but a map that documents itself as complete and is not is a trap for the
+next caller. `progressForPractice` and `progressForClient` are now total, and `test/progress-agreement.test.js`
+asserts the size.
+
+**What is left, and it is honest:** `/files` takes 100 ms at a thousand documents. That is not an N+1 — it is one
+query — it is the `LIKE` scan behind the substring search, which cannot use an index by definition. It is linear and it
+is a page somebody opens deliberately rather than one in a morning's loop.
 
 ## 3. The code itself
 
@@ -147,8 +185,9 @@ times out of four before writing `tools/find-unused.mjs`.
   month-two requests rather than blockers.
 - **The security audit found one serious thing and it is fixed** — an unbounded second-factor challenge, in a
   feature built two passes ago.
-- **Performance is fine and now measured**, with the remaining N+1 documented against the client count where it
-  would start to matter, and a plan rather than a shrug.
+- **Performance is fine and now measured**, and the two N+1 patterns this audit found are fixed along with a bug
+  hiding inside them. At a thousand clients — a firm well beyond the one this product is aimed at — every page in a
+  morning's loop renders in under 60 ms.
 - **The code has one real problem** — the size of `app.js` — with a split proposed in four steps that the existing
   test suite can verify individually.
 - **Nothing was found that is currently exploitable.** Every claim in `docs/security.md` is backed by a test that

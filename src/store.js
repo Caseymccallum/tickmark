@@ -28,6 +28,22 @@ import { holdsKey } from './roles.js';
  */
 export const MAX_CLIENT_MESSAGE = 2000;
 
+/**
+ * **The one definition of "outstanding", in SQL — used by everything that asks the question.**
+ *
+ * A document is still wanted if no file has arrived for it, or if the file that arrived was flagged as unusable.
+ *
+ * That second clause is the whole reason this is a shared constant rather than a condition written inline. It was
+ * present in the chase's list and missing from the board's count for three passes, so the board showed **0
+ * outstanding** beside a request the chase was asking a client about. A number that contradicts the list next to it
+ * is worse than no number, because it looks precise.
+ *
+ * It appears in two shapes below — `outstandingRows`, which returns the documents, and `progressRows`, which counts
+ * them — and neither may write the rule again. `u.files` comes from a `LEFT JOIN` onto a grouped subquery, so no
+ * uploads means NULL rather than zero, hence the `COALESCE`.
+ */
+const OUTSTANDING = '(COALESCE(u.files, 0) = 0 OR i.attention_at IS NOT NULL)';
+
 /** Run `fn` in a transaction, rolling back on any throw. */
 export function inTransaction(db, fn) {
   db.exec('BEGIN');
@@ -321,6 +337,17 @@ export const fileCountFor = (db, practiceId) =>
     .get(practiceId).n;
 
 export function clientSummaries(db, practiceId) {
+  // One query for every request's counts, then the client list, then a grouping in memory. It used to ask, per
+  // client, for that client's open requests and then for each request's items — three levels of query inside a
+  // loop, which at five hundred clients is several thousand queries to draw one page.
+  const progress = progressForPractice(db, practiceId);
+  const openByClient = new Map();
+  for (const row of db
+    .prepare('SELECT id, client_id FROM request WHERE practice_id = ? AND closed_at IS NULL')
+    .all(practiceId)) {
+    openByClient.set(row.client_id, (openByClient.get(row.client_id) ?? 0) + (progress.get(row.id)?.outstanding ?? 0));
+  }
+
   return db
     .prepare(
       `SELECT c.id, c.name, c.email, c.created_at,
@@ -341,9 +368,9 @@ export function clientSummaries(db, practiceId) {
     .all(practiceId)
     .map((row) => ({
       ...row,
-      // Computed from the same function the board uses, so a client's page and the board cannot
-      // disagree about how much is outstanding — the failure mode that would make this list untrusted.
-      progress: { outstanding: outstandingForClient(db, practiceId, row.id) },
+      // Computed from the same counts the board uses, so a client's page and the board cannot disagree about how
+      // much is outstanding — the failure mode that would make this list untrusted.
+      progress: { outstanding: openByClient.get(row.id) ?? 0 },
     }));
 }
 
@@ -582,22 +609,68 @@ export function logContact(db, practiceId, requestId, { note, at = now() }) {
   return true;
 }
 
-export function outstandingOf(db, requestId) {
-  return itemsOf(db, requestId).filter(
-    (item) => !item.withdrawn && (!item.received || item.needsAttention),
-  );
+/**
+ * The documents still wanted, as rows — one request's worth, or every request in a practice.
+ *
+ * The chase needs the *labels* rather than a count, because the reminder it drafts names them. Both entry points go
+ * through the same `WHERE` condition the counts use, so the list and the number come from one rule: if the board says
+ * two outstanding, this returns two rows.
+ */
+const outstandingRows = (db, where, param) =>
+  db
+    .prepare(
+      `SELECT i.id, i.request_id, i.label, i.note, i.position,
+              i.withdrawn_at, i.attention_at, i.attention_note, i.reviewed_at,
+              i.client_says, i.client_says_at,
+              COALESCE(u.files, 0) AS file_count,
+              u.last_upload_at
+         FROM request_item i
+         JOIN request r ON r.id = i.request_id
+         LEFT JOIN (
+           SELECT request_item_id, COUNT(*) AS files, MAX(uploaded_at) AS last_upload_at
+             FROM upload WHERE request_item_id IS NOT NULL GROUP BY request_item_id
+         ) u ON u.request_item_id = i.id
+        WHERE ${where} AND i.withdrawn_at IS NULL AND ${OUTSTANDING}
+        ORDER BY i.position, i.created_at`,
+    )
+    .all(param);
+
+const itemOf = (row) => ({
+  id: row.id,
+  requestId: row.request_id,
+  label: row.label,
+  note: row.note,
+  position: row.position,
+  withdrawn: Boolean(row.withdrawn_at),
+  received: row.file_count > 0,
+  files: row.file_count,
+  lastUploadAt: row.last_upload_at,
+  checked: Boolean(row.reviewed_at),
+  reviewedAt: row.reviewed_at,
+  needsAttention: Boolean(row.attention_at),
+  attentionNote: row.attention_note,
+  clientSays: row.client_says,
+  clientSaysAt: row.client_says_at,
+});
+
+/** Everything still wanted from every request in a practice, grouped, in one query. */
+export function outstandingForPractice(db, practiceId) {
+  const map = new Map();
+  for (const row of outstandingRows(db, 'r.practice_id = ?', practiceId)) {
+    const list = map.get(row.request_id);
+    if (list) list.push(itemOf(row));
+    else map.set(row.request_id, [itemOf(row)]);
+  }
+  return map;
 }
 
-/** How many documents are still wanted from one client, across everything open. */
-export function outstandingForClient(db, practiceId, clientId) {
-  const requests = db
-    .prepare('SELECT id FROM request WHERE practice_id = ? AND client_id = ? AND closed_at IS NULL')
-    .all(practiceId, clientId);
-  return requests.reduce((total, request) => total + outstandingOf(db, request.id).length, 0);
+export function outstandingOf(db, requestId) {
+  return outstandingRows(db, 'i.request_id = ?', requestId).map(itemOf);
 }
 
 /** Everything asked of one client, newest first, with the count each request is working from. */
 export function requestsForClient(db, practiceId, clientId) {
+  const progress = progressForClient(db, practiceId, clientId);
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at, r.client_note
@@ -606,7 +679,7 @@ export function requestsForClient(db, practiceId, clientId) {
         ORDER BY r.created_at DESC`,
     )
     .all(practiceId, clientId)
-    .map((row) => ({ ...row, progress: requestProgress(db, row.id) }));
+    .map((row) => ({ ...row, progress: progress.get(row.id) ?? NOTHING }));
 }
 
 /**
@@ -1061,49 +1134,134 @@ export function itemStatus(db, requestId) {
  *   state exists to prevent.
  * - **waiting** — nothing to look at, and at least one thing still outstanding.
  */
-export function requestProgress(db, requestId) {
-  const items = itemStatus(db, requestId).filter((item) => !item.withdrawn);
+/**
+ * Per-request counts, as SQL — and the only place these counts are computed.
+ *
+ * The list pages want this for every request they are about to draw, and the request page wants it for one. Those
+ * were two code paths, and they disagreed (see `OUTSTANDING`). They are now one expression with two `WHERE`
+ * clauses, which is the difference between *intending* one definition and *having* one.
+ */
+const progressRows = (db, where, ...params) =>
+  db
+    .prepare(
+      `SELECT i.request_id AS request_id,
+              COUNT(*) AS items,
+              SUM(CASE WHEN COALESCE(u.files, 0) > 0 THEN 1 ELSE 0 END) AS received,
+              SUM(CASE WHEN COALESCE(u.files, 0) > 0 AND i.reviewed_at IS NOT NULL THEN 1 ELSE 0 END) AS checked,
+              SUM(CASE WHEN ${OUTSTANDING} THEN 1 ELSE 0 END) AS outstanding,
+              SUM(CASE WHEN COALESCE(u.files, 0) > 0 AND i.reviewed_at IS NULL THEN 1 ELSE 0 END) AS to_check,
+              SUM(CASE WHEN i.attention_at IS NOT NULL THEN 1 ELSE 0 END) AS needs_attention,
+              SUM(CASE WHEN i.client_says IS NOT NULL THEN 1 ELSE 0 END) AS client_said
+         FROM request_item i
+         JOIN request r ON r.id = i.request_id
+         LEFT JOIN (
+           SELECT request_item_id, COUNT(*) AS files FROM upload
+            WHERE request_item_id IS NOT NULL GROUP BY request_item_id
+         ) u ON u.request_item_id = i.id
+        WHERE ${where} AND i.withdrawn_at IS NULL
+        GROUP BY i.request_id`,
+    )
+    .all(...params);
 
+/**
+ * The state, from the counts. One place, so a request cannot be two different things on two pages.
+ *
+ * The order is the order the practice's attention actually goes:
+ *
+ * 1. **Material nobody has looked at.** That is the work, so it comes first.
+ * 2. **A client's answer.** Somebody has to decide something and the client is waiting — and before this existed, a
+ *    client who wrote *"I do not have this"* left the request reading *waiting on the client*, character for
+ *    character what a client who has said nothing looks like. The item has kept the two apart since the schema was
+ *    written (`client_says` is its own column, and the column comment says why); the list had not. That mattered:
+ *    the chase writes to every request with something outstanding, so a practice could nag somebody about a document
+ *    they had already explained they cannot supply.
+ * 3. **Waiting.** Then nothing at all — `ready`, which means every document has arrived, been checked, and none is
+ *    being asked for again.
+ *
+ * The last clause is where a second bug lived. It used to spell out `received < items || needsAttention > 0`, which
+ * is the same rule as `outstanding > 0` written a second time — and the copy in the count omitted the flagged
+ * clause, so the board showed **0 outstanding** beside a request the chase was asking about. It reads the count now,
+ * which is why there is one definition and not two. `docs/roadmap.md` §2t, §2w and §2z have the full history.
+ */
+function stateOf(counts) {
+  if (counts.items === 0) return 'ready';
+  if (counts.toCheck > 0) return 'to-check';
+  if (counts.clientSaid > 0) return 'answered';
+  return counts.outstanding > 0 ? 'waiting' : 'ready';
+}
+
+/** Turn one grouped row into the shape every caller already expects. */
+const progressOf = (row) => {
   const counts = {
-    items: items.length,
-    received: items.filter((item) => item.received).length,
-    checked: items.filter((item) => item.received && item.checked).length,
-    outstanding: items.filter((item) => !item.received).length,
-    toCheck: items.filter((item) => item.received && !item.checked).length,
-    needsAttention: items.filter((item) => item.needsAttention).length,
-    clientSaid: items.filter((item) => item.clientSays).length,
+    items: row.items,
+    received: row.received,
+    checked: row.checked,
+    outstanding: row.outstanding,
+    toCheck: row.to_check,
+    needsAttention: row.needs_attention,
+    clientSaid: row.client_said,
   };
+  return { ...counts, state: stateOf(counts) };
+};
 
-  // The state, in the order the practice's attention actually goes, and `answered` is the one that was missing.
-  //
-  // Until it existed, a client who wrote "I do not have this" left the request reading *waiting on the client* —
-  // which is exactly what a client who has said nothing looks like. The item-level record has distinguished the
-  // two from the beginning (`client_says` is its own column, and the schema says why: "silence and a stated
-  // reason are different things in the list"), and the *list* went on treating them as one. The damage is not
-  // cosmetic: the chase writes to every request with something outstanding, so a practice could nag somebody
-  // about a document they had already explained they cannot supply — which the product's own reminder wording
-  // calls "the fastest way to make a client stop answering".
-  //
-  // Order: material nobody has looked at comes first, because that is the work. Then a client's answer, because
-  // somebody has to decide something and the client is waiting. Then simply waiting.
-  //
-  // **A flagged document is not ready, and that took a bug report to notice.** `received` counts a file that
-  // arrived; a document the practice rejected has arrived and is not usable, so for a while a request whose
-  // documents had all come in and been checked went to *ready to work on* while a document was still being asked
-  // for again. Two screens disagreed about one request — the board said "ready", the chase said the client owed
-  // something, and the chase was right — which is the same defect as the `answered` gap, one layer down. Hence
-  // `needsAttention` below: something has arrived, and it has to arrive again.
-  const state = counts.items === 0
-    ? 'ready'
-    : counts.toCheck > 0
-      ? 'to-check'
-      : counts.clientSaid > 0
-        ? 'answered'
-        : counts.received < counts.items || counts.needsAttention > 0
-          ? 'waiting'
-          : 'ready';
+/** What a request with nothing on its list looks like. A request with no items is ready to work on. */
+const NOTHING = progressOf({
+  items: 0,
+  received: 0,
+  checked: 0,
+  outstanding: 0,
+  to_check: 0,
+  needs_attention: 0,
+  client_said: 0,
+});
 
-  return { ...counts, state };
+/**
+ * Every request in a practice, in one query per table — and **total**, which matters more than it looks.
+ *
+ * This is what makes the list pages one query each instead of one per row: a board with five hundred clients used
+ * to run the counting query a thousand times per render, twice per request, because progress asked for the items
+ * and then counted them. See `docs/audit.md`.
+ *
+ * The map contains an entry for **every** request in the practice, including the ones with nothing on their list.
+ * The counts come from grouping `request_item` rows, so a request with no documents produces no row and would simply
+ * be absent — and a caller doing `map.get(id).state` on the strength of a documented contract would be reading
+ * `undefined` as a state. A test asserts the size, which is how this was found rather than shipped.
+ */
+export function progressForPractice(db, practiceId) {
+  const map = new Map();
+  for (const row of db.prepare('SELECT id FROM request WHERE practice_id = ?').all(practiceId)) {
+    map.set(row.id, NOTHING);
+  }
+  for (const row of progressRows(db, 'r.practice_id = ?', practiceId)) {
+    map.set(row.request_id, progressOf(row));
+  }
+  return map;
+}
+
+/** The same counts for one client's requests, for the page that shows one client their history. Also total. */
+export function progressForClient(db, practiceId, clientId) {
+  const map = new Map();
+  for (const row of db
+    .prepare('SELECT id FROM request WHERE practice_id = ? AND client_id = ?')
+    .all(practiceId, clientId)) {
+    map.set(row.id, NOTHING);
+  }
+  for (const row of progressRows(db, 'r.practice_id = ? AND r.client_id = ?', practiceId, clientId)) {
+    map.set(row.request_id, progressOf(row));
+  }
+  return map;
+}
+
+/**
+ * Where a request actually is, computed rather than stored.
+ *
+ * Stored state drifts: a flag set on arrival and never cleared is how a system ends up saying "ready" about a file
+ * nobody has opened. This is derived from the items every time it is asked for, so it cannot disagree with them —
+ * and since it goes through the same builder the list pages use, it cannot disagree with *them* either.
+ */
+export function requestProgress(db, requestId) {
+  const [row] = progressRows(db, 'i.request_id = ?', requestId);
+  return row ? progressOf(row) : NOTHING;
 }
 
 export function history(db, requestId) {
@@ -1511,6 +1669,9 @@ export function replaceWrappedKey(db, practiceId, practitionerId, keyId, wrapped
 export function requestsFor(db, practiceId, { scope = 'open' } = {}) {
   const filter =
     scope === 'all' ? '' : scope === 'closed' ? 'AND r.closed_at IS NOT NULL' : 'AND r.closed_at IS NULL';
+  // The counts for every request in the practice, in one query, before the list itself. Both used to be a query per
+  // row — and, worse, a second implementation of the rule that could disagree with this one.
+  const progress = progressForPractice(db, practiceId);
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
@@ -1524,11 +1685,9 @@ export function requestsFor(db, practiceId, { scope = 'open' } = {}) {
     .all(practiceId)
     .map((row) => ({
       ...row,
-      // The same function the request page uses, rather than a second SQL copy of the same rule. It
-      // costs one small query per row; the alternative is two implementations of "is this ready?" that
-      // can disagree, and the list and the page disagreeing about a client's state is the kind of thing
-      // that destroys trust in the whole board.
-      progress: requestProgress(db, row.id),
+      // The same counts the request page computes, from the same function — so the list and the page cannot disagree
+      // about a client's state, which is the thing that would destroy trust in the whole board.
+      progress: progress.get(row.id) ?? NOTHING,
     }));
 }
 

@@ -7,6 +7,33 @@ Versions follow the ordinary convention: the first number changes when the schem
 when features arrive, the third for fixes. **Downgrading is not supported** — migrations only go forwards — so
 the entry that matters most is the one that says the schema changed.
 
+## Unreleased, expected in 0.1.0 — the audit, and the bug it kept finding
+
+**One word with two meanings, for the third time, and this one was a number on the board.**
+
+`progress.outstanding` counted documents with no file. The chase's own list counted documents with no file **or** a
+flagged one. So a request where everything had arrived, been looked at, and one document had been sent back showed
+**0 outstanding** while the chase was asking the client about it. The state machine had been fixed for exactly this in
+2w and the count beside it had not — the same fix applied to one place and not the other.
+
+There is now one definition, in one SQL constant, used by both the count and the list; and the state is derived *from*
+the count rather than from a second copy of the same rule. That is what makes a repetition of this impossible rather
+than unlikely.
+
+**The performance work that found it.** Every page that lists requests was running a query per row — and the clients
+page, a query per row per request. All of them now compute every request's counts once, before drawing:
+
+| Page | 500 clients: before → after |
+| --- | --- |
+| Board | 176 → 38 ms |
+| Clients | 168 → 22 ms |
+| Chase | 99 → 21 ms |
+| Ask everyone | 79 → 10 ms |
+
+At a thousand clients every page in a morning's loop renders in under 60 ms, and the board is now sublinear. **No
+schema change** — this release is a rewrite of how the counts are computed, and `test/progress-agreement.test.js`
+(8 tests) checks that every way of asking agrees rather than checking numbers against a list.
+
 ## Unreleased, expected in 0.1.0 — the audit
 
 Features, performance and security, end to end. Nothing below is published yet; it is in the tree and will go out
