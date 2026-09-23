@@ -13,6 +13,7 @@
     "test": "node --test \"test/*.test.js\"",
     "check:container": "node tools/check-container.mjs",
     "check:pages": "node tools/check-pages.mjs",
+    "check:gateway": "node tools/preview-gateway.mjs tmp-gateway && node tools/check-pages.mjs tmp-gateway",
     "check:site": "node tools/check-site.mjs",
     "snapshot": "node tools/snapshot.mjs",
     "reset-password": "node tools/reset-password.mjs",

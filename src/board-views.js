@@ -734,7 +734,11 @@ export function viewRequest({ db, request, response, practitioner, params, pract
           <button type="submit">Dealt with</button>
         </form>`
       : html`<form method="post" action="/requests/${found.id}/items/${item.id}/attention" class="inline">
-          <input type="text" name="attention_note" placeholder="why? the client sees this" maxlength="500">
+          ${/* Named for what it is, and deliberately *not* with the words of the state it sets: "needs attention" is
+                the badge's phrase and the page's filter, and a second place in the markup saying it is how a test
+                that asserts the flag is gone starts failing for the wrong reason. */ ''}
+          <input type="text" name="attention_note" placeholder="why? the client sees this" maxlength="500"
+            aria-label="Why this is going back to the client">
           <button type="submit">Needs attention</button>
         </form>`}
     <form method="post" action="/requests/${found.id}/items/${item.id}/withdraw" class="inline">

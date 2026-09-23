@@ -43,6 +43,47 @@ for (const file of files) {
   if (!page.includes('class="skip"')) issues.push('no skip link');
   if (count(page, 'name="theme-color"') !== 2) issues.push('not exactly two theme-color tags');
 
+  // --- what a rendered page can be read for, about accessibility -----------------------------------------
+  //
+  // Four rules the product already follows and nothing was checking. Each is a fact about the markup rather than a
+  // matter of taste, and each fails in a way nobody sees by eye:
+  //
+  // - **One `h1`, and no heading level skipped.** A screen reader's outline *is* the page's structure: a page with
+  //   two `h1`s has two beginnings, and one that jumps from `h2` to `h4` loses a level of the story.
+  // - **Every control has a name** — a `<label for>` pointing at its id, a wrapping `<label>`, or an `aria-label`.
+  //   A placeholder is none of those: it disappears the moment somebody types, so a filled-in field would be a
+  //   field with no name at all.
+  // - **Every drawing is either named or hidden.** The mark is `role="img"` with a label; the icons are
+  //   `aria-hidden` because each sits beside the word it means. A bare `<svg>` is announced as an unlabelled
+  //   graphic in the middle of a sentence.
+  // - **A skip link has somewhere to land.**
+  const h1s = count(page, '<h1');
+  if (h1s !== 1) issues.push(`${h1s} <h1> elements`);
+  let level = 0;
+  for (const heading of page.matchAll(/<h([1-6])[\s>]/g)) {
+    const next = Number(heading[1]);
+    if (level !== 0 && next > level + 1) issues.push(`a heading jumps from h${level} to h${next}`);
+    level = next;
+  }
+  const labelBodies = [...page.matchAll(/<label\b[^>]*>([\s\S]*?)<\/label>/g)].map((match) => match[1]);
+  const named = (tag) => {
+    if (/\saria-label="/.test(tag)) return true;
+    if (labelBodies.some((body) => body.includes(tag))) return true;
+    const id = /id="([^"]+)"/.exec(tag)?.[1];
+    return id !== undefined && page.includes(`for="${id}"`);
+  };
+  for (const control of page.matchAll(/<(input|select|textarea)\b[^>]*>/g)) {
+    // Types nobody fills in: a hidden field has no name to give, and a submit button is named by its text.
+    if (/type="(hidden|submit|button|image|reset)"/.test(control[0])) continue;
+    if (!named(control[0])) issues.push(`a <${control[1]}> with no label`);
+  }
+  for (const drawing of page.matchAll(/<svg\b[^>]*>/g)) {
+    if (!/aria-hidden="true"/.test(drawing[0]) && !/aria-label="/.test(drawing[0])) {
+      issues.push('an <svg> with neither a name nor aria-hidden');
+    }
+  }
+  if (page.includes('class="skip"') && !page.includes('id="main"')) issues.push('a skip link with nothing to skip to');
+
   // Every form control that renders as an input should be inside a form or a known exception.
   const buttonsOutsideForms = count(page, '</form>') === 0 && count(page, '<button') > 0;
 

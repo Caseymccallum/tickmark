@@ -158,8 +158,12 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
           : badge('still needed', TONES.waiting)}</td>
     <td>
       <form class="upload" method="post" action="/r/${params[0]}/items/${item.id}">
-        <input type="file" name="file" required>
-        <input type="text" name="note" placeholder="anything we should know? (optional)" maxlength="500">
+        ${/* The row names the document; these two still need a name of their own, because a file input with no label
+              is announced as "choose file" and nothing else — and the cell that says which document it belongs to is
+              read in a different order from the field itself. */ ''}
+        <input type="file" name="file" required aria-label="Upload a file for: ${item.label}">
+        <input type="text" name="note" placeholder="anything we should know? (optional)" maxlength="500"
+          aria-label="A note about this document (optional)">
         <div class="row">
           <button type="submit">Send</button>
           <span class="status"></span>
@@ -225,8 +229,9 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
         you think they need — this is the safe way to send it. It is encrypted the same way as everything
         else, and they will see it attached to this request.</p>
         <form class="upload" method="post" action="/r/${params[0]}/extra">
-          <input type="file" name="file" required>
-          <input type="text" name="note" placeholder="what is it? (optional)" maxlength="500">
+          <input type="file" name="file" required aria-label="Choose a document to send">
+          <input type="text" name="note" placeholder="what is it? (optional)" maxlength="500"
+            aria-label="What is it? (optional)">
           <div class="row">
             <button type="submit">Send it</button>
             <span class="status"></span>
@@ -238,7 +243,8 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
         so you can see what you said.</p>
         <form method="post" action="/r/${params[0]}/message" class="stack">
           <textarea name="body" rows="3" required maxlength="${MAX_CLIENT_MESSAGE}"
-            placeholder="Anything the practice should know"></textarea>
+            placeholder="Anything the practice should know"
+            aria-label="Anything the practice should know"></textarea>
           <div class="row"><button type="submit">Send the message</button></div>
         </form>
         ${said.length > 0

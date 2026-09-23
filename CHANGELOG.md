@@ -12,6 +12,34 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### The tests reach the browser's other half, and the checks learn arithmetic
+
+Two things were true and are now not. Five of the nine browser modules — `setup.js`, `keys.js`, `reencrypt.js`,
+`members.js` and `invite.js` — were served on their pages and executed by nothing, so the claims around them lived in
+prose. And the checks that guard the look were structural only: a page could lose its accessibility, and a colour
+could drop below the contrast it needs, with every gate still green.
+
+**The browser's other half is run now.** `test/browser-keys.test.js` drives making a key, changing the passphrase that
+protects it and moving stored files onto it; `test/browser-invite.test.js` drives creating an invitation and accepting
+one. `test/fake-dom.js` grew a general `installPage` for the pages that touch a *key*, and the crypto is not
+re-implemented anywhere: what a page puts on the wire is opened again with the real `web/tickmark-crypto.js`. Eleven
+tests — and the first run caught the fault that reading had only half-seen. `members.js` was posting the invitation
+secret to the server in the same request as the sealed blob, while the page's own copy says that secret never reaches
+a server; and the link was built *from* the posted field, which is how a field nothing reads had survived. Both are
+fixed now, and the assertion that keeps them fixed names the three fields an invitation is allowed to carry.
+
+**The checks grew the parts that are arithmetic.** `check:style` measures 38 pairs of text and background — every ink
+on every surface, every state on its own fill, in both modes — against 4.5:1, fails on a token defined in one mode
+only, and fails on a variable that is used and never defined. That last one found `.promise { border-radius:
+var(--radius) }`: a token that has never existed, so the browser threw the declaration away and the trust block on the
+sign-up page has been square-cornered since the day it was written. `check-pages` now refuses two `h1`s, a skipped
+heading level, a control with no name, and a drawing that is neither labelled nor hidden — and running it over the
+rendered pages is what gave names to the five passphrase fields and to the client page's upload fields, which only a
+placeholder had ever named. The gateway's fourteen states are rendered and checked in CI now
+(`npm run check:gateway`), which immediately found that the preview had never stamped its nonce.
+
+403 tests, all green.
+
 ### The front door gets the details the work pages already had
 
 A design pass over the shell, the public pages and the landing page: no new colour, no new dependency, and the

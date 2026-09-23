@@ -6,9 +6,14 @@
  * is the only practical way to review the page a *locked-out* practice sees.
  *
  *   node tools/preview-gateway.mjs [output-dir]
+ *
+ * The nonce is stamped here with a stand-in value. The server does that in `sendPage`, which this tool bypasses — and
+ * a page left holding an un-stamped placeholder is a page whose styling a browser silently discards, which is also
+ * what `npm run check:pages` refuses. CI renders these states and runs that checker over them.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 
+import { NONCE_PLACEHOLDER } from '../src/views.js';
 import { billingWallPage, dashboardPage, loginPage, signupPage, simplePage } from '../src/tenancy/views.js';
 
 const out = process.argv[2] ?? 'tmp-gateway';
@@ -76,7 +81,7 @@ const pages = {
 };
 
 for (const [name, rendered] of Object.entries(pages)) {
-  writeFileSync(`${out}/${name}.html`, rendered.value);
+  writeFileSync(`${out}/${name}.html`, rendered.value.replaceAll(NONCE_PLACEHOLDER, 'nonce="preview"'));
 }
 
 console.log(`wrote ${Object.keys(pages).length} pages to ${out}`);

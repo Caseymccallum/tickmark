@@ -747,7 +747,7 @@ const CLIENT_AND_MISC = `
   .promise {
     display: flex; gap: .7rem; align-items: flex-start;
     max-width: 34rem; margin: 1.25rem 0 0;
-    padding: .85rem 1rem; border-radius: var(--radius);
+    padding: .85rem 1rem; border-radius: var(--r-lg);
     background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line);
   }
   .promise .icon { width: 1.15rem; height: 1.15rem; margin-top: .1rem; }

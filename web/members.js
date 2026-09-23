@@ -46,16 +46,21 @@ if (element && form) {
     try {
       const fields = { role };
 
+      // The secret that opens the invitation. It is **posted to nobody**: the server stores the sealed blob and
+      // hashes the token, and the whole claim is that the part of a link after the `#` never reaches a server. It
+      // used to be sent — the link below was built out of the posted object, which is how a field nothing reads stays
+      // alive — and `test/browser-invite.test.js` is what keeps it out now.
+      let secret = null;
+
       if (!assistant) {
         status.textContent = 'Opening your key…';
         const bytes = await privateKeyBytesForTransfer(key.wrapped, passphraseField.value);
 
         // Sealed under a secret that exists only in this page and in the link it is about to be put in.
-        const secret = newInviteSecret();
+        secret = newInviteSecret();
         status.textContent = 'Sealing a copy for the invitation…';
         fields.sealed_key = await wrapBytesForInvite(bytes, secret);
         fields.key_id = key.keyId;
-        fields.secret = secret;
       } else {
         status.textContent = 'Making an invitation that carries no key…';
       }
@@ -89,7 +94,7 @@ if (element && form) {
       // The fragment only exists for a keyed invitation, because that is where the secret lives. An
       // assistant's link is a plain address — there is no secret to carry.
       code.textContent = body.keyed
-        ? `${location.origin}/invite/${body.token}#${fields.secret}`
+        ? `${location.origin}/invite/${body.token}#${secret}`
         : `${location.origin}/invite/${body.token}`;
       link.append(code);
     } catch (error) {

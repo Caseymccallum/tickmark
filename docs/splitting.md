@@ -36,10 +36,10 @@ Six steps per module. They are in this order because each one is cheap and the e
 5. **Wire the imports, then check for the ones that are now unused.** `node --check` both files, then run the scan in
    the tool below over all of `src/`. It catches the imports a move orphaned, which nothing else does: Node does not
    warn about an unused import, and `find:unused` only looks at exports.
-6. **Run the suite, then the checks.** `npm test` (392 tests), then `find:unused`, `check:style`, `check:docs`,
-   `check:nav`, `check:site`, `snapshot` and `check:pages`. A `ReferenceError` from a missing import and a duplicate
-   declaration from a stale one both surface at once, and the suite has caught every one of them in this series —
-   never the reading, and never a static check.
+6. **Run the suite, then the checks.** `npm test` (403 tests), then `find:unused`, `check:style`, `check:docs`,
+   `check:nav`, `check:site`, `snapshot`, `check:pages` and `check:gateway`. A `ReferenceError` from a missing import
+   and a duplicate declaration from a stale one both surface at once, and the suite has caught every one of them in
+   this series — never the reading, and never a static check.
 
 ## The tool
 
@@ -144,7 +144,7 @@ and `createApp`. **Nothing is left to move.** The thirteen modules that left it,
 | `bulk-ask-views.js` | 403 | asking everyone at once: the preview, the run, the report |
 | `signin-views.js` | 680 | home, sign-up, sign-in, the second factor, sign-out |
 
-The product is the same and 392 tests say so. What changed is that finding a handler is now a search in a few hundred
+The product is the same and 403 tests say so. What changed is that finding a handler is now a search in a few hundred
 lines rather than a scroll through seven thousand — which is where this started out.
 
 ## If this is ever picked up again

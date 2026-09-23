@@ -393,17 +393,20 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
       <td>${holds}</td>
       <td>
         <form class="passphrase" data-key-id="${key.id}" method="post" action="/keys/${key.id}/passphrase">
-          <input type="password" name="old" placeholder="current passphrase" required autocomplete="current-password">
-          <input type="password" name="fresh" placeholder="new passphrase" required autocomplete="new-password">
-          <input type="password" name="again" placeholder="the new one again" required autocomplete="new-password">
+          ${/* Three fields whose only visible words are placeholders. A placeholder disappears the moment somebody
+                types, so it is a hint rather than a name — these carry an `aria-label` so the field is still called
+                something when it is full. */ ''}
+          <input type="password" name="old" placeholder="current passphrase" aria-label="Current passphrase" required autocomplete="current-password">
+          <input type="password" name="fresh" placeholder="new passphrase" aria-label="New passphrase" required autocomplete="new-password">
+          <input type="password" name="again" placeholder="the new one again" aria-label="The new passphrase again" required autocomplete="new-password">
           <button type="submit">Change the passphrase</button>
           <span class="status note"></span>
         </form>
         ${key === current || holds === 0
           ? ''
           : html`<form class="reencrypt" data-key-id="${key.id}" method="post" action="/keys/${key.id}/move">
-              <input type="password" name="passphrase" placeholder="this key's passphrase" required autocomplete="current-password">
-              <input type="password" name="current_passphrase" placeholder="the current key's passphrase, if it differs" autocomplete="current-password">
+              <input type="password" name="passphrase" placeholder="this key's passphrase" aria-label="This key's passphrase" required autocomplete="current-password">
+              <input type="password" name="current_passphrase" placeholder="the current key's passphrase, if it differs" aria-label="The current key's passphrase, if it differs" autocomplete="current-password">
               <button type="submit">Move ${holds} ${holds === 1 ? 'file' : 'files'} to the current key</button>
               <span class="status note"></span>
               <progress value="0" max="${holds}"></progress>

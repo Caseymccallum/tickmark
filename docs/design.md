@@ -59,8 +59,10 @@ product's promise changed, not that a class name moved.
 10. **The keyboard is a first-class way through, and the phone is a first-class place to be.** Every page
     opens with a skip link, everything focusable has a visible ring, the gutter respects a notch, links land
     below the sticky header rather than behind it, and a printed page loses the chrome it cannot use. None of
-    these shows up in a screenshot; all of them are what "finished" means. `tools/check-pages.mjs` refuses a
-    page without the skip link or the theme-colour pair, so they cannot go missing one page at a time.
+    these shows up in a screenshot; all of them are what "finished" means. `tools/check-pages.mjs` now refuses a
+    page with no skip link or no theme-colour pair, with two `h1`s, with a heading level skipped, with a control
+    that has no name, or with a drawing that is neither labelled nor hidden — so none of them can go missing one
+    page at a time.
 
 **The faint ink is measured, not chosen by eye.** `--faint` was `#8b95a3`, which is 2.9:1 on the canvas — a
 table header, an eyebrow and a footer a person has to work to read, which makes them missing rather than
@@ -68,6 +70,8 @@ subtle. It is `#656e7b` now: 4.9:1 on the canvas, 5.2 on a card and 4.7 on the s
 in the dark (5.1 / 4.8). The four ink weights keep their order; the quietest one simply stops being
 decoration. The same values are in `site/index.html`, because the marketing page and the application are
 meant to be the same product and a token that drifts is the first sign they have stopped being one.
+`npm run check:style` does that arithmetic now — 38 pairs of text and background, both modes, 4.5:1 — so the
+number cannot quietly drift back, and a token defined in one mode and forgotten in the other fails the build.
 
 ## Where the ideas came from
 
@@ -109,12 +113,16 @@ The look can be reviewed without a browser:
 
 ```sh
 node tools/snapshot.mjs    [dir]   # renders every page, writes an INDEX.txt
-node tools/check-pages.mjs [dir]   # catches "undefined", unbalanced styles, a missing header/footer,
-                                   # a page that lost its skip link or its theme-colour pair
+node tools/check-pages.mjs [dir]   # catches "undefined", unbalanced styles, a missing header or footer, no
+                                   # skip link, a control with no name, two h1s, a heading that skips a level
 node tools/show-page.mjs   <page>  # prints one captured page with the CSS collapsed
-node tools/preview-gateway.mjs [dir] # the thirteen states of the public pages, including the ones
-                                     # that otherwise need a webhook to have fired
-node tools/check-style.mjs         # no backtick inside the CSS literal, every rule closed
+node tools/preview-gateway.mjs [dir] # the fourteen states of the public pages, including the ones that
+                                     # otherwise need a webhook to have fired
+node tools/check-style.mjs         # no backtick inside the CSS literal, every rule closed, every variable
+                                   # defined, every token in both modes, every pair of text and background
+                                   # measured against AA
+npm run check:gateway              # renders those fourteen states and runs check-pages over them: the step CI
+                                   # takes so the hosted front door is not the one surface nothing checks
 ```
 
 `snapshot.mjs` drives the real server over HTTP through the same helpers the tests use — a signed-up

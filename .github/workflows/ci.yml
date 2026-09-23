@@ -62,6 +62,11 @@ jobs:
         run: npm run snapshot
       - name: the rendered pages are structurally sound
         run: npm run check:pages
+      # The hosted front door is the one surface `snapshot` cannot reach, because the ordinary way in needs a Stripe
+      # account. Rendering its fourteen states and running the *same* structural checker over them is one command —
+      # and that checker is what refuses a page that has lost its skip link, its theme-colour pair or its footer.
+      - name: the gateway's states render and hold up
+        run: npm run check:gateway
       # A gate now that the list is empty: an export nothing references stops the build until it is
       # either used or admitted in `tools/find-unused.mjs` with its reason.
       - name: no exports that nothing references
