@@ -101,9 +101,9 @@ name in it that is a real declaration nobody imports.
 
 ## What is left, measured
 
-`app.js` is 3,018 lines at commit `965e995`, and the five sections below are each contiguous, so each is one move.
-**The line numbers are from that commit and will have moved by the time you read this — which is precisely why step 1
-exists.**
+`app.js` is 2,326 lines as this is written and four sections remain, each contiguous, so each is one move. The fifth —
+one request's own actions — has been done: `src/request-actions.js`, 737 lines. **The line numbers below are measured
+and will have moved by the time you read this, which is precisely why step 1 exists.**
 
 | New module | Lines | What moves |
 | --- | --- | --- |
@@ -111,11 +111,14 @@ exists.**
 | `bulk-ask-views.js` | 1125–1492 (~370) | the *Asking everyone at once* section: the preview page, the run, the per-client opening, the report |
 | `templates-views.js` | 1493–1864 (~370) | the templates pages and the lists they keep, plus close-several |
 | `clients-views.js` | 1865–2344 (~480) | the documents page and its CSV, the client directory, one client's record |
-| `request-actions.js` | 2345–3018 (~670) | one request's own actions: serving an envelope, issuing and revoking a link, the reminder and opening drafts, sending them, closing and reopening, adding and editing items |
 
-After those five, `app.js` is the imports, the dispatcher, the route table — a few hundred lines a reader can hold in
+After those four, `app.js` is the imports, the dispatcher, the route table — a few hundred lines a reader can hold in
 their head, which is where this started out, and the point of arriving back at it is that the *product* is the same and
 somebody can now find the part of it they need.
+
+The move that is done also settles something worth knowing about the rest: `request-actions.js` needed **nothing** from
+`app.js`. Every helper a seam had forced out over the previous six moves was already where this one wanted it, which is
+the sign the seams are in the right places — and it means the four left should each be a clean move as well.
 
 Two notes for whoever does it:
 

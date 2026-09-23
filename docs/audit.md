@@ -342,10 +342,10 @@ file somebody can read in an afternoon.
 `src/members-views.js` (who is in a practice, how somebody joins it, what it is called), `src/chase-views.js` (the
 chase list and every message it can send) and `src/account-views.js` (this person's password, address and sessions).
 
-`app.js` has gone from **7,173 lines to 3,018** (357 KB to 149 KB — **58% of it gone**), and the helpers that more than
+`app.js` has gone from **7,173 lines to 2,326** (357 KB to 117 KB — **67% of it gone**), and the helpers that more than
 one side needed moved out to `src/views.js`, `src/http.js`, `src/clock.js`, `src/store.js`, `src/auth.js` and a new
-`src/blobs.js`. What is left is the sign-in and two-factor pages, the templates, the client records, the per-request
-actions, the assets and the route table. `CHANGELOG.md` carries the entries.
+`src/blobs.js`. What is left is the dispatcher, the route table, the assets, and the four sections `docs/splitting.md`
+lists — with the recipe for each of them written down there rather than remembered.
 
 **Also found, and stated rather than fixed:** three things this audit *thought* were dead code and were not — a
 `href` helper in the board that is used eight times, an unused-looking binding in the first-run card that is live,

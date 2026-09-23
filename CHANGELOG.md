@@ -117,6 +117,30 @@ that had already been done was simply done again from the restored file — with
 remembered**. Fifteen minutes, no harm, and one rule worth keeping: measure the boundaries in the file you are about to
 edit, not in the one you measured an hour ago.
 
+### One request's actions leave the file, and the file is a third of what it was
+
+`src/request-actions.js` (737 lines): a request's own link, its letters and the documents on it — `serveEnvelope`,
+`issueLink` and `revokeLink`, the reminder and opening drafts, sending them, closing and reopening a request, and
+adding and editing its items. The three things in it that are load-bearing are stated at the top of the module: a link
+is issued and never recovered, a letter is drafted rather than sent by a robot, and what a client sent is served as an
+envelope because the browser is the only place it can be opened.
+
+`app.js` is **2,326 lines and 117 KB**, against the 7,173 and 357 KB the audit measured — **67% of both gone**. What is
+left is the dispatcher, the route table, the assets, and the four sections `docs/splitting.md` lists with the recipe
+for each.
+
+**This move needed nothing from `app.js`.** Every helper a seam had forced out over the previous six was already where
+this one wanted it, which is the sign the seams are in the right places — `docs/splitting.md` records it so the next
+four are easy to judge.
+
+**And one bug, which was mine and not the analysis's.** The analysis named two imports — `createReadStream` from
+`node:fs`, and `open` and `stat` from `node:fs/promises` — and I read them as a single line, importing `stat` from
+`node:fs`. There, `stat` is the callback API, so `await stat(path)` quietly produced nothing and every test that serves
+an envelope went red: the envelope route, the compression exemption, the opening record, the re-encryption pass. One
+run of the suite found it. That is the third time in this series that a hand-written import list has been the failure
+and the third time the tests were the only thing that noticed — and the first time the analysis was right and the
+transcription was wrong, which is its own lesson about doing these at the end of a long session.
+
 ### The browser's half, executed rather than served
 
 `web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so
