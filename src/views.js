@@ -85,7 +85,7 @@ export function page({ title, practitioner = null, body, banner = null, signIn =
             ${navLink('/templates', 'Templates')}
             ${navLink('/keys', 'Keys')}
             ${navLink('/members', 'Members')}
-            <span class="who" title="${practitioner.email}">${practitioner.email}</span>
+            <a class="who" href="/account/two-factor" title="${practitioner.email} — your account">${practitioner.email}</a>
             <form method="post" action="/signout"><button type="submit" class="ghost">Sign out</button></form>`
         : signIn
           ? html`<a href="/signin">Sign in</a>`

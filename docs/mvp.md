@@ -142,7 +142,7 @@ follows is the original ordering, kept because the reasons are the interesting p
 
 ## The data model
 
-**Fourteen tables**, and the count has been wrong in this paragraph twice, which is why it now says what the
+**Sixteen tables**, and the count has been wrong in this paragraph twice, which is why it now says what the
 count *is*. The plan said seven; `session` made it eight because signing out has to actually revoke access
 and that needs server-side state; `practice` made it ten because a firm with two partners cannot be
 represented by one login (`docs/members.md`); `key_wrapping` made it eleven because two partners cannot share

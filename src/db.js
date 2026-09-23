@@ -127,7 +127,24 @@ CREATE TABLE IF NOT EXISTS practitioner (
   -- Nullable, and null reads as 'owner': the behaviour before this column existed, when every member of a
   -- practice could do everything. An install that upgrades keeps every power it already had and tightens
   -- its roles deliberately, rather than discovering a silent downgrade nobody asked for.
-  role                TEXT
+  role                TEXT,
+  -- Two-factor: the shared secret, stored in the clear because the server has to compute the same six digits
+  -- the phone does. That is not a weakness — a secret that could not be read by the server could not be
+  -- checked by it — and what it protects is worth naming: it is the *account* that is being defended, not
+  -- the documents, which stay sealed to a key this row has nothing to do with.
+  --
+  -- Nullable, and null means "not set up". A database written before this existed has no second factor,
+  -- which is what everybody had.
+  totp_secret         TEXT,
+  -- Set only once a code has been checked against the secret, which is what stops somebody locking
+  -- themselves out by typing a secret wrong: a started-but-unconfirmed setup is inert, and the sign-in page
+  -- ignores it. Nullable, and null means "asked for nothing yet".
+  totp_confirmed_at   TEXT,
+  -- The last time step a code was accepted for. A code is live for up to ninety seconds — long enough for a
+  -- person to type, short enough not to be worth watching for — and without this the same six digits would
+  -- work for that whole window *after* they had already been used once. Nullable, and null means no code has
+  -- ever been accepted, which is the only honest reading for a row that predates this.
+  totp_last_step      INTEGER
 );
 
 -- A practice's keys, as a history rather than a single value.
@@ -339,12 +356,47 @@ CREATE TABLE IF NOT EXISTS session (
   created_at      TEXT NOT NULL
 );
 
+-- A password that was right, and a code that has not been given yet.
+--
+-- Two-factor splits sign-in in half, and the half-finished state has to live somewhere. It lives here rather
+-- than in the session table because it is a different thing: a session is proof of identity, this is the
+-- absence of it — a row that grants nothing and expires in minutes. Keeping them apart means a bug in this
+-- table cannot produce a signed-in stranger, which is the property worth protecting.
+--
+-- The token is stored hashed like every other token in this file, so a stolen database is not a set of
+-- sign-ins waiting to be finished.
+CREATE TABLE IF NOT EXISTS login_challenge (
+  id              TEXT PRIMARY KEY,
+  practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
+  token_hash      TEXT NOT NULL UNIQUE,
+  expires_at      TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+
+-- Ten-character codes for the day the phone is gone.
+--
+-- **Hashed, like a password**, because that is what they are: an alternative way into an account. Not
+-- encrypted with the practice key and not readable by the operator either — a recovery code the server could
+-- read is a second password the server knows.
+--
+-- used_at is what makes them single-use. A sheet of codes where one has been spent should say so rather
+-- than quietly working again, and there is no delete anywhere in this file.
+CREATE TABLE IF NOT EXISTS recovery_code (
+  id              TEXT PRIMARY KEY,
+  practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
+  code_hash       TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  used_at         TEXT
+);
+
 CREATE INDEX IF NOT EXISTS request_client ON request(client_id);
 CREATE INDEX IF NOT EXISTS item_request   ON request_item(request_id, position);
 CREATE INDEX IF NOT EXISTS upload_item    ON upload(request_item_id);
 CREATE INDEX IF NOT EXISTS event_request  ON event(request_id, at);
 CREATE INDEX IF NOT EXISTS session_token  ON session(token_hash);
 CREATE INDEX IF NOT EXISTS practice_key_owner ON practice_key(practitioner_id, created_at);
+CREATE INDEX IF NOT EXISTS challenge_token     ON login_challenge(token_hash);
+CREATE INDEX IF NOT EXISTS recovery_owner      ON recovery_code(practitioner_id, used_at);
 `;
 
 /**
@@ -457,6 +509,9 @@ function migrate(db) {
     ['practice', 'contact_email', 'TEXT'],
     ['practice', 'contact_phone', 'TEXT'],
     ['practitioner', 'role', 'TEXT'],
+    ['practitioner', 'totp_secret', 'TEXT'],
+    ['practitioner', 'totp_confirmed_at', 'TEXT'],
+    ['practitioner', 'totp_last_step', 'INTEGER'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }

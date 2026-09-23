@@ -148,7 +148,10 @@ const BASE = `
     font-size: var(--fs-sm); color: var(--soft);
     border-left: 1px solid var(--line);
     max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    /* It is a link now — the way into your own account — so it has to read as one without shouting. */
+    text-decoration: none;
   }
+  .top .who:hover { color: var(--ink); }
   .top form { margin: 0; display: inline-flex; }
   @media (max-width: 44rem) {
     .top { height: auto; flex-wrap: wrap; gap: .5rem .9rem; padding: .6rem 1rem; }
@@ -583,6 +586,27 @@ const CLIENT_AND_MISC = `
   .unlock label { margin: 0; }
   .unlock input { width: auto; min-width: 15rem; }
   .unlock .note { flex-basis: 100%; margin: 0; }
+  /* A secret somebody is going to type, and the codes they have to write down. */
+  .secret {
+    font-family: var(--mono); font-size: var(--fs-md); letter-spacing: .08em;
+    background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-sm);
+    padding: .7rem .9rem; word-break: break-all; max-width: 30rem;
+  }
+  code.wrap { word-break: break-all; display: inline-block; max-width: 100%; }
+  input.code-input {
+    font-family: var(--mono); font-size: 1.25rem; letter-spacing: .22em; text-align: center;
+    max-width: 12rem; height: var(--control);
+  }
+  ul.codes {
+    list-style: none; padding: 0; margin: 1rem 0;
+    display: grid; gap: .5rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    max-width: 32rem;
+  }
+  ul.codes li code {
+    display: block; text-align: center; font-size: var(--fs-md); letter-spacing: .1em;
+    padding: .5rem .6rem; background: var(--surface); border: 1px solid var(--line-2);
+  }
+
   /* A correction hiding behind a word, rather than three inputs in every row. */
   details.rename { margin-top: .35rem; }
   details.rename > summary {

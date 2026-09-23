@@ -35,9 +35,15 @@ const PLAN_TABLES = [
   'event',
   'invite',
   'key_wrapping',
+  // The half-finished sign-in: a password that was right and a code that has not been given yet. Its own
+  // table rather than a column on `session`, because a challenge grants nothing — and keeping the two apart
+  // means a bug in one cannot produce a signed-in stranger.
+  'login_challenge',
   'practice',
   'practice_key',
   'practitioner',
+  // Hashed, because a recovery code is an alternative way into an account and not a note.
+  'recovery_code',
   'request',
   'request_item',
   'session',

@@ -158,6 +158,28 @@ await withServer(async ({ base, agent, db }) => {
   await save('ask everyone, due pre-ticked', '/ask-everyone?due=1', client);
   // The half that lived only on the clients page until now: the board saying the year has come round.
   await save('board, the season coming round', '/requests', client);
+
+  // Two-factor, captured **last of all**, because arming it changes how this fixture signs in — and every
+  // screenshot above needs the ordinary single-step sign-in that the rest of the tool assumes.
+  //
+  // The secret is read from the database rather than scraped off the page: the page shows it in readable groups
+  // for a human, and a test that parsed those back would be testing the display instead of the protocol.
+  await save('two-factor, not set up', '/account/two-factor', client);
+  await client.post('/account/two-factor/start', {});
+  await save('two-factor, half done', '/account/two-factor', client);
+
+  const { twoFactorState } = await import('../src/auth.js');
+  const { codeAt, counterAt } = await import('../src/totp.js');
+  const rows = db.prepare('SELECT id FROM practitioner ORDER BY created_at LIMIT 1').all();
+  const armed = twoFactorState(db, rows[0].id);
+  if (armed.state === 'unconfirmed' && rows.length === 1) {
+    const confirmed = await client.post('/account/two-factor/confirm', {
+      code: codeAt(armed.secret, counterAt()),
+    });
+    await writeFileSync(join(out, 'two-factor-recovery-codes.html'), await confirmed.text());
+    pages.push(`200  two-factor, recovery codes      /account/two-factor (post) -> two-factor-recovery-codes.html`);
+    await save('two-factor, on', '/account/two-factor', client);
+  }
 });
 
 writeFileSync(join(out, 'INDEX.txt'), `${pages.join('\n')}\n`);

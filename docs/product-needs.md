@@ -198,6 +198,13 @@ One sentence for what Tickmark should be, narrower than "a client portal":
   became an ordinary email. `upload` gained a `request_id` (a file belongs to a request and *may* answer an
   item) and a rebuilt table that is verified rather than trusted.
 
+- **a second factor, from the standard rather than a package** (2ab): a six-digit code from
+  any authenticator app, asked for after the password, with single-use recovery codes for
+  the day the phone is gone. It closes a real attack rather than a theoretical one — a
+  stolen password can add a key of its own, and from then on every upload is encrypted to
+  somebody outside the practice. `src/totp.js` is RFC 6238 in a hundred lines of
+  `node:crypto`, checked against the specification's own test vectors
+
 **Not built, and named rather than implied:**
 
 - **Recurring requests** on a schedule — a request that makes *itself*, and emails a client, because a date came

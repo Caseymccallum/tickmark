@@ -188,7 +188,13 @@ Tickmark's answer is: **on your server, and nobody else.**
   **One press checks off everything that arrived** — each document still recorded on its own —
   and a document flagged for re-sending keeps the request off "ready", because a file that
   is no use is not a file that is in
-- **clients as records**: a directory of everyone you ask, with what each still owes and
+- **two-factor sign-in**: a six-digit code from any authenticator app, asked for after your
+  password, with single-use recovery codes for the day the phone is gone. It is what stops
+  a stolen password from becoming a stolen practice — somebody signed in as you can add a
+  key of their own, and from then on every upload is sealed to them. `src/totp.js` is
+  RFC 6238 in about a hundred lines of `node:crypto`, checked against the specification's
+  own test vectors
+- **client records you can reuse**: a directory of everyone you ask, with what each still owes and
   whether they can be written to at all, and **who is due an ask** — shown on the board when the year
   has come round, and with the ask already ticked. See [docs/clients.md](docs/clients.md).
 - **a list you use again**: a checklist saved under a name, and **ask everyone at once** —

@@ -25,7 +25,35 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hashPassword, hashToken, newToken, verifyPassword } from './crypto.js';
-import { MIN_PASSWORD, clearSessionCookie, createSession, endSession, practitionerFor, sessionCookie } from './auth.js';
+import {
+  CHALLENGE_COOKIE,
+  MIN_PASSWORD,
+  challengeCookie,
+  challengeFor,
+  clearChallengeCookie,
+  clearSessionCookie,
+  clearTwoFactor,
+  confirmTwoFactor,
+  createSession,
+  endChallenge,
+  endSession,
+  parseCookies,
+  practitionerFor,
+  recordAcceptedStep,
+  sessionCookie,
+  setPendingSecret,
+  spendRecoveryCode,
+  startChallenge,
+  twoFactorState,
+  unusedRecoveryCodes,
+} from './auth.js';
+import {
+  codeStepFor,
+  generateRecoveryCodes,
+  generateSecret,
+  inGroups,
+  otpauthUri,
+} from './totp.js';
 import { RequestError, field, formFields, readBody } from './http.js';
 import { TONES, badge, empty, html, page, raw, redirect, section, sendCsv, sendPage, tile } from './views.js';
 
@@ -224,6 +252,16 @@ export const ROUTES = [
   ['POST', '/signup', signUp],
   ['GET', '/signin', signInForm],
   ['POST', '/signin', signIn],
+  // The second half of a sign-in, only reachable when the password was already right — see `signIn`.
+  ['GET', '/signin/code', signInCodePage],
+  ['POST', '/signin/code', signInCode],
+  // A person's own second factor. Any member, any role: this is about their account, not the practice's
+  // records, so it is not gated the way the members page is.
+  ['GET', '/account/two-factor', twoFactorPage],
+  ['POST', '/account/two-factor/start', twoFactorStart],
+  ['POST', '/account/two-factor/confirm', twoFactorConfirm],
+  ['POST', '/account/two-factor/codes', twoFactorNewCodes],
+  ['POST', '/account/two-factor/off', twoFactorOff],
   ['POST', '/signout', signOut],
   ['GET', '/setup', setupForm, 'owner'],
   ['POST', '/setup', saveKeys, 'owner'],
@@ -648,6 +686,258 @@ function signInForm({ response }) {
   }));
 }
 
+/**
+ * The form that asks for the six digits.
+ *
+ * One field, one button, and a sentence about recovery codes underneath — because the person who needs it is
+ * the person whose phone is in a taxi, and they will not think to look for it.
+ */
+function codeForm({ error = null, action = '/signin/code' }) {
+  return html`<div class="center">
+    <div class="card">
+      <h1>Your code</h1>
+      <p class="note">Six digits from your authenticator app.</p>
+      ${error ? html`<p class="error">${error}</p>` : ''}
+      <form method="post" action="${action}">
+        <label for="code">Code <span class="note">— or one of your recovery codes</span></label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
+          maxlength="20" class="code-input">
+        <button type="submit">Continue</button>
+      </form>
+      <p class="note">Codes change every thirty seconds. If the app on the phone is not with you, a recovery
+      code from the sheet you were given will work once.</p>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------------
+// Two-factor: setting it up
+// ---------------------------------------------------------------------------------
+
+/**
+ * Check a code for the person themselves, for the two actions that could lock them out or lock them in.
+ *
+ * Accepts a recovery code as well, and for turning two-factor *off* that matters more than anything else on
+ * this page: the person who needs to turn it off is very often the person whose phone is gone.
+ */
+function codeAuthorises(db, practitionerId, code) {
+  const state = twoFactorState(db, practitionerId);
+  if (state.state !== 'on') return true;
+  const step = codeStepFor(state.secret, code);
+  if (step !== null && step !== state.lastStep) {
+    recordAcceptedStep(db, practitionerId, step);
+    return true;
+  }
+  return spendRecoveryCode(db, practitionerId, code);
+}
+
+/**
+ * The page where somebody arms their own second factor.
+ *
+ * Per person rather than per practice, because that is what the secret is: a thing on *your* phone. A firm
+ * where one member has two-factor and another does not is a normal state, and the members page shows which is
+ * which so an owner can see it rather than guess.
+ *
+ * **The secret is shown as text, in groups, and that is not a gap.** A QR code needs Reed–Solomon error
+ * correction and a renderer, which is a dependency this project will not take for a screen shown once — and
+ * manual entry works in every authenticator app ever made. The `otpauth://` URI is offered alongside it for
+ * anyone who would rather paste it into a generator.
+ */
+function twoFactorPage({ db, response, practitioner, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const state = twoFactorState(db, practitioner.id);
+  const justOff = url.searchParams.get('off') === '1';
+  const left = state.state === 'on' ? unusedRecoveryCodes(db, practitioner.id) : 0;
+
+  return sendPage(response, 200, page({
+    title: 'Two-factor sign-in',
+    practitioner,
+    here: '/members',
+    banner: justOff
+      ? html`<p class="warning"><strong>Two-factor is off.</strong> Your password is now the only thing between
+          somebody and your account — and an account can add a key of its own, which is worth knowing before
+          leaving it off.</p>`
+      : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/members">Members</a></p>
+          <h1>Two-factor sign-in</h1>
+          <p class="sub">A six-digit code from an app on your phone, asked for after your password. It is the
+          only thing that stops a stolen password from becoming a stolen practice.</p>
+        </div>
+      </div>
+
+      <section class="card">
+        <h2>${state.state === 'on' ? badge('on', TONES.done) : badge('not set up', TONES.waiting)}</h2>
+        ${state.state === 'off' ? twoFactorOffCard(practitioner) : ''}
+        ${state.state === 'unconfirmed' ? twoFactorPendingCard({ db, practitioner, secret: state.secret }) : ''}
+        ${state.state === 'on' ? twoFactorOnCard({ practitioner, left }) : ''}
+      </section>
+
+      <section class="card">
+        <h2>How this fits the rest</h2>
+        <p class="note">Two-factor protects <strong>your account</strong>. It has nothing to do with the
+        encryption: your passphrase still unwraps your copy of the practice key, and the server still cannot read
+        a document. The two are separate on purpose — a second factor that could recover a lost passphrase would
+        be a second factor that could read your files.</p>
+        <p class="note">An operator who runs this server can turn two-factor off for you by editing the database,
+        because they can already read everything else about your account. What they cannot do is read your
+        documents, which is the promise this product actually makes.</p>
+      </section>`,
+  }));
+}
+
+/** Nothing set up: the reason it is worth doing, and one button. */
+const twoFactorOffCard = (practitioner) => html`
+  <p>Two-factor is not set up for <strong>${practitioner.email}</strong>.</p>
+  <p class="note"><strong>Why this is worth doing.</strong> The passphrase protects your key, so nobody with
+  your password can read documents that have already arrived. But uploads are sealed to the practice's
+  <em>public</em> keys — and somebody signed in as you can add one of their own. From that moment every
+  document your clients send is encrypted to them, and nothing would look wrong anywhere.</p>
+  <form method="post" action="/account/two-factor/start">
+    <button type="submit" class="primary">Set it up</button>
+  </form>`;
+
+/** Started and not armed: the secret, and the code that finishes it. */
+const twoFactorPendingCard = ({ db, practitioner, secret }) => html`
+  <p><strong>Not armed yet.</strong> Add this secret to your authenticator app, then type the code it shows to
+  finish. Until you do, nothing about how you sign in has changed.</p>
+  <p class="note">In your app, choose "add account" and enter this by hand:</p>
+  <p class="secret">${inGroups(secret)}</p>
+  <p class="note">Or paste this into a code generator, if you would rather:
+    <code class="wrap">${otpauthUri({ secret, account: practitioner.email, issuer: practiceFor(db, practitioner.practiceId)?.name ?? 'Tickmark' })}</code></p>
+  <form method="post" action="/account/two-factor/confirm" class="stack">
+    <label for="code">The six digits it shows</label>
+    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="6"
+      class="code-input">
+    <div class="row"><button type="submit" class="primary">Turn it on</button></div>
+  </form>`;
+
+/** Armed: what that means, how many codes are left, and the two actions that need a code. */
+const twoFactorOnCard = ({ practitioner, left }) => html`
+  <p>Signing in as <strong>${practitioner.email}</strong> asks for a code from your app.</p>
+  <p class="note">${left} recovery ${left === 1 ? 'code is' : 'codes are'} unused. Those are the ones for the day
+  the phone is gone.</p>
+  ${left === 0
+    ? html`<p class="warning"><strong>None left.</strong> If that phone is lost there is no way back in except an
+        operator with access to the database. Make some more now.</p>`
+    : ''}
+  <div class="actions">
+    <form method="post" action="/account/two-factor/codes" class="inline">
+      <input name="code" inputmode="numeric" maxlength="6" placeholder="code" aria-label="A code" required>
+      <button type="submit">New recovery codes</button>
+    </form>
+    <form method="post" action="/account/two-factor/off" class="inline">
+      <input name="code" inputmode="numeric" maxlength="20" placeholder="code"
+        aria-label="A code or a recovery code" required>
+      <button type="submit" class="danger">Turn it off</button>
+    </form>
+  </div>
+  <p class="note">Both need a code — from the app, or a recovery code. That is what they are for.</p>`;
+
+/** Generate a secret and hold it, unarmed, so the page can show it. */
+function twoFactorStart({ db, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  setPendingSecret(db, practitioner.id, generateSecret());
+  return redirect(response, '/account/two-factor');
+}
+
+/**
+ * Arm it, and hand over the recovery codes — **the only time they are ever shown**.
+ *
+ * They are stored as digests, so there is no page that can show them again and no operator who can read them
+ * out. The response is rendered directly rather than redirected for the same reason: a redirect would need the
+ * codes to survive somewhere, and the only somewhere would be a session or a URL.
+ */
+async function twoFactorConfirm({ db, request, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const state = twoFactorState(db, practitioner.id);
+  if (state.state !== 'unconfirmed') {
+    return fail(response, 400, 'There is no setup waiting to be finished. Start again from the two-factor page.', practitioner);
+  }
+
+  const step = codeStepFor(state.secret, field(fields, 'code') ?? '');
+  if (step === null) {
+    return fail(
+      response,
+      400,
+      'That code was not right. Check the app is showing the code for this account, wait for the next one, and type it again.',
+      practitioner,
+    );
+  }
+
+  const codes = generateRecoveryCodes();
+  confirmTwoFactor(db, practitioner.id, codes);
+  recordAcceptedStep(db, practitioner.id, step);
+
+  sendPage(response, 200, page({
+    title: 'Two-factor is on',
+    practitioner,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <h1>Two-factor is on</h1>
+          <p class="sub">Nothing else to do — the next time you sign in, it will ask for a code.</p>
+        </div>
+      </div>
+      <section class="card">
+        <h2>Your recovery codes</h2>
+        <p class="warning"><strong>Write these down now.</strong> This is the only time they are shown: they
+        are stored scrambled, so nobody — not us, not an operator with the database — can read them back to
+        you.</p>
+        <ul class="codes">${codes.map((code) => html`<li><code>${code}</code></li>`)}</ul>
+        <p class="note">Each one works <strong>once</strong>, instead of a code from the app. Keep them
+        somewhere that is not the phone: a password manager, or a piece of paper somewhere sensible. If you
+        lose the phone and the codes, only somebody with access to this server can get you back in.</p>
+        <div class="actions"><a class="btn" href="/requests">Done</a></div>
+      </section>`,
+  }));
+}
+
+/** New recovery codes, for the practice that has used theirs or lost the sheet. */
+async function twoFactorNewCodes({ db, request, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  if (!codeAuthorises(db, practitioner.id, field(fields, 'code') ?? '')) {
+    return fail(response, 400, 'That code was not right, so no new codes were made. The old ones still work.', practitioner);
+  }
+
+  const codes = generateRecoveryCodes();
+  // The unused ones are replaced rather than added to: a sheet of sixteen half-remembered codes is worse than a
+  // sheet of eight, and the practice asked for new ones because they could not find the old.
+  confirmTwoFactor(db, practitioner.id, codes);
+
+  sendPage(response, 200, page({
+    title: 'New recovery codes',
+    practitioner,
+    body: html`
+      <div class="page-head"><div class="titles"><h1>New recovery codes</h1></div></div>
+      <section class="card">
+        <p class="warning"><strong>Write these down now.</strong> They replace the ones you had, and this is
+        the only time they are shown.</p>
+        <ul class="codes">${codes.map((code) => html`<li><code>${code}</code></li>`)}</ul>
+        <div class="actions"><a class="btn" href="/account/two-factor">Done</a></div>
+      </section>`,
+  }));
+}
+
+async function twoFactorOff({ db, request, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  if (!codeAuthorises(db, practitioner.id, field(fields, 'code') ?? '')) {
+    return fail(
+      response,
+      400,
+      'That code was not right, so two-factor is still on. Use a code from the app, or one of your recovery codes.',
+      practitioner,
+    );
+  }
+  clearTwoFactor(db, practitioner.id);
+  return redirect(response, '/account/two-factor?off=1');
+}
+
 async function signIn({ db, request, response, signInLimiter }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
@@ -713,8 +1003,86 @@ async function signIn({ db, request, response, signInLimiter }) {
     }));
   }
 
+  // **The password is right and the sign-in is not finished.** Everything above this line is unchanged and
+  // every failure on it is answered exactly as it always was, so an install with two-factor set up on nobody
+  // behaves byte for byte as it did before. What is new is only this: when a person has armed a second
+  // factor, the password stops being the whole of the proof.
+  const second = twoFactorState(db, record.id);
+  if (second.state === 'on') {
+    const { token } = startChallenge(db, record.id);
+    // The challenge rides in its own cookie rather than in the URL: a query string ends up in logs, in
+    // history and in whatever the browser sends as a referrer, and this is the one token in the product that
+    // is one code away from being a session.
+    return redirect(response, '/signin/code', [challengeCookie(token)]);
+  }
+
   const { token } = createSession(db, record.id);
   return redirect(response, '/requests', [sessionCookie(token)]);
+}
+
+/**
+ * The second half of a sign-in: the code.
+ *
+ * Two things are accepted here and they are deliberately different in kind. A **code from the authenticator**
+ * is the ordinary path. A **recovery code** is the one for the day the phone is gone, and it is spent rather
+ * than checked — a sheet of codes where one has been used should say so.
+ *
+ * A wrong code does **not** end the challenge. Somebody typing six digits from a phone that is a few seconds
+ * out of step deserves another go, and the challenge dies on its own in ten minutes; what stops a brute-force
+ * is that there are a million codes and ten minutes.
+ */
+async function signInCode({ db, request, response }) {
+  const jar = parseCookies(request.headers.cookie);
+  const challenge = challengeFor(db, jar[CHALLENGE_COOKIE]);
+  if (!challenge) {
+    return sendPage(response, 410, page({
+      title: 'That sign-in has expired',
+      body: html`<h1>That sign-in has expired</h1>
+        <p>Nothing was signed in. Start again — it takes a moment.</p>
+        <div class="actions"><a class="btn" href="/signin">Sign in again</a></div>`,
+    }));
+  }
+
+  const fields = formFields(await readBody(request));
+  const code = field(fields, 'code') ?? '';
+  const person = twoFactorState(db, challenge.practitionerId);
+  if (person.state !== 'on') {
+    // Turned off in another tab between the password and the code. Nothing to check, so finish the sign-in
+    // rather than leaving somebody stuck on a page asking for a code that no longer exists.
+    endChallenge(db, challenge.id);
+    const { token } = createSession(db, challenge.practitionerId);
+    return redirect(response, '/requests', [sessionCookie(token), clearChallengeCookie()]);
+  }
+
+  const step = codeStepFor(person.secret, code);
+  const fresh = step !== null && step !== person.lastStep;
+  if (!fresh && !spendRecoveryCode(db, challenge.practitionerId, code)) {
+    return sendPage(response, 401, page({
+      title: 'That code was not right',
+      body: codeForm({
+        error: 'That code was not right. Codes change every thirty seconds, so try the one showing now — or use one of your recovery codes if the phone is not to hand.',
+      }),
+    }));
+  }
+
+  if (fresh) recordAcceptedStep(db, challenge.practitionerId, step);
+  endChallenge(db, challenge.id);
+  const { token } = createSession(db, challenge.practitionerId);
+  return redirect(response, '/requests', [sessionCookie(token), clearChallengeCookie()]);
+}
+
+/** The page that asks for the six digits, or for a recovery code. */
+function signInCodePage({ request, response, db }) {
+  const jar = parseCookies(request.headers.cookie);
+  if (!challengeFor(db, jar[CHALLENGE_COOKIE])) {
+    return sendPage(response, 410, page({
+      title: 'That sign-in has expired',
+      body: html`<h1>That sign-in has expired</h1>
+        <p>Nothing was signed in. Start again — it takes a moment.</p>
+        <div class="actions"><a class="btn" href="/signin">Sign in again</a></div>`,
+    }));
+  }
+  sendPage(response, 200, page({ title: 'Your code', body: codeForm({}) }));
 }
 
 function signOut({ db, request, response }) {

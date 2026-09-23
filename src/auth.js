@@ -10,8 +10,11 @@
  * The token is stored hashed, for the same reason a link token is: a stolen database
  * must not be a set of working sessions.
  */
+import { timingSafeEqual } from 'node:crypto';
+
 import { hashToken, newToken } from './crypto.js';
 import { newId } from './db.js';
+import { CHALLENGE_MINUTES, normaliseRecoveryCode } from './totp.js';
 
 export const SESSION_DAYS = 14;
 export const COOKIE_NAME = 'tickmark_session';
@@ -102,6 +105,146 @@ export function endSession(db, token) {
 export function endAllSessions(db, practitionerId) {
   return db.prepare('DELETE FROM session WHERE practitioner_id = ?').run(practitionerId).changes;
 }
+
+// ---------------------------------------------------------------------------------
+// Two-factor: the second half of a sign-in
+// ---------------------------------------------------------------------------------
+
+export const CHALLENGE_COOKIE = 'tickmark_challenge';
+
+/**
+ * Where a sign-in waits while somebody finds their phone.
+ *
+ * Created **only after the password has already been checked**, which is what makes this table safe to reason
+ * about: a row here means "somebody who knows this password", and nothing else. It grants no access, so a
+ * stolen challenge is worth nothing on its own — the code is the other half of the same door.
+ */
+export function startChallenge(db, practitionerId, at = new Date()) {
+  const token = newToken();
+  const expires = new Date(at.getTime() + CHALLENGE_MINUTES * 60 * 1000);
+  db.prepare(
+    'INSERT INTO login_challenge (id, practitioner_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(newId(), practitionerId, hashToken(token), expires.toISOString(), at.toISOString());
+  return { token, expiresAt: expires.toISOString() };
+}
+
+/**
+ * The person a half-finished sign-in belongs to, or null. Expired challenges are removed on sight, the same
+ * way expired sessions are.
+ */
+export function challengeFor(db, token, at = new Date()) {
+  if (typeof token !== 'string' || token.length === 0) return null;
+  const row = db
+    .prepare('SELECT id, practitioner_id, expires_at FROM login_challenge WHERE token_hash = ?')
+    .get(hashToken(token));
+  if (!row) return null;
+  if (row.expires_at <= at.toISOString()) {
+    db.prepare('DELETE FROM login_challenge WHERE id = ?').run(row.id);
+    return null;
+  }
+  return { id: row.id, practitionerId: row.practitioner_id };
+}
+
+/**
+ * Spend a challenge. Deleting the row rather than marking it is deliberate: a `session` row has to survive
+ * to be revoked, but a challenge has nothing to remember. Its whole life is "a password was right and a code
+ * has not been given yet", and once the code has been given that sentence is finished.
+ */
+export const endChallenge = (db, id) => db.prepare('DELETE FROM login_challenge WHERE id = ?').run(id).changes;
+
+export function challengeCookie(token, secure = secureCookies()) {
+  return [
+    `${CHALLENGE_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${CHALLENGE_MINUTES * 60}`,
+  ]
+    .concat(secure ? ['Secure'] : [])
+    .join('; ');
+}
+
+export const clearChallengeCookie = (secure = secureCookies()) =>
+  [`${CHALLENGE_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0']
+    .concat(secure ? ['Secure'] : [])
+    .join('; ');
+
+/**
+ * Where this person's second factor stands.
+ *
+ * Three states rather than a boolean, because "started and never confirmed" is a real state that behaves
+ * like *nothing is set up* — the sign-in page ignores it — and reporting it as "on" would be the kind of
+ * claim that makes somebody believe they are protected when they are not.
+ */
+export function twoFactorState(db, practitionerId) {
+  const row = db
+    .prepare('SELECT totp_secret, totp_confirmed_at, totp_last_step FROM practitioner WHERE id = ?')
+    .get(practitionerId);
+  if (!row || !row.totp_secret) return { state: 'off' };
+  if (!row.totp_confirmed_at) return { state: 'unconfirmed', secret: row.totp_secret };
+  return { state: 'on', secret: row.totp_secret, lastStep: row.totp_last_step };
+}
+
+/** Save a secret without arming it. Inert until a code has been checked against it. */
+export function setPendingSecret(db, practitionerId, secret) {
+  db.prepare(
+    'UPDATE practitioner SET totp_secret = ?, totp_confirmed_at = NULL, totp_last_step = NULL WHERE id = ?',
+  ).run(secret, practitionerId);
+}
+
+/** Arm it, and write down the codes for the day the phone is gone. */
+export function confirmTwoFactor(db, practitionerId, codes, at = new Date()) {
+  db.prepare('UPDATE practitioner SET totp_confirmed_at = ? WHERE id = ?').run(at.toISOString(), practitionerId);
+  db.prepare('DELETE FROM recovery_code WHERE practitioner_id = ? AND used_at IS NULL').run(practitionerId);
+  const insert = db.prepare('INSERT INTO recovery_code (id, practitioner_id, code_hash, created_at) VALUES (?, ?, ?, ?)');
+  for (const code of codes) {
+    insert.run(newId(), practitionerId, hashToken(normaliseRecoveryCode(code)), at.toISOString());
+  }
+}
+
+/** Turn it off: the secret goes, and so do the codes that stood in for it. */
+export function clearTwoFactor(db, practitionerId) {
+  db.prepare(
+    'UPDATE practitioner SET totp_secret = NULL, totp_confirmed_at = NULL, totp_last_step = NULL WHERE id = ?',
+  ).run(practitionerId);
+  db.prepare('DELETE FROM recovery_code WHERE practitioner_id = ?').run(practitionerId);
+}
+
+/**
+ * Remember which step a code was accepted for.
+ *
+ * Without this the same six digits work for the whole ninety-second window, so a code read off somebody's
+ * screen over their shoulder stays usable *after* they have used it. A step already recorded is refused,
+ * which is the difference between "a code" and "one use of a code".
+ */
+export const recordAcceptedStep = (db, practitionerId, step) =>
+  db.prepare('UPDATE practitioner SET totp_last_step = ? WHERE id = ?').run(step, practitionerId);
+
+/**
+ * Spend a recovery code, if it is one and it has not been spent. Returns true once, ever, per code.
+ *
+ * Every unused code for this person is compared in constant time rather than looked up by digest: a lookup is
+ * a single indexed read whose *timing* says whether a code exists, and this is a table of eight rows, so
+ * doing it properly costs nothing.
+ */
+export function spendRecoveryCode(db, practitionerId, code, at = new Date()) {
+  const normalised = normaliseRecoveryCode(code);
+  if (normalised.length === 0) return false;
+  const digest = Buffer.from(hashToken(normalised));
+  const rows = db
+    .prepare('SELECT id, code_hash FROM recovery_code WHERE practitioner_id = ? AND used_at IS NULL')
+    .all(practitionerId);
+  const match = rows.find((row) => timingSafeEqual(Buffer.from(row.code_hash), digest));
+  if (!match) return false;
+  return (
+    db.prepare('UPDATE recovery_code SET used_at = ? WHERE id = ? AND used_at IS NULL').run(at.toISOString(), match.id)
+      .changes === 1
+  );
+}
+
+/** How many are left, for the page that has to warn somebody before they run out. */
+export const unusedRecoveryCodes = (db, practitionerId) =>
+  db.prepare('SELECT COUNT(*) AS n FROM recovery_code WHERE practitioner_id = ? AND used_at IS NULL').get(practitionerId).n;
 
 export function parseCookies(header) {
   const jar = {};

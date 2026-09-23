@@ -1137,6 +1137,77 @@ Two new event kinds — `upload.extra` and `client.messaged` — taking the voca
 **twenty-eight**, plus a new case in the notification's subject. Two new columns on `upload`, two on `practice`.
 One table rebuilt and verified.
 
+## Phase 2ab — The second factor, and the attack it closes
+
+The passphrase protects the *key*. The password protected the *account*, and until now it was the only thing
+that did. That gap had a specific shape, and it is worth stating plainly because it is the reason this exists:
+
+**Uploads are sealed to the practice's public keys.** A stranger with a practice's password cannot read a file
+that has already arrived — those are sealed to a key they do not hold. But they can sign in, **add a key
+wrapping of their own**, and from that moment every document a client sends is encrypted to somebody outside
+the practice. Silently. No file is ever decrypted, no log entry looks unusual, and nothing about the product
+appears broken. A firm could lose an entire season's documents that way and find out years later.
+
+### The primitive, from the standard rather than from a package
+
+`src/totp.js` is RFC 6238 over RFC 4226 — what every authenticator app implements — in about a hundred lines of
+`node:crypto`. There is nothing here worth a dependency, and a security primitive this project can read, print
+and **test against the specification's own vectors** is worth more than one it has to trust. The tests check all
+six of the RFC's published answers, because an implementation that is wrong in a plausible way (off by a step,
+wrong byte order, no dynamic truncation) still produces six digits and still looks correct.
+
+Two decisions in it:
+
+- **A window of ±1 step.** Authenticator apps and the server disagree about the current minute by a few seconds,
+  and a phone that is always one step early would otherwise be locked out permanently with a code that looks
+  right. One step each way means a code lives at most ninety seconds — usable, and not worth watching for.
+- **Everything is compared in constant time**, including the recovery codes. A six-digit code is a stretch for a
+  timing attack, but a product that guards one comparison and waves another through is a product whose habits
+  cannot be trusted.
+
+### The flow, and why it is split in two
+
+`login_challenge` is a row that means **"somebody who knows this password"** and nothing else. It is created
+only after the password is verified, it grants no access, and it expires in ten minutes. Keeping it out of the
+`session` table is the point: a bug in that table cannot produce a signed-in stranger. The token travels in its
+own cookie rather than a query string, because a query string ends up in logs and referrers and this is the one
+token that is a single code away from being a session.
+
+Four rules worth naming:
+
+- **A code works once.** The step it was accepted for is recorded, so the same six digits are refused for the
+  rest of their window. Without that, a code read off somebody's screen over their shoulder stays usable *after*
+  they have used it.
+- **Setting two-factor up consumes the code that armed it**, which is consistent rather than convenient: a code
+  used once is used once, even during setup. Somebody testing it immediately will be asked for the next one,
+  which is a small annoyance in exchange for a rule with no exceptions.
+- **A recovery code is spent, not checked.** Eight ten-character codes from an alphabet with no `0`/`O` and no
+  `1`/`L`/`I`, stored as digests, each working exactly once. They are shown **once**, on the response that makes
+  them — there is no page that can show them again and no operator who can read them out.
+- **Turning it off needs a code, and a recovery code counts.** The person who needs to turn it off is very often
+  the person whose phone is gone, and a security feature that cannot be undone at the worst moment is one people
+  disable early.
+
+### What it is not
+
+It has **nothing to do with the encryption**, and the page says so. The passphrase still unwraps your copy of the
+practice key and the server still cannot read a document. The two are separate on purpose: a second factor that
+could recover a lost passphrase would be a second factor that could read your files.
+
+And the honest limit, also on the page: **an operator who runs the server can turn two-factor off** by editing
+the database, because they can already read everything else about an account. What they cannot do is read the
+documents — which is the promise this product actually makes, and the one worth not overstating.
+
+`totp_secret` is stored in the clear, and that is not an oversight: a secret the server could not read is a
+secret the server could not check. The column's comment says so, so the next person to look does not "fix" it.
+
+### What is recorded
+
+Two new tables (`login_challenge`, `recovery_code`) and three new columns on `practitioner`, taking the schema
+to sixteen tables. The `stack.test.js` list caught the additions, as it is designed to — *"adding one is a
+decision"* — and the decision is written where the list is. No new event kinds: signing in is not something that
+happens to a request.
+
 ## Phase 3 — Find out if anyone wants it
 
 
