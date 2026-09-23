@@ -163,6 +163,25 @@ all. The unused-import scan then found twelve of the fifteen imports that had le
 
 392 tests, all green.
 
+### The templates leave the file, and the export goes in before the wiring
+
+`src/templates-views.js`, 394 lines: the templates pages and the lists they keep — make one, rename it, add to it, take
+something off it, delete it, start a request from it — plus the page that closes several requests at once, which sits
+here because it is the same shape of page. It is the eleventh module to leave `app.js`, which is **1,462 lines and
+74 KB** against the 7,173 and 357 KB the audit measured — **four fifths of both gone**.
+
+Nothing needed rehoming, for the third move in a row: the section's outside dependencies were `parseItems` and the
+store functions behind the lists, and `http.js` was already `parseItems`'s home, exactly as `docs/splitting.md` had
+predicted. Fifteen imports left with the code; the scan found fourteen of them, and `section` was the fifteenth —
+invisible to it because `<section class="card">` and the word in a comment both look like a use, which is the same
+reason `open`, `now` and `history` had to be settled by hand last time.
+
+The mistake of the last move was not repeated: the ten handlers were given `export` before they were wired into the
+route table, and nothing else went wrong, so the suite had nothing to catch — the first move in the series where the
+checks only confirmed what the previous four had left behind.
+
+392 tests, all green.
+
 ### The browser's half, executed rather than served
 
 `web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so
