@@ -47,6 +47,15 @@ product's promise changed, not that a class name moved.
    nothing else in the sheet knows which mode it is in; `prefers-reduced-motion` turns transitions off.
 7. **Escaping is not a class's job.** Every value goes through `html`; `raw` is only ever used for
    markup this repository wrote.
+8. **An icon carries meaning, never decoration.** Ten of them, drawn inline at 16×16, all
+   `currentColor` — so an icon in a warning is warning-coloured because it is *inside* the warning
+   rather than because somebody chose a colour. Each sits beside the word it means, which is why they
+   are all `aria-hidden`. There is no ornament in this stylesheet and an icon with nothing to say
+   would be the first one.
+9. **A fact is said once.** The dashboard shows the subscription state as a badge at the top and does
+   not repeat it in the table below; the wall derives its tone from the same `STATUS_LOOK` the
+   dashboard uses, so one state cannot look like a warning on one page and a neutral fact on another.
+   Two descriptions of one thing drifting apart is the bug this project has fixed most often.
 
 ## Where the ideas came from
 
@@ -67,11 +76,19 @@ src/style.js      TOKENS · BASE · COMPONENTS · FORMS · TABLES · SURFACES ·
                   → one exported STYLE string, inlined into every page
 src/views.js      page() — the shell, the header, the footer, and html/raw escaping
                   badge() tile() section() empty() — the four components markup asks for by name
+                  icon() and the ten drawings it looks up, plus tick() for a list of truths
+src/tenancy/views.js  the public pages: sign up, sign in, the dashboard, the billing wall
 web/*.js          the browser half: upload, download, keys, members, setup
 ```
 
 `views.js` decides what a page *says*; `style.js` decides how it looks. Neither is easier to change
-because the other is tangled into it.
+because the other is tangled into it. The gateway's pages are their own file because they are the
+only ones about *accounts* rather than documents, and they exist only when `MULTI_TENANT=1`.
+
+**Never write a backtick inside `style.js`.** The sheet is a template literal, so one backtick in a
+CSS comment ends the string and the module fails to load — taking every page and every test with it,
+with an error that points at a line of CSS rather than at the comment. It has happened three times;
+`npm run check:style` now fails the build instead.
 
 ## Checking it
 
@@ -81,6 +98,9 @@ The look can be reviewed without a browser:
 node tools/snapshot.mjs    [dir]   # renders every page, writes an INDEX.txt
 node tools/check-pages.mjs [dir]   # catches "undefined", unbalanced styles, a missing header/footer
 node tools/show-page.mjs   <page>  # prints one captured page with the CSS collapsed
+node tools/preview-gateway.mjs [dir] # the thirteen states of the public pages, including the ones
+                                     # that otherwise need a webhook to have fired
+node tools/check-style.mjs         # no backtick inside the CSS literal, every rule closed
 ```
 
 `snapshot.mjs` drives the real server over HTTP through the same helpers the tests use — a signed-up

@@ -22,7 +22,9 @@
     "bench:gzip": "node tools/bench-gzip.mjs",
     "find:unused": "node tools/find-unused.mjs",
     "tables": "node tools/tables.mjs",
-    "probe:repeats": "node tools/probe-repeats.mjs"
+    "probe:repeats": "node tools/probe-repeats.mjs",
+    "check:style": "node tools/check-style.mjs",
+    "preview:gateway": "node tools/preview-gateway.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

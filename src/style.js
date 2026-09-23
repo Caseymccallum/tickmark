@@ -660,6 +660,67 @@ const CLIENT_AND_MISC = `
   ul.plain { list-style: none; padding: 0; margin: .5rem 0; }
   ul.plain li { padding: .45rem 0; border-bottom: 1px solid var(--line); }
   ul.plain li:last-child { border-bottom: 0; }
+
+  /* --- icons, and the things they lead ------------------------------------------------------------ */
+  /* An icon is the colour of the text it sits in, and sits on the text's baseline rather than beside its bottom.
+     Without the vertical nudge the glyph reads as dropping off the end of the line, which is the difference between
+     an icon that belongs to a sentence and one pasted next to it. */
+  .icon { flex: none; vertical-align: -.18em; }
+  .icon.lead { width: 1.05rem; height: 1.05rem; vertical-align: -.22em; }
+
+  /* A claim, made once, with the mark that means it. Used on the public pages where a stranger has to decide
+     whether to trust the thing in front of them — so it is a sentence rather than a bullet, and it is the only
+     icon-led block on the page. */
+  .promise {
+    display: flex; gap: .7rem; align-items: flex-start;
+    max-width: 34rem; margin: 1.25rem 0 0;
+    padding: .85rem 1rem; border-radius: var(--radius);
+    background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line);
+  }
+  .promise .icon { width: 1.15rem; height: 1.15rem; margin-top: .1rem; }
+  .promise strong { display: block; font-weight: 620; }
+  .promise p { margin: .15rem 0 0; }
+  .promise.quiet { background: var(--canvas); color: var(--soft); border-color: var(--line); }
+  .promise.quiet strong { color: var(--ink); }
+
+  /* Three or four things that are true, ticked. Shorter than prose and faster to read than bullets, which is the
+     whole reason it exists — a page asking somebody to hand over a practice's name and an email has one chance to
+     answer "what is this" before they close the tab. */
+  ul.ticks { list-style: none; padding: 0; margin: 1.15rem 0 0; display: grid; gap: .5rem; max-width: 34rem; }
+  ul.ticks li { display: flex; gap: .6rem; align-items: flex-start; font-size: .9375rem; }
+  ul.ticks .icon { width: 1rem; height: 1rem; margin-top: .22rem; color: var(--brand); }
+  ul.ticks span { min-width: 0; }
+  ul.ticks .note { display: block; }
+
+  /* A heading with a mark beside it, for the state of something — a subscription, a key, a lock. The mark carries
+     the tone, so the words do not have to. */
+  .state { display: flex; gap: .75rem; align-items: flex-start; }
+  .state > div { min-width: 0; }
+  .state .icon { width: 1.35rem; height: 1.35rem; margin-top: .1rem; }
+  .state h1, .state h2 { margin: 0 0 .15rem; }
+  .state .sub { color: var(--soft); font-size: var(--fs-md); margin: .15rem 0 0; }
+  /* The badge sits at the far end of the row. The .do rule is styled under .page-head and nowhere else, so a .do
+     in a state block silently got nothing — which is what happened the first time, and it looks like a badge that
+     forgot where it was. (Also: never write a backtick in this file. The sheet is a template literal, and one
+     backtick in a comment ends the string and breaks the module — a mistake made three times in this project.) */
+  .state .do { margin-left: auto; display: flex; align-items: center; gap: .5rem; flex: none; }
+  .state .icon.ok { color: var(--ok-ink); }
+  .state .icon.wait { color: var(--warn-ink); }
+  .state .icon.bad { color: var(--bad-ink); }
+  .state .icon.off { color: var(--faint); }
+
+  /* What a page is for, when there is one obvious next thing. */
+  .onward { display: flex; align-items: center; gap: .5rem; margin: 1.5rem 0 0; }
+  .onward .icon { color: var(--faint); }
+  .onward a { font-weight: 550; }
+
+  /* The public pages centre their content and give it room, because the person reading them has not decided to
+     trust anything yet. */
+  .gateway { max-width: 34rem; margin: 0 auto; }
+  .gateway .hero h1 { font-size: 1.75rem; }
+  .gateway .card { margin-top: 1.5rem; }
+  .gateway .aside { margin-top: 1.25rem; font-size: .9375rem; color: var(--soft); }
+  .gateway .aside a { font-weight: 550; }
 `;
 
 /**

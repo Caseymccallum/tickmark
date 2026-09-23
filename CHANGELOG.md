@@ -55,6 +55,40 @@ product has been stale state. An index that lives for one function call cannot g
 `npm run probe:repeats` is kept as a regression guard and now reports *"every page asks each question exactly once"*.
 It catches something no test can: every page renders correctly with the index built three times, just slower.
 
+**The SaaS front door got a premium pass, and an icon set to do it with.**
+
+The portal pages — sign up, sign in, the dashboard, the billing wall — were written before the design system grew up.
+They used bare `<h1>`, a `<table>` and `status.replace('_', ' ')` while the rest of the product had tiles, badges,
+states and facts lists, so the front door looked like a plainer product than the room behind it. That matters most
+there: **it is the only page where somebody decides whether to trust the software at all.**
+
+**Ten icons, drawn inline**, 16×16, `currentColor`, `stroke-width` 1.6. In `src/views.js`, because the mark already
+lives there and an inline path cannot 404. Their names are meanings rather than pictures — `shield`, `clock`, `arrow`
+— and every one of them sits beside the word it means, which is why they are all `aria-hidden`.
+
+**The drawing attributes sit on the `<svg>` rather than on each shape**, because `stroke`, `stroke-width`, `fill` and
+the caps are inherited properties. The first version appended them to `<path>` elements only, which would have made
+the `card` icon's `<rect>` and the `clock` icon's `<circle>` invisible — a bug that shows up as a missing icon
+rather than as an error, and only on the icons nobody happened to look at.
+
+**`STATUS_LOOK`** is now the one place a subscription state becomes words and a tone, so `pending_payment` cannot be
+a warning on the dashboard and a neutral fact on the wall. That is the same class of bug this project has fixed
+three times — two descriptions of one thing drifting apart — and it is now prevented by construction rather than by
+care.
+
+Also fixed while looking: the mark and the favicon were **two hand-written copies** of one drawing, with a comment
+claiming they were identical and nothing making them so. They are now built from one constant. Deleting one of them
+by accident took down every page and every test with `FAVICON is not defined`, which is how the duplication was
+found.
+
+**And a checker, because one mistake has now cost three sessions.** `npm run check:style` fails if a **backtick**
+appears inside the CSS template literal — which ends the string and breaks the module, with an error pointing at a
+line of CSS rather than the comment that caused it — and walks the braces in order rather than counting them, so a
+rule that never closes is reported rather than silently swallowing everything after it.
+
+`npm run preview:gateway` renders all thirteen states to `tmp-gateway/` — including the two a locked-out practice
+sees, which otherwise need a webhook to have fired. 357 tests pass. No schema change.
+
 ## Unreleased, expected in 0.1.0 — the audit, and the bug it kept finding
 
 **One word with two meanings, for the third time, and this one was a number on the board.**
