@@ -55,7 +55,7 @@ import {
   inGroups,
   otpauthUri,
 } from './totp.js';
-import { RequestError, field, formFields, readBody } from './http.js';
+import { RequestError, acceptableBody, field, formFields, readBody, withEncoding } from './http.js';
 import { SECURITY_HEADERS, TONES, badge, empty, html, page, raw, redirect, section, sendCsv, sendPage, tile } from './views.js';
 
 /**
@@ -382,12 +382,9 @@ export const ROUTES = [
 ];
 
 function sendJson(response, status, value) {
-  const body = JSON.stringify(value);
-  response.writeHead(status, {
-    ...SECURITY_HEADERS,
-    'content-type': 'application/json',
-    'content-length': Buffer.byteLength(body),
-  });
+  const type = 'application/json';
+  const { body, encoding } = acceptableBody(response, Buffer.from(JSON.stringify(value), 'utf8'), type);
+  response.writeHead(status, withEncoding({ ...SECURITY_HEADERS, 'content-type': type, 'content-length': body.length }, encoding));
   response.end(body);
 }
 

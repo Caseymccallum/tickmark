@@ -1671,12 +1671,16 @@ export function requestsFor(db, practiceId, { scope = 'open' } = {}) {
     scope === 'all' ? '' : scope === 'closed' ? 'AND r.closed_at IS NOT NULL' : 'AND r.closed_at IS NULL';
   // The counts for every request in the practice, in one query, before the list itself. Both used to be a query per
   // row — and, worse, a second implementation of the rule that could disagree with this one.
+  //
+  // A correlated `(SELECT MAX(e.at) FROM event …)` used to ride along here to make `last_activity_at`. Nothing read
+  // it — a grep for the name found the query and nothing else — so every board render was doing one index lookup per
+  // request for a value no page displayed. Removed rather than kept "in case": a field nobody reads is a cost paid
+  // on every render for a hypothetical.
   const progress = progressForPractice(db, practiceId);
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
-              c.name AS client_name, c.email AS client_email,
-              (SELECT MAX(e.at) FROM event e WHERE e.request_id = r.id) AS last_activity_at
+              c.name AS client_name, c.email AS client_email
          FROM request r JOIN client c ON c.id = r.client_id
         WHERE r.practice_id = ?
           ${filter}

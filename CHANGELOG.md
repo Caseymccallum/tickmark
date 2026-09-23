@@ -7,6 +7,28 @@ Versions follow the ordinary convention: the first number changes when the schem
 when features arrive, the third for fixes. **Downgrading is not supported** — migrations only go forwards — so
 the entry that matters most is the one that says the schema changed.
 
+**Three more wastes, found by asking where the milliseconds were.** The board was 38 ms and the breakdown tool put
+the queries at 9.5 ms and the row markup at 0.06 ms — so ~28 ms was unaccounted for:
+
+- `dateIn` built a new `Intl.DateTimeFormat` on every call: **120 µs against 1.2 to reuse one**, a hundred times as
+  much. The documents page was spending most of its hundred milliseconds constructing formatters and discarding
+  them. **50 ms → 7 ms.**
+- `requestsFor` carried a correlated subquery producing `last_activity_at`, which nothing read. One index lookup per
+  request, per render, for a value that went nowhere.
+- **Responses are now gzipped** when the client asks, in-process via `zlib` — no dependency. 88% of a page is the
+  inlined stylesheet, deliberately, so a page is 37 KB; it is now **12 KB** for a 122 KB board. Level 1 rather than the
+  default 6, chosen by measurement: on the biggest page level 1 sends 1.8 KB more and costs 0.56 ms less.
+
+The trade is stated rather than claimed as a pure win: the round trip a client observes went from 26 ms to about
+31 ms at 500 clients, most of which is the *client* undoing the gzip. A small latency cost for a tenfold reduction in
+bytes — a wash on a fast LAN, decisive over the internet or a VPN. Ciphertext is never compressed, `no-transform` is
+honoured, and bodies under a kilobyte are left alone.
+
+**Where the architecture actually bounds this, written down in `docs/audit.md` §5.** The database is not the limit;
+the queries are not; **one process on one core is**, because `node:sqlite` is synchronous and `server.listen()` is
+called once. Throughput is roughly 30-150 requests a second per process, which is a hundred practices' worth — and
+the fix at that point is a `cluster` branch in `server.js`, not a different architecture.
+
 ## Unreleased, expected in 0.1.0 — the audit, and the bug it kept finding
 
 **One word with two meanings, for the third time, and this one was a number on the board.**

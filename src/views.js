@@ -12,6 +12,7 @@
  * The stylesheet lives in `style.js` — what a page says and how it looks are separate files.
  */
 import { STYLE } from './style.js';
+import { acceptableBody, withEncoding } from './http.js';
 
 class Safe {
   constructor(value) {
@@ -198,12 +199,16 @@ export const SECURITY_HEADERS = {
 
 /** Send a rendered page. */
 export function sendPage(response, status, rendered, cookies = []) {
-  const body = rendered.value;
-  const headers = {
-    ...SECURITY_HEADERS,
-    'content-type': 'text/html; charset=utf-8',
-    'content-length': Buffer.byteLength(body),
-  };
+  const type = 'text/html; charset=utf-8';
+  const { body, encoding } = acceptableBody(response, Buffer.from(rendered.value, 'utf8'), type);
+  const headers = withEncoding(
+    {
+      ...SECURITY_HEADERS,
+      'content-type': type,
+      'content-length': body.length,
+    },
+    encoding,
+  );
   if (cookies.length > 0) headers['set-cookie'] = cookies;
   response.writeHead(status, headers);
   response.end(body);
@@ -227,14 +232,20 @@ function csvCell(value) {
  * CRLF line endings for the same reason: it is what RFC 4180 specifies and what a spreadsheet expects.
  */
 export function sendCsv(response, filename, rows, cookies = []) {
-  const body = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
-  response.writeHead(200, {
-    ...SECURITY_HEADERS,
-    'content-type': 'text/csv; charset=utf-8',
-    // `attachment` rather than inline: this is a file to keep, not a page to read.
-    'content-disposition': `attachment; filename="${filename}"`,
-    'content-length': Buffer.byteLength(body),
-    ...(cookies.length > 0 ? { 'set-cookie': cookies } : {}),
-  });
+  const text = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
+  const type = 'text/csv; charset=utf-8';
+  const { body, encoding } = acceptableBody(response, Buffer.from(text, 'utf8'), type);
+  const headers = withEncoding(
+    {
+      ...SECURITY_HEADERS,
+      'content-type': type,
+      // `attachment` rather than inline: this is a file to keep, not a page to read.
+      'content-disposition': `attachment; filename="${filename}"`,
+      'content-length': body.length,
+    },
+    encoding,
+  );
+  if (cookies.length > 0) headers['set-cookie'] = cookies;
+  response.writeHead(200, headers);
   response.end(body);
 }
