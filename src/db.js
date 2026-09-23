@@ -60,6 +60,10 @@ const INVITE_TABLE = `CREATE TABLE IF NOT EXISTS invite (
   -- barely matters in practice: an invitation lives fourteen days, so the window in which a null means
   -- anything closes almost immediately.
   role        TEXT,
+  -- Set when the practice takes the invitation back before anyone used it — the one escape hatch a
+  -- leaked link needed. Nullable, and null means "still live": a status, not a deletion, like every
+  -- other end-of-life column in this file.
+  revoked_at  TEXT,
   CHECK ((key_id IS NULL) = (sealed_key IS NULL))
 );
 `;
@@ -520,6 +524,9 @@ function migrate(db) {
     ['practitioner', 'totp_confirmed_at', 'TEXT'],
     ['practitioner', 'totp_last_step', 'INTEGER'],
     ['login_challenge', 'attempts', 'INTEGER'],
+    // Before `sealedInvites` below runs: the rebuild takes its columns from INVITE_TABLE, which
+    // already carries this one, and a database mid-way between the two shapes needs it either way.
+    ['invite', 'revoked_at', 'TEXT'],
   ]) {
     changes.columns += addColumnIfMissing(db, table, column, definition);
   }
@@ -814,6 +821,17 @@ export function openDatabase(file = ':memory:') {
   db.migratedWrappings = changes.wrappings;
   db.migratedInvites = changes.invites;
   db.migratedUploads = changes.uploads;
+
+  // Dead rows swept at open. Expired sessions and half-finished sign-ins are already removed on sight
+  // as they are touched, but "on sight" never comes for the ones nobody touches — the laptop that
+  // signed in once and never came back — so a long-lived install accumulated them forever. Two
+  // tables, both purely live state. `access_token` is deliberately *not* swept: an expired link is
+  // history ("created ..., expires ..."), and this project's rule is that a record does not lose a
+  // row. `invite` stays for the same reason — the members page reports expired ones.
+  const cut = new Date().toISOString();
+  db.prepare('DELETE FROM session WHERE expires_at <= ?').run(cut);
+  db.prepare('DELETE FROM login_challenge WHERE expires_at <= ?').run(cut);
+
   return db;
 }
 

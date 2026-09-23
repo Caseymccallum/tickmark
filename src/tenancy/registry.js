@@ -20,6 +20,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 import { DatabaseSync } from 'node:sqlite';
 
@@ -115,8 +116,29 @@ export function openRegistry(file) {
   if (!columns.includes('stripe_subscription_id')) {
     db.exec('ALTER TABLE tenant ADD COLUMN stripe_subscription_id TEXT');
   }
+  // The same startup sweep `src/db.js` does: platform sessions are live state, and a row nobody ever
+  // touched again is a row that would otherwise outlive its own expiry forever.
+  db.prepare('DELETE FROM saas_session WHERE expires_at <= ?').run(new Date().toISOString());
   return db;
 }
+
+/**
+ * What a tenant's practitioner gets when the owner's account row cannot be found — which should never
+ * happen (`owner_id` is a foreign key) and must not be answerable if it somehow does.
+ *
+ * The old placeholder here was `'scrypt$N=2,r=1,p=1$AAAA$AAAA'` — a *valid* password record under
+ * trivially cheap parameters, so some short password verified against it and the tenant's sign-in
+ * page had a guessable backdoor. This is the same record shape under the real cost parameters with a
+ * random salt and a random 32-byte target: no password is known to satisfy it, and finding one is a
+ * 2^256 search. (An honest footnote: every hash record has *some* preimage — the property being
+ * bought is that nobody knows one.)
+ */
+export const UNVERIFIABLE_PASSWORD_HASH = [
+  'scrypt',
+  'N=65536,r=8,p=1',
+  randomBytes(16).toString('base64url'),
+  randomBytes(32).toString('base64url'),
+].join('$');
 
 // --- accounts and sessions -------------------------------------------------------------------
 
@@ -134,6 +156,34 @@ export function accountByEmail(registry, email) {
     registry
       .prepare('SELECT id, email, password_hash FROM account WHERE email = ?')
       .get(String(email).toLowerCase()) ?? null
+  );
+}
+
+/**
+ * Keep the platform account in step with the practitioner row that shares its password.
+ *
+ * `createTenant` copies the account's hash into the tenant file so that one password works at both
+ * doors (see the comment there). A password change behind either door that updated only one store
+ * would leave the other answering with the *old* password — which for the "I think my password is
+ * compromised" case is the worst possible outcome. So the core's change calls back here through the
+ * injected `onCredentialChanged`, and the core still never learns this file exists.
+ */
+export function updateAccountPassword(registry, email, passwordHash) {
+  return (
+    registry
+      .prepare('UPDATE account SET password_hash = ? WHERE email = ?')
+      .run(passwordHash, String(email).toLowerCase()).changes === 1
+  );
+}
+
+/** The same for the address. False when the platform already has an account at the new address. */
+export function updateAccountEmail(registry, oldEmail, newEmail) {
+  const wanted = String(newEmail).toLowerCase();
+  if (registry.prepare('SELECT id FROM account WHERE email = ?').get(wanted)) return false;
+  return (
+    registry
+      .prepare('UPDATE account SET email = ? WHERE email = ?')
+      .run(wanted, String(oldEmail).toLowerCase()).changes === 1
   );
 }
 
@@ -345,7 +395,7 @@ export function createTenant(registry, pool, { ownerAccountId, name, slug = null
   createPractitioner(db, {
     practiceId,
     email: email ?? `${id}@tenants.invalid`,
-    passwordHash: account?.password_hash ?? 'scrypt$N=2,r=1,p=1$AAAA$AAAA',
+    passwordHash: account?.password_hash ?? UNVERIFIABLE_PASSWORD_HASH,
   });
 
   registry

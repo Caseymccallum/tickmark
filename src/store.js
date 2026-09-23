@@ -87,7 +87,7 @@ export function inviteByToken(db, token, at = new Date()) {
   if (typeof token !== 'string' || token.length === 0) return { state: 'unknown' };
   const row = db
     .prepare(
-      `SELECT i.id, i.key_id, i.sealed_key, i.expires_at, i.used_at, i.role,
+      `SELECT i.id, i.key_id, i.sealed_key, i.expires_at, i.used_at, i.revoked_at, i.role,
               p.name AS practice_name, p.id AS practice_id,
               k.public_key
          FROM invite i
@@ -102,8 +102,29 @@ export function inviteByToken(db, token, at = new Date()) {
 
   if (!row) return { state: 'unknown' };
   if (row.used_at) return { state: 'used' };
+  // A taken-back invitation says so before it says "expired": the practice made a decision, and the
+  // sentence differs — "ask for another one" against "somebody cancelled this one".
+  if (row.revoked_at) return { state: 'revoked' };
   if (row.expires_at <= at.toISOString()) return { state: 'expired' };
   return { state: 'open', invite: row };
+}
+
+/**
+ * Take an invitation back before it was used.
+ *
+ * The one thing an invitation needed and did not have: a link that hands over a copy of the practice's
+ * key cannot be left to die of old age when it leaks. Refused for anything already used, already
+ * revoked, or not of this practice — and like everything here, it is a status rather than a deletion:
+ * the row stays and says who took it back and when.
+ */
+export function revokeInvite(db, practiceId, inviteId, at = now()) {
+  return (
+    db
+      .prepare(
+        'UPDATE invite SET revoked_at = ? WHERE id = ? AND practice_id = ? AND used_at IS NULL AND revoked_at IS NULL',
+      )
+      .run(at, inviteId, practiceId).changes === 1
+  );
 }
 
 /**
@@ -133,6 +154,16 @@ export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey,
     if (existing && !(existing.removed_at !== null && existing.practice_id === invite.practice_id)) {
       return { state: 'email-taken' };
     }
+
+    // **The invitation is spent before anything is created, and conditionally** — `AND used_at IS NULL`
+    // is the whole of the single-use rule. Two callers racing on one link (which needs two processes on
+    // one file, since everything here is synchronous) must not both come away with a member: the loser
+    // sees zero changes and returns before a practitioner or a key wrapping exists. Claiming *last*
+    // would leave the loser's rows committed alongside the winner's claim.
+    const claim = db
+      .prepare('UPDATE invite SET used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL')
+      .run(at, invite.id);
+    if (claim.changes !== 1) return { state: 'just-claimed' };
 
     const practitionerId = existing
       ? existing.id
@@ -164,7 +195,7 @@ export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey,
     if (invite.key_id !== null && wrappedPrivateKey) {
       addKeyWrapping(db, { keyId: invite.key_id, practitionerId, wrappedPrivateKey, at });
     }
-    db.prepare('UPDATE invite SET used_at = ?, used_by = ? WHERE id = ?').run(at, practitionerId, invite.id);
+    db.prepare('UPDATE invite SET used_by = ? WHERE id = ?').run(practitionerId, invite.id);
 
     return { state: existing ? 'rejoined' : 'joined', practitionerId, practiceId: invite.practice_id };
   });
@@ -174,7 +205,7 @@ export function claimInvite(db, { token, email, passwordHash, wrappedPrivateKey,
 export function invitesOf(db, practiceId) {
   return db
     .prepare(
-      `SELECT i.id, i.expires_at, i.used_at, i.created_at,
+      `SELECT i.id, i.expires_at, i.used_at, i.revoked_at, i.created_at,
               creator.email AS created_by_email,
               taker.email   AS used_by_email
          FROM invite i
@@ -291,9 +322,15 @@ export function clientFor(db, practiceId, clientId) {
  * client left beside a file. It cannot look inside a document, and the page says so rather than letting somebody
  * conclude the search is broken. That limit is this product's central claim seen from an unusual angle: a search
  * that could read the files would be a search run by something that can read the files.
+ *
+ * `limit`/`offset` page the list for the screen — this is the one table that grows without bound, so
+ * "fetch everything" had no ceiling. The CSV export passes neither and gets the whole list, which is what a
+ * spreadsheet wants anyway. The order carries `u.id` as a tiebreak so that paging is stable even when two
+ * uploads share a second.
  */
-export function filesForPractice(db, practiceId, { query = '' } = {}) {
+export function filesForPractice(db, practiceId, { query = '', limit = null, offset = 0 } = {}) {
   const like = `%${query.toLowerCase()}%`;
+  const paged = limit !== null;
   return db
     .prepare(
       `SELECT u.id, u.filename, u.size_bytes, u.uploaded_at, u.client_note,
@@ -312,9 +349,18 @@ export function filesForPractice(db, practiceId, { query = '' } = {}) {
             OR LOWER(r.title) LIKE ?
             OR LOWER(COALESCE(u.client_note, '')) LIKE ?
           )
-        ORDER BY u.uploaded_at DESC`,
+        ORDER BY u.uploaded_at DESC, u.id DESC
+        ${paged ? 'LIMIT ? OFFSET ?' : ''}`,
     )
-    .all(practiceId, query, like, like, like, like)
+    .all(
+      practiceId,
+      query,
+      like,
+      like,
+      like,
+      like,
+      ...(paged ? [limit, offset] : []),
+    )
     .map((row) => ({
       id: row.id,
       filename: row.filename,
@@ -354,21 +400,39 @@ export function clientSummaries(db, practiceId, progress = null) {
   return db
     .prepare(
       `SELECT c.id, c.name, c.email, c.created_at,
-              (SELECT COUNT(*) FROM request r WHERE r.client_id = c.id AND r.closed_at IS NULL) AS open_requests,
-              (SELECT COUNT(*) FROM request r WHERE r.client_id = c.id AND r.closed_at IS NOT NULL) AS closed_requests,
-              (SELECT MAX(r.created_at) FROM request r WHERE r.client_id = c.id) AS last_request_at,
+              COALESCE(r.open_requests, 0) AS open_requests,
+              COALESCE(r.closed_requests, 0) AS closed_requests,
+              r.last_request_at,
               -- When this client was last on the receiving end of anything the practice did: an email sent from
               -- here, or a contact recorded by hand. Both count, because the question this answers is "have we
               -- been in touch", and a phone call answers it just as well as a reminder does — which is why the
               -- column is not called last_reminded_at any more. See logContact.
-              (SELECT MAX(e.at) FROM event e
-                 JOIN request r2 ON r2.id = e.request_id
-                WHERE r2.client_id = c.id AND e.kind IN ('reminder.sent', 'request.contacted')) AS last_contact_at
+              l.last_contact_at
          FROM client c
+         -- Two grouped joins rather than four correlated subqueries per client: at five hundred clients
+         -- those were two thousand subquery executions to draw one directory. Aggregated once each, over
+         -- the same tables, the numbers are identical and the work is not. (The event counts live in their
+         -- own join on purpose: joining events onto requests first would duplicate each request once per
+         -- event and the sums would count it that many times.)
+         LEFT JOIN (
+           SELECT req.client_id,
+                  SUM(CASE WHEN req.closed_at IS NULL THEN 1 ELSE 0 END) AS open_requests,
+                  SUM(CASE WHEN req.closed_at IS NOT NULL THEN 1 ELSE 0 END) AS closed_requests,
+                  MAX(req.created_at) AS last_request_at
+             FROM request req
+            WHERE req.practice_id = ?
+            GROUP BY req.client_id
+         ) r ON r.client_id = c.id
+         LEFT JOIN (
+           SELECT req2.client_id, MAX(e.at) AS last_contact_at
+             FROM event e JOIN request req2 ON req2.id = e.request_id
+            WHERE req2.practice_id = ? AND e.kind IN ('reminder.sent', 'request.contacted')
+            GROUP BY req2.client_id
+         ) l ON l.client_id = c.id
         WHERE c.practice_id = ?
         ORDER BY c.name COLLATE NOCASE`,
     )
-    .all(practiceId)
+    .all(practiceId, practiceId, practiceId)
     .map((row) => ({
       ...row,
       // Computed from the same counts the board uses, so a client's page and the board cannot disagree about how
@@ -1327,15 +1391,19 @@ export function lastNoticeAt(db, requestId) {
 
 /** The person who asked this client for these documents — the one the notification goes to. */
 export function requestOwner(db, requestId) {
-  return (
-    db
-      .prepare(
-        `SELECT p.id, p.email
-           FROM request r JOIN practitioner p ON p.id = r.practitioner_id
-          WHERE r.id = ?`,
-      )
-      .get(requestId) ?? null
-  );
+  const row = db.prepare('SELECT practitioner_id, practice_id FROM request WHERE id = ?').get(requestId);
+  if (!row) return null;
+  // **Still a member, or not the one told.** The creator is the natural recipient — "who asked this
+  // client?" — but a removed member's sessions and key copies are destroyed precisely so that what
+  // happens next is no longer their business, and a `notice.sent` to their address would keep telling
+  // them which client sent what forever. So a creator who has gone is passed over for somebody who can
+  // still act for the practice: an owner first, then any member. The fallback keeps the notification
+  // from silently vanishing, which would break the feature in the name of privacy.
+  const creator = db
+    .prepare('SELECT id, email FROM practitioner WHERE id = ? AND removed_at IS NULL')
+    .get(row.practitioner_id);
+  if (creator) return creator;
+  return ownersOf(db, row.practice_id)[0] ?? membersOf(db, row.practice_id)[0] ?? null;
 }
 
 /** The firm behind an id. Null if there is no such practice. */
@@ -1394,6 +1462,29 @@ export function setCadence(db, practiceId, days) {
   if (!row) return false;
   db.prepare('UPDATE practice SET cadence_days = ? WHERE id = ?').run(days, practiceId);
   return true;
+}
+
+/**
+ * Replace a member's password record.
+ *
+ * The hash is built by the caller (`src/crypto.js` is the only place that knows how), and this only
+ * moves it — one function so that "who can change a password" is answered in the routing rather than
+ * in three copies of an UPDATE. A password change also ends the other sessions; that is the caller's
+ * job because it needs the token of the session asking, and this file does not parse cookies.
+ */
+export function setPractitionerPassword(db, practitionerId, passwordHash) {
+  db.prepare('UPDATE practitioner SET password_hash = ? WHERE id = ?').run(passwordHash, practitionerId);
+}
+
+/**
+ * Change the address a member signs in with.
+ *
+ * The caller has checked that the address is free and shaped like one; `practitioner.email` is
+ * `UNIQUE`, so the database is the second lock — a race between the check and this write fails
+ * loudly rather than making two accounts one address.
+ */
+export function setPractitionerEmail(db, practitionerId, email) {
+  db.prepare('UPDATE practitioner SET email = ? WHERE id = ?').run(email, practitionerId);
 }
 
 /**

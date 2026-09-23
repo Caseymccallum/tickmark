@@ -18,6 +18,7 @@
 import { clearSessionCookie, createSession, secureCookies, sessionCookie, twoFactorState } from '../auth.js';
 import { verifyPassword } from '../crypto.js';
 import { field, formFields, readBody } from '../http.js';
+import { createAttemptLimiter } from '../ratelimit.js';
 import { redirect, sendPage } from '../views.js';
 
 import { applyStripeEvent } from './billing.js';
@@ -66,7 +67,7 @@ export const GATEWAY_PATHS = new Set([
   '/webhooks/stripe',
 ]);
 
-export function createGateway({ registry, pool, stripe = null, secure = secureCookies() }) {
+export function createGateway({ registry, pool, stripe = null, secure = secureCookies(), signUpLimiter = createAttemptLimiter() }) {
   /** The address a practice's workspace answers at: its host, or its slug path. */
   function tenantUrlFor(tenant) {
     const mapped = registry
@@ -251,6 +252,23 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
     const password = typeof fields.password === 'string' ? fields.password : '';
     const values = { practice_name: practiceName ?? '', email: email ?? '' };
     const billingReady = Boolean(stripe?.priceId);
+
+    // The same cost the core's sign-up has — a scrypt hash and rows made for whoever asks — and the same
+    // two buckets as `signUp` in src/app.js: the address, and where the request came from. The platform's
+    // front door is the most exposed surface this installation has, and an unpriced scrypt call is the
+    // cheapest way to spend its CPU. Every attempt counts, successful ones included.
+    const buckets = [`signup:${email ?? ''}`, `signup-ip:${request.socket?.remoteAddress ?? ''}`];
+    const blockedFor = Math.max(0, ...buckets.map((key) => signUpLimiter?.blockedFor(key) ?? 0));
+    if (blockedFor > 0) {
+      const minutes = Math.ceil(blockedFor / 60000);
+      sendPage(response, 429, signupPage({
+        values,
+        billingReady,
+        problem: `Too many sign-up attempts from here. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+      }));
+      return;
+    }
+    for (const key of buckets) signUpLimiter?.failed(key);
 
     const problem = !practiceName
       ? 'A practice name is required.'

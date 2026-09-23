@@ -106,6 +106,39 @@ export function endAllSessions(db, practitionerId) {
   return db.prepare('DELETE FROM session WHERE practitioner_id = ?').run(practitionerId).changes;
 }
 
+/** Every live session a person has, so "where am I signed in?" is a question with an answer. */
+export function sessionsOf(db, practitionerId, at = new Date()) {
+  return db
+    .prepare(
+      'SELECT id, created_at, expires_at FROM session WHERE practitioner_id = ? AND expires_at > ? ORDER BY created_at DESC, id',
+    )
+    .all(practitionerId, at.toISOString());
+}
+
+/** The row id of the session behind a token — which one is "this device", for the sessions page. */
+export function sessionIdFor(db, token) {
+  if (typeof token !== 'string' || token.length === 0) return null;
+  return db.prepare('SELECT id FROM session WHERE token_hash = ?').get(hashToken(token))?.id ?? null;
+}
+
+/** End one session by row, scoped to the person asking: a session is not somebody else's to end. */
+export function endSessionById(db, practitionerId, sessionId) {
+  return (
+    db.prepare('DELETE FROM session WHERE id = ? AND practitioner_id = ?').run(sessionId, practitionerId).changes === 1
+  );
+}
+
+/**
+ * Sign out everywhere except the session asking — which is what a password change must do. The whole
+ * point of changing a password is that whatever else was holding the old one stops working; a change
+ * that left the thief's session alive would be a change that only helped the thief.
+ */
+export function endAllSessionsExcept(db, practitionerId, keepToken) {
+  return db
+    .prepare('DELETE FROM session WHERE practitioner_id = ? AND token_hash <> ?')
+    .run(practitionerId, hashToken(keepToken ?? '')).changes;
+}
+
 // ---------------------------------------------------------------------------------
 // Two-factor: the second half of a sign-in
 // ---------------------------------------------------------------------------------
@@ -271,7 +304,17 @@ export function parseCookies(header) {
     if (index < 1) continue;
     const name = part.slice(0, index).trim();
     const value = part.slice(index + 1).trim();
-    if (name.length > 0) jar[name] = decodeURIComponent(value);
+    if (name.length === 0) continue;
+    // A malformed percent-escape (`Cookie: x=%ZZ`) must not throw: `decodeURIComponent` raises a
+    // URIError on one, and this runs for every request before any routing — so a single crafted
+    // header used to turn every page into a 500. An undecodable value is kept raw instead; no token
+    // this product issues contains a percent-escape that does not decode, so a raw value simply
+    // matches nothing and the request reads as signed out.
+    try {
+      jar[name] = decodeURIComponent(value);
+    } catch {
+      jar[name] = value;
+    }
   }
   return jar;
 }

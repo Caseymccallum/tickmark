@@ -135,9 +135,6 @@ export function icon(name, size = 16, className = '') {
 /** A tick in a box, for a list of things that are true. */
 export const tick = (text) => html`<li>${icon('tick')}<span>${text}</span></li>`;
 
-
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101828'/%3E%3Cpath d='M9 16.5l4.6 4.5L23 10.8' fill='none' stroke='%2332d583' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
-
 /**
  * The page shell. Three kinds of visitor get three different headers, and the header is the one place that decision
  * is made:
@@ -320,10 +317,21 @@ export function sendPage(response, status, rendered, cookies = []) {
   response.end(body);
 }
 
-/** One cell of a CSV row, quoted only when it has to be. */
+/**
+ * One cell of a CSV row, quoted only when it has to be — and neutralised when it begins like a formula.
+ *
+ * **The apostrophe is a guard, not punctuation.** A cell whose text starts with `=`, `+`, `-`, `@` (or a
+ * tab/CR) is read by Excel and friends as a formula, and several columns in these exports are chosen by
+ * somebody *outside* the practice: a client's name, the filename on a client's upload, the note they left
+ * beside it. A file called `=cmd|'/C calc'!A0` would otherwise execute when a bookkeeper opens the CSV —
+ * the classic CSV-injection. Prefixing one apostrophe forces text interpretation in every spreadsheet,
+ * and is invisible in the cell itself. (RFC 4180 says nothing about this; OWASP's CSV-injection
+ * guidance is where the rule comes from.)
+ */
 function csvCell(value) {
   const text = value === null || value === undefined ? '' : String(value);
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  const guarded = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
 }
 
 /**

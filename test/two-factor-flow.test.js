@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 
 import { codeAt, counterAt, generateSecret } from '../src/totp.js';
 import { spendRecoveryCode, twoFactorState, unusedRecoveryCodes } from '../src/auth.js';
+import { createAttemptLimiter } from '../src/ratelimit.js';
 import { agent, PASSWORD, practiceWithRequest, withServer } from './helpers.js';
 
 /** The signed-in person's row id. */
@@ -216,4 +217,28 @@ test('a secret held but never confirmed protects nothing, and says so', async (t
     const page = await (await client.get('/account/two-factor')).text();
     assert.match(page, /Not armed yet/, 'and the page says exactly that');
   });
+});
+
+test('a stolen session cannot grind the two-factor actions', async (t) => {
+  await withServer(
+    async ({ agent, db }) => {
+      const { client } = await practiceWithRequest({ agent, db });
+      await arm(client, db);
+
+      // Turning two-factor off needs a code — which is right, since it is the action a stolen session
+      // would take to make itself permanent. What the sign-in path always had and this one lacked was
+      // a *budget* for wrong codes: six digits with unlimited attempts is a million guesses against a
+      // door that stays open for the life of the session.
+      const first = await client.post('/account/two-factor/off', { code: '000000' });
+      assert.equal(first.status, 400, 'a wrong code is refused');
+      const second = await client.post('/account/two-factor/off', { code: '000000' });
+      assert.equal(second.status, 400, 'and so is the next');
+      const third = await client.post('/account/two-factor/off', { code: '000000' });
+      assert.equal(third.status, 429, 'and then the endpoint stops accepting guesses at all');
+      assert.match(await third.text(), /Too many wrong codes/, 'and says why');
+
+      assert.equal(twoFactorState(db, onlyPerson(db)).state, 'on', 'two-factor is still on through all of it');
+    },
+    { signInLimiter: createAttemptLimiter({ limit: 2, windowMs: 60_000 }) },
+  );
 });

@@ -17,7 +17,7 @@ import { mailerFromEnvironment } from '../mailer.js';
 
 import { createGateway } from './gateway.js';
 import { createPool } from './pool.js';
-import { accountForRequest, countTenants, openRegistry, recordLink, tenantForPractice } from './registry.js';
+import { accountForRequest, countTenants, openRegistry, recordLink, tenantForPractice, updateAccountEmail, updateAccountPassword } from './registry.js';
 import { createResolver } from './resolve.js';
 import { stripeFromEnvironment } from './stripe.js';
 import { billingWallPage } from './views.js';
@@ -68,6 +68,19 @@ export function createSaasServer({
       // the two, and a link issued by a file the registry does not know is simply not indexed.
       const tenant = tenantForPractice(registry, practiceId);
       if (tenant) recordLink(registry, { tenantId: tenant.id, token });
+    },
+    onCredentialChanged: (change) => {
+      // One password works at both doors by design (see `createTenant` in registry.js), so a change
+      // behind either door updates both — otherwise the platform account would keep answering with
+      // the old password after a member changed it because they thought it was compromised. An
+      // invited member with no platform account updates nothing here, which is correct: there is
+      // nothing to keep in step.
+      if (change.passwordHash) updateAccountPassword(registry, change.email, change.passwordHash);
+      if (change.newEmail && !updateAccountEmail(registry, change.oldEmail, change.newEmail)) {
+        console.error(
+          `tickmark: the workspace address changed to ${change.newEmail} but the platform account could not follow (that address is taken there)`,
+        );
+      }
     },
     mailer,
   });

@@ -7,6 +7,35 @@ Versions follow the ordinary convention: the first number changes when the schem
 when features arrive, the third for fixes. **Downgrading is not supported** — migrations only go forwards — so
 the entry that matters most is the one that says the schema changed.
 
+## Unreleased, expected in 0.1.0 — the hardening pass
+
+**A fresh full-codebase audit, and every finding in it addressed.** `docs/security.md` has the full list; the
+shape of it is here:
+
+- **Four security fixes with real exploit paths**: CSV exports no longer hand a spreadsheet a formula built from
+  a filename a client chose; links inside emails say where the install actually lives (`TICKMARK_PUBLIC_URL`)
+  instead of whatever `Host` the request claimed; sign-up on both doors is rate limited — it was the one
+  unauthenticated endpoint that costs a scrypt hash per hit; and the two-factor actions a stolen session would
+  aim at (turning it off, minting recovery codes) now have a guess budget like sign-in always did.
+- **Three quiet bugs**: a malformed cookie header took every page down with a `URIError`; a removed member kept
+  receiving the "your client sent something" emails; the tenancy fallback password record was a placeholder
+  that verified against some short password. All fixed, all tested.
+- **The account is now something a person manages**: change your password (costing the current one, and ending
+  every other session — which is the point), change your address, and see where you are signed in with a button
+  per session. **An invitation can be taken back before it is used**, which a link that hands over a copy of the
+  practice's key always needed. **The owners are emailed when a key is added or the membership changes** — the
+  one attack this product's threat model describes is silent in the interface, so silence was not an option.
+  (The first key of a practice stays silent; the announcement is for the rotation-or-hijack moment.)
+- **Three performance fixes**: uploads and downloads stream to and from disk rather than through memory, the
+  client directory aggregates in two grouped joins rather than four subqueries per client, and expired sessions
+  are swept at open. The documents list — the one list that grows forever — pages at a hundred with "Show more";
+  the CSV still gives everything.
+
+**The schema changed**: `invite` gained `revoked_at` (added in place, and present in the rebuild path — see
+`docs/operations.md`).
+
+## Unreleased, expected in 0.1.0 — the premium pass
+
 **Three more wastes, found by asking where the milliseconds were.** The board was 38 ms and the breakdown tool put
 the queries at 9.5 ms and the row markup at 0.06 ms — so ~28 ms was unaccounted for:
 

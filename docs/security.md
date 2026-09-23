@@ -115,6 +115,40 @@ one: the platform login gets them to the dashboard and billing, and the practice
 documents. That is more steps for the most security-conscious customers — and the alternative is a second factor that
 does not stop the attack it exists for.
 
+## The second pass: ten findings from a fresh full-codebase audit
+
+A whole-repo review (every file in `src/`, `src/tenancy/`, `web/`, `tools/` and the tests) found ten things the five
+above did not. All ten are addressed, and each fix has a regression test — `test/hardening.test.js`,
+`test/account.test.js`, `test/two-factor-flow.test.js` or `test/ratelimit.test.js` — that fails against the code as
+it was.
+
+| # | Finding | What was done |
+| --- | --- | --- |
+| 1 | **CSV formula injection.** `csvCell` exported attacker-chosen text — a client's name, a filename a client typed — that began `=`, `+`, `-` or `@`, which a spreadsheet executes when the bookkeeper opens the export | Cells that begin like a formula are prefixed with an apostrophe, the standard mitigation (`src/views.js`) |
+| 2 | **Host-header poisoning of links inside emails.** `originOf` trusted `Host`, and a *client's* action builds the link that goes into the practice's notification email — so a link holder could stamp `Host: evil.example` on an upload and poison the practice's next click | `TICKMARK_PUBLIC_URL` wins over both headers whenever it is set; the header fallback remains because a local trial has no canonical address (`src/app.js`, `.env.example`) |
+| 3 | **No rate limit on sign-up** — the one unauthenticated endpoint that costs a scrypt hash per hit (64 MiB, ~100 ms) and creates rows. On both the core and the platform door | Two buckets per attempt — the address and the caller — and every attempt counts, successful ones included (`signUp`, `handleSignup`) |
+| 4 | **The two-factor management actions had no guess budget.** Turning 2FA off and minting recovery codes would accept unlimited codes for the life of a session — a stolen session played for permanence | The sign-in limiter now bounds them too, in a bucket of their own so a fumbled sign-in code cannot lock the account page (`codeAuthorises`) |
+| 5 | **A malformed cookie took every page down.** `decodeURIComponent('%ZZ')` throws a `URIError`, and cookie parsing runs before every route | An undecodable value is kept raw; it matches no token and the request reads as signed out (`src/auth.js`) |
+| 6 | **The tenancy fallback password record was a guessable placeholder** (`scrypt$N=2,…$AAAA$AAAA` verified against *some* short password) | A random salt and a random 32-byte target under the real cost parameters (`UNVERIFIABLE_PASSWORD_HASH`, `src/tenancy/registry.js`) |
+| 7 | **Removed members kept being emailed about clients.** `requestOwner` answered with the request's creator forever, so removal stopped their sessions but not their inbox | A removed creator is passed over for an owner, then any member (`src/store.js`) |
+| 8 | **A client link had no throttle on writes.** Messages and "I do not have this" were bounded in bytes but not in count | 30 writes a minute per link, refused with a sentence rather than dropped (`clientWriteAllowed`) |
+| 9 | **An invitation could be claimed twice under a race** — the consume was unconditional and came after the rows it protected | The claim is conditional (`AND used_at IS NULL AND revoked_at IS NULL`) and made *before* anything is created (`src/store.js`) |
+| 10 | Assorted: a dead `'check-clear'` guard name that could never match an action, `/assets` responses missing `SECURITY_HEADERS`, a stray expression left beside `FAVICON` | All fixed |
+
+Alongside them, the audit's five missing capabilities are now built: **changing a password and an address** from
+the account pages (each costing the current password — and a password change ending every other session, which is
+the point of changing one), **taking an invitation back before it is used** (`invite.revoked_at`, a status like
+every other end-of-life column here), **an email to the owners when a key is added or the membership changes** —
+the *detection* half of the key-hijack story in `src/totp.js`, which nothing in the interface could ever show — and
+**the sessions page**: where the account is signed in, sign one out or all the others. In hosted mode a credential
+change is mirrored to the platform account through the same injected seam the link recorder uses, so one password
+stays one password (`onCredentialChanged`).
+
+Three performance fixes went in with them: uploads and downloads **stream** to and from disk instead of through
+memory (the per-file ceiling used to be a memory ceiling times every concurrent client), `clientSummaries`
+aggregates in two grouped joins rather than four correlated subqueries per client, and expired sessions and
+half-finished sign-ins are swept at open. The documents list — the one list that grows without bound — now pages.
+
 ## What was checked and found sound
 
 Recorded so the next audit does not have to redo it:
@@ -149,7 +183,7 @@ Recorded so the next audit does not have to redo it:
 | --- | --- | --- |
 | **No CSP** | Needs a per-response nonce threaded through four rendering paths — work, described above | Medium on a public origin, low self-hosted |
 | **Sign-up reveals whether an address has an account** | A returning user needs to be told, and the alternative — emailing a link — needs a mailer the product may not have | Low. A stranger can learn that a given address uses Tickmark. On a self-hosted install there is nobody to enumerate |
-| **No rate limit on sign-up** | Each signup creates a real directory in hosted mode | Low — resource use rather than access, and `pending_payment` tenants cannot sign in |
+| **`/healthz` is unauthenticated** and names the version and one count | It is the one address an operator can reach when *sign-in is the thing that is broken*, and a health check that requires the broken thing is a health check that lies. The count carries no names | Low |
 | **An operator can turn two-factor off** by editing the database | They run the server and can read everything about an account anyway. Said on the page rather than left to be found | By design. What they cannot do is read documents |
 | **No signed releases or reproducible-build attestation** | The Dockerfile copies source and there is nothing to build | Low today; worth having before distributing binaries |
 

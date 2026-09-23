@@ -54,7 +54,7 @@ export function agent(base) {
  * afterwards — including the uploaded blobs, because a test that leaves files behind is a
  * test that fills a disk.
  */
-export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, chaseBudgetMs, signInLimiter } = {}) {
+export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'tickmark-test-'));
   const blobDir = join(directory, 'blobs');
   const db = openDatabase(join(directory, 'tickmark.db'));
@@ -66,6 +66,8 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
     mailer,
     chaseBudgetMs,
     signInLimiter,
+    signUpLimiter,
+    clientLimiter,
   });
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://127.0.0.1:${server.address().port}`;

@@ -19,14 +19,15 @@
  *    information for an attacker and nothing for a user.
  */
 import { createServer } from 'node:http';
-import { createHash } from 'node:crypto';
-import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hashPassword, hashToken, newToken, verifyPassword } from './crypto.js';
 import {
   CHALLENGE_COOKIE,
+  COOKIE_NAME,
   MIN_PASSWORD,
   challengeCookie,
   challengeFor,
@@ -36,7 +37,11 @@ import {
   confirmTwoFactor,
   createSession,
   endChallenge,
+  endAllSessionsExcept,
   endSession,
+  endSessionById,
+  sessionIdFor,
+  sessionsOf,
   parseCookies,
   practitionerFor,
   recordAcceptedStep,
@@ -55,7 +60,7 @@ import {
   inGroups,
   otpauthUri,
 } from './totp.js';
-import { RequestError, acceptableBody, field, formFields, readBody, withEncoding } from './http.js';
+import { RequestError, acceptableBody, field, formFields, readBody, spoolBody, withEncoding } from './http.js';
 import { SECURITY_HEADERS, TONES, badge, empty, html, page, raw, redirect, section, sendCsv, sendPage, tile } from './views.js';
 
 /**
@@ -71,7 +76,7 @@ import { newId, now } from './db.js';
 // The server imports the envelope format so that it can tell an encrypted upload from a
 // plaintext one. It cannot use the rest of that module: the key needed to open an envelope
 // is wrapped under a passphrase this process has never seen.
-import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
+import { ENVELOPE_VERSION, HEADER_BYTES, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
 import { VERSION } from './version.js';
 import { MailError, sendMail } from './mailer.js';
 import { COMMON_ZONES, dateIn, knownZone, monthIn, todayIn } from './clock.js';
@@ -159,7 +164,10 @@ import {
   memberIn,
   removeMember,
   removedMembersOf,
+  revokeInvite,
   setCadence,
+  setPractitionerEmail,
+  setPractitionerPassword,
 } from './store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -239,6 +247,12 @@ const MAX_CADENCE_DAYS = 365;
  */
 const MAX_PRACTICE_NAME = 120;
 const MAX_ITEMS = 50;
+/**
+ * How many documents the page draws at a time. The documents table is the one list here that grows
+ * without bound — every upload is a row forever — so it is the one list that pages. A hundred is a
+ * screenful of scanning; the CSV export gives the whole list for the spreadsheet case.
+ */
+const FILES_PER_PAGE = 100;
 const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
 
 /**
@@ -289,6 +303,16 @@ export const ROUTES = [
   ['POST', '/account/two-factor/confirm', twoFactorConfirm],
   ['POST', '/account/two-factor/codes', twoFactorNewCodes],
   ['POST', '/account/two-factor/off', twoFactorOff],
+  // A person's own sign-in: the password, the address, and where they are signed in. Not gated by
+  // role — this is about their account rather than the practice's records, the same reason the
+  // two-factor pages above are not.
+  ['GET', '/account/password', accountPasswordForm],
+  ['POST', '/account/password', changeOwnPassword],
+  ['GET', '/account/email', accountEmailForm],
+  ['POST', '/account/email', changeOwnEmail],
+  ['GET', '/account/sessions', accountSessionsPage],
+  ['POST', '/account/sessions/end', endOneSessionPage],
+  ['POST', '/account/sessions/end-others', endOtherSessionsPage],
   ['POST', '/signout', signOut],
   ['GET', '/setup', setupForm, 'owner'],
   ['POST', '/setup', saveKeys, 'owner'],
@@ -296,6 +320,10 @@ export const ROUTES = [
   ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase, 'owner'],
   ['GET', '/members', membersPage, 'owner'],
   ['POST', '/members/invite', createInvitePage, 'owner'],
+  // Taking an invitation back before it was used — the escape hatch a leaked link needs. An
+  // invitation hands over a copy of the practice's key, so "wait seven days for it to die" was never
+  // an answer. Owner-gated with the rest of the members area.
+  ['POST', /^\/members\/invite\/([^/]+)\/revoke$/, revokeInviteAction, 'owner'],
   ['POST', '/members/name', renamePracticePage, 'owner'],
   ['POST', '/members/notify', setNotifyPage, 'owner'],
   // Removal is two steps on purpose: a page that says what will happen (and what will not), then the act.
@@ -439,6 +467,7 @@ async function asset({ response, params, webDir }) {
     return fail(response, 404, 'There is no such file here.');
   }
   response.writeHead(200, {
+    ...SECURITY_HEADERS,
     'content-type': type,
     'content-length': body.length,
     // Not cached: a stale copy of the encryption script is a class of bug this product cannot
@@ -463,6 +492,14 @@ export function createApp(db, {
   // test can hit the cap in three attempts rather than eleven, and so a hosted deployment can swap the
   // in-process limiter for a shared one without touching a route.
   signInLimiter = createAttemptLimiter(),
+  // Sign-up is watched for a different reason than sign-in: nothing here is secret, but everything here is
+  // *expensive* — a scrypt hash is 64 MiB of memory and ~100 ms, and every success makes rows. Two buckets,
+  // the address and the caller, because one without the other leaves a door open.
+  signUpLimiter = createAttemptLimiter(),
+  // One client link is a bearer token, and the four write routes behind it accept whatever arrives. A link
+  // holder who floods messages or uploads can fill the record and the disk budget; 30 writes a minute is far
+  // above anything a person uploading a season's documents does and far below anything that hurts.
+  clientLimiter = createAttemptLimiter({ limit: 30, windowMs: 60_000 }),
   // Multi-tenancy arrives as an injected resolver and never as edits to the route table: given a
   // request, it names the practice and the database, blob directory and mailer that answer for it.
   // A resolution of null is a host with no practice behind it, answered before any database is
@@ -479,6 +516,11 @@ export function createApp(db, {
   // that files the link's digest prefix into the registry, so a client link can find its way home
   // without a host header — and the core never learns that a registry exists.
   onLinkIssued = null,
+  // Called after a password or address changes, with `{ email, passwordHash }` or
+  // `{ oldEmail, newEmail }`. A no-op by default: in a single-tenant install the practitioner row is
+  // the only credential store. The SaaS entry injects the mirror that keeps the platform account in
+  // step — same seam, same reason as `onLinkIssued`.
+  onCredentialChanged = null,
   // What /healthz counts. The process's own database in single-tenant mode; injected by the SaaS
   // entry, whose process database is the registry and holds no `practitioner` table at all.
   healthCheck = null,
@@ -572,7 +614,10 @@ export function createApp(db, {
           mailer: scoped.mailer,
           chaseBudgetMs: scoped.chaseBudgetMs,
           signInLimiter,
+          signUpLimiter,
+          clientLimiter,
           onLinkIssued: scoped.onLinkIssued,
+          onCredentialChanged,
         });
         return;
       }
@@ -683,10 +728,35 @@ async function spendTheSameTimeAsARealCheck(password) {
   await verifyPassword(password, dummyHash);
 }
 
-async function signUp({ db, request, response }) {
+async function signUp({ db, request, response, signUpLimiter }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
   const password = typeof fields.password === 'string' ? fields.password : '';
+
+  // **Sign-up is rate limited too, and unlike sign-in nothing here is secret — the point is the cost.**
+  // Every request spends a scrypt hash (64 MiB, ~100 ms) before it creates rows, so an unauthenticated
+  // caller could otherwise spend the machine's CPU and fill the database without limit. Two buckets, and
+  // *every* attempt counts — successful ones included, because an account creation is the cost, not only
+  // a wrong guess: the address being signed up, and where the request came from. The second is what stops
+  // one machine minting practices under sixty different emails. Both are separate from the sign-in
+  // buckets so that a busy sign-up day cannot lock anybody out of signing in.
+  const buckets = [`signup:${email ?? ''}`, `signup-ip:${request.socket?.remoteAddress ?? ''}`];
+  const blockedFor = Math.max(0, ...buckets.map((key) => signUpLimiter?.blockedFor(key) ?? 0));
+  if (blockedFor > 0) {
+    const minutes = Math.ceil(blockedFor / 60000);
+    return sendPage(response, 429, page({
+      title: 'Too many attempts',
+      body: credentialsForm({
+        action: '/signup',
+        title: 'Too many attempts',
+        submit: 'Create it',
+        error: `Too many sign-up attempts from here. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        email: email ?? '',
+        hint: true,
+      }),
+    }));
+  }
+  for (const key of buckets) signUpLimiter?.failed(key);
 
   const problem = validateCredentials(email, password);
   if (problem) {
@@ -766,15 +836,29 @@ function codeForm({ error = null, action = '/signin/code' }) {
  * Accepts a recovery code as well, and for turning two-factor *off* that matters more than anything else on
  * this page: the person who needs to turn it off is very often the person whose phone is gone.
  */
-function codeAuthorises(db, practitionerId, code) {
+function codeAuthorises(db, practitionerId, code, limiter = null) {
   const state = twoFactorState(db, practitionerId);
   if (state.state !== 'on') return true;
+  // These two actions — turning two-factor off, and minting a new recovery sheet — are the ones a stolen
+  // *session* would aim at, and neither had a guess budget. The sign-in path has had one since the audit
+  // that named it: a six-digit code with unlimited attempts is a million guesses against a door that stays
+  // open for as long as the session lasts. Same limiter, its own bucket (so a person fumbling a sign-in
+  // code is not locked out of their own account page), and 'blocked' is returned apart from 'wrong'
+  // because the two deserve different sentences.
+  const key = `two-factor-manage:${practitionerId}`;
+  if (limiter && limiter.blockedFor(key) > 0) return 'blocked';
   const step = codeStepFor(state.secret, code);
   if (step !== null && step !== state.lastStep) {
     recordAcceptedStep(db, practitionerId, step);
+    limiter?.succeeded(key);
     return true;
   }
-  return spendRecoveryCode(db, practitionerId, code);
+  if (spendRecoveryCode(db, practitionerId, code)) {
+    limiter?.succeeded(key);
+    return true;
+  }
+  limiter?.failed(key);
+  return false;
 }
 
 /**
@@ -819,6 +903,18 @@ function twoFactorPage({ db, response, practitioner, url }) {
         ${state.state === 'off' ? twoFactorOffCard(practitioner) : ''}
         ${state.state === 'unconfirmed' ? twoFactorPendingCard({ db, practitioner, secret: state.secret }) : ''}
         ${state.state === 'on' ? twoFactorOnCard({ practitioner, left }) : ''}
+      </section>
+
+      <section class="card">
+        <h2>Your sign-in</h2>
+        <p class="note">The password and the address you sign in with, and every session that is
+        signed in as you right now. Changing the password signs out everything else — that is the
+        point of changing it.</p>
+        <div class="actions">
+          <a class="btn" href="/account/password">Change your password</a>
+          <a class="btn" href="/account/email">Change your email</a>
+          <a class="btn" href="/account/sessions">Where you are signed in</a>
+        </div>
       </section>
 
       <section class="card">
@@ -943,10 +1039,14 @@ async function twoFactorConfirm({ db, request, response, practitioner }) {
 }
 
 /** New recovery codes, for the practice that has used theirs or lost the sheet. */
-async function twoFactorNewCodes({ db, request, response, practitioner }) {
+async function twoFactorNewCodes({ db, request, response, practitioner, signInLimiter }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
-  if (!codeAuthorises(db, practitioner.id, field(fields, 'code') ?? '')) {
+  const allowed = codeAuthorises(db, practitioner.id, field(fields, 'code') ?? '', signInLimiter);
+  if (allowed === 'blocked') {
+    return fail(response, 429, 'Too many wrong codes for this account. Wait a few minutes and try again — the codes you have still work.', practitioner);
+  }
+  if (!allowed) {
     return fail(response, 400, 'That code was not right, so no new codes were made. The old ones still work.', practitioner);
   }
 
@@ -969,10 +1069,14 @@ async function twoFactorNewCodes({ db, request, response, practitioner }) {
   }));
 }
 
-async function twoFactorOff({ db, request, response, practitioner }) {
+async function twoFactorOff({ db, request, response, practitioner, signInLimiter }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
-  if (!codeAuthorises(db, practitioner.id, field(fields, 'code') ?? '')) {
+  const allowed = codeAuthorises(db, practitioner.id, field(fields, 'code') ?? '', signInLimiter);
+  if (allowed === 'blocked') {
+    return fail(response, 429, 'Too many wrong codes for this account, so nothing was changed. Wait a few minutes and try again.', practitioner);
+  }
+  if (!allowed) {
     return fail(
       response,
       400,
@@ -1416,8 +1520,18 @@ export async function notifyPracticeOfChange({ db, requestRow, mailer, origin })
  * documented deployment puts a reverse proxy in front of this, which terminates TLS and would
  * otherwise yield `http://` links in emails.
  */
-const originOf = (request) =>
-  `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
+//
+// A configured `TICKMARK_PUBLIC_URL` wins over both headers, and that is the important half of this
+// function. The `Host` header is *attacker-chosen* on a directly-exposed server, and the links built
+// here travel inside emails — including the notification a **client's own action** triggers. Without
+// the configured address, anybody holding a client link could stamp `Host: evil.example` on an upload
+// and poison the link the practice receives. The header fallback remains because a local trial has no
+// canonical address to configure, and inventing one would break the first run.
+const originOf = (request) => {
+  const configured = String(process.env.TICKMARK_PUBLIC_URL ?? '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+  return `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
+};
 
 /**
  * How a letter from the practice ends: the practice's own name.
@@ -3296,11 +3410,16 @@ async function closeSeveral({ db, request, response, practitioner, practiceId })
 function filesPage({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
   const query = (url.searchParams.get('q') ?? '').trim();
-  const files = filesForPractice(db, practiceId, { query });
+  // One page of the newest, and a link for more — see `FILES_PER_PAGE`. One extra row is fetched to
+  // know whether "more" is honest rather than hopeful.
+  const from = Math.max(0, Number(url.searchParams.get('from')) || 0);
+  const files = filesForPractice(db, practiceId, { query, limit: FILES_PER_PAGE + 1, offset: from });
+  const more = files.length > FILES_PER_PAGE;
+  const shown = more ? files.slice(0, FILES_PER_PAGE) : files;
   const total = fileCountFor(db, practiceId);
   const practice = practiceFor(db, practiceId);
 
-  const rows = files.map((file) => html`<tr>
+  const rows = shown.map((file) => html`<tr>
     <td>
       <span class="cell-t">${file.filename}</span>
       ${file.clientNote ? html`<span class="cell-s">they said: ${file.clientNote}</span>` : ''}
@@ -3358,7 +3477,7 @@ function filesPage({ db, response, practitioner, practiceId, url }) {
               html`<a class="btn primary" href="/requests/new">Ask for something</a>`,
             )
         : html`
-            <p class="note">${files.length} ${files.length === 1 ? 'document' : 'documents'}${query
+            <p class="note">${shown.length} ${shown.length === 1 ? 'document' : 'documents'}${query
               ? html` matching “${query}” of ${total} in total`
               : ''}.</p>
             <div class="scroll"><table class="wide">
@@ -3371,7 +3490,14 @@ function filesPage({ db, response, practitioner, practiceId, url }) {
                 <th align="left">Arrived</th><th align="right">Size</th><th align="left"></th>
               </tr></thead>
               <tbody>${rows}</tbody>
-            </table></div>`}`,
+            </table></div>
+            ${more
+              ? html`<p class="note">Showing ${from + 1}–${from + shown.length} of ${total}.
+                  <a href="/files?q=${encodeURIComponent(query)}&amp;from=${from + FILES_PER_PAGE}">Show more</a>.</p>`
+              : from > 0
+                ? html`<p class="note">Showing ${from + 1}–${from + shown.length} of ${total}.
+                    <a href="/files?q=${encodeURIComponent(query)}">Back to the newest</a>.</p>`
+                : ''}`}`,
   }));
 }
 
@@ -3771,9 +3897,9 @@ async function serveEnvelope({ db, response, practitioner, params, practiceId })
     .get(params[1], found.id);
   if (!row) return fail(response, 404, 'There is no file with that id in this request.', practitioner);
 
-  let bytes;
+  let size;
   try {
-    bytes = await readFile(row.storage_path);
+    size = (await stat(row.storage_path)).size;
   } catch {
     // The row exists and the file does not: the disk has been changed underneath the record, which
     // is worth saying plainly rather than reporting as a missing upload.
@@ -3783,13 +3909,16 @@ async function serveEnvelope({ db, response, practitioner, params, practiceId })
   response.writeHead(200, {
     ...SECURITY_HEADERS,
     'content-type': 'application/octet-stream',
-    'content-length': bytes.length,
+    'content-length': size,
     // The original filename, so the browser can offer it once the bytes are decrypted. It travels
     // in a header rather than in the path because it is a label the client chose.
     'x-file-name': encodeURIComponent(row.filename),
     'cache-control': 'no-store',
   });
-  response.end(bytes);
+  // Streamed rather than read into memory: one document is bounded by the upload ceiling, and a
+  // practice working down a list of twenty saves should not cost the server a file's worth of heap
+  // each time. The rows below record the look once the bytes are on their way.
+  createReadStream(row.storage_path).pipe(response);
 
   // **Recorded after the bytes are on their way, never before.** Opening a document is the one thing this
   // product lets somebody do that is worth an audit trail — a firm promising confidentiality should be able to
@@ -4966,18 +5095,6 @@ async function reencryptFile({ db, request, response, practitioner, practiceId, 
     return fail(response, 415, "This route takes the new envelope as raw bytes, which needs the page's own script.");
   }
 
-  const body = await readBody(request, maxUploadBytes);
-  if (body.length === 0) return fail(response, 400, 'That upload was empty. Nothing was replaced.');
-
-  const envelope = readEnvelope(body);
-  if (!envelope.ok) {
-    return fail(
-      response,
-      400,
-      `Only an encrypted file can replace an encrypted file, and that one is not one (${envelope.reason}). Nothing was replaced.`,
-    );
-  }
-
   const keyId = String(request.headers['x-key-id'] ?? '');
   if (!keyId) return fail(response, 400, 'The new key has to be named, or there is no record of what opens the file now.');
 
@@ -4992,15 +5109,34 @@ async function reencryptFile({ db, request, response, practitioner, practiceId, 
 
   // Written under a name of its own, so the file the row currently points at is untouched until the row
   // moves. See the note on `replaceUpload` for why that order is the one that cannot lose a document.
+  // Spooled to disk like the upload that made it, for the same reason.
   const storagePath = join(dirname(existing.storage_path), `${newId()}.bin`);
-  await writeFile(storagePath, body);
+  const spooled = await spoolBody(request, maxUploadBytes, storagePath);
+  const drop = () => unlink(storagePath).catch(() => {});
+  if (spooled.bytes === 0) {
+    await drop();
+    return fail(response, 400, 'That upload was empty. Nothing was replaced.');
+  }
+
+  const envelope =
+    spooled.bytes < HEADER_BYTES + 1
+      ? { ok: false, reason: 'too short to be an envelope' }
+      : readEnvelope(await readHead(storagePath));
+  if (!envelope.ok) {
+    await drop();
+    return fail(
+      response,
+      400,
+      `Only an encrypted file can replace an encrypted file, and that one is not one (${envelope.reason}). Nothing was replaced.`,
+    );
+  }
 
   const replaced = replaceUpload(db, practiceId, {
     uploadId: existing.id,
     keyId,
     storagePath,
-    sizeBytes: body.length,
-    sha256: createHash('sha256').update(body).digest('hex'),
+    sizeBytes: spooled.bytes,
+    sha256: spooled.sha256,
   });
 
   if (!replaced.ok) {
@@ -5169,7 +5305,12 @@ async function changeItemPage({ db, request, response, practitioner, params, pra
   // statement that somebody has read the file. A member who holds no key cannot have read it, so the check
   // is refused here rather than tagged on the route. The dispatcher cannot know which action this is; the
   // handler can, and this is where it does.
-  if (!holdsKey(practitioner.role) && (action === 'check' || action === 'check-clear')) {
+  //
+  // `uncheck` is deliberately **not** in the guard: it withdraws the claim rather than making one, and an
+  // assistant who noticed "nobody has looked at that yet" is doing coordination. (The old guard also named
+  // a `'check-clear'` action, which has never existed in `ITEM_ACTIONS` — the kind of check that protects
+  // nothing because nothing can ever match it. One name, one rule.)
+  if (!holdsKey(practitioner.role) && action === 'check') {
     return fail(response, 403, refusalFor('accountant', practitioner.role), practitioner);
   }
 
@@ -5411,14 +5552,34 @@ function clientPage({ db, response, params, maxUploadBytes, url }) {
 }
 
 /**
+ * The one throttle on a client link: 30 writes a minute, per link.
+ *
+ * A link is a bearer token and the write routes behind it accept whatever arrives — messages, "I do not
+ * have this", uploads. The per-link storage ceiling bounds *bytes*, and nothing bounded *count of acts*:
+ * a holder (or a leaker) could fill the event record and the request page with messages forever. This is
+ * the cheapest honest bound. It counts every write attempt — refused ones included — and says so plainly
+ * when it refuses, because a silent drop is the failure mode this product exists to avoid.
+ */
+function clientWriteAllowed({ clientLimiter, token, response }) {
+  const key = `client-write:${token}`;
+  if ((clientLimiter?.blockedFor(key) ?? 0) > 0) {
+    fail(response, 429, 'That link has been used a lot in the last minute. Wait a moment and try again — nothing was lost.');
+    return false;
+  }
+  clientLimiter?.failed(key);
+  return true;
+}
+
+/**
  * The client saying something other than sending a file.
  *
  * Two sentences, both of which a practice would rather have than silence: "I do not have this" and "I
  * will send this later". The item stays on the list either way — whether to stop asking is the
  * practice's decision — and the client can take it back by saying nothing again.
  */
-async function clientSays({ db, request, response, params, mailer }) {
+async function clientSays({ db, request, response, params, mailer, clientLimiter }) {
   const [token, itemId] = params;
+  if (!clientWriteAllowed({ clientLimiter, token, response })) return;
   const found = tokenLookup(db, token);
   if (found.state !== 'open') {
     return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
@@ -5452,6 +5613,18 @@ async function clientSays({ db, request, response, params, mailer }) {
     mailer,
     origin: originOf(request),
   });
+}
+
+/** The first bytes of a spooled file, for the envelope check — the whole file is never read back. */
+async function readHead(path, length = HEADER_BYTES + 1) {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 /**
@@ -5501,13 +5674,26 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
   const header = (name, fallback, limit) =>
     request.headers[name] ? decodeURIComponent(String(request.headers[name])).slice(0, limit) : fallback;
 
-  const body = await readBody(request, maxUploadBytes);
-  if (body.length === 0) return fail(response, 400, 'That file was empty.');
+  // **Streamed straight to disk** — spooled beside the blobs and moved under the request's directory
+  // only once the upload is accepted, so a refused upload leaves *nothing* behind: no row, no file,
+  // and not even the empty directory the final path would need. The old path assembled the whole
+  // file in memory first, which made the per-file ceiling a *memory* ceiling times every concurrent
+  // client.
+  const uploadId = newId();
+  await mkdir(blobDir, { recursive: true });
+  const spoolPath = join(blobDir, `${uploadId}.incoming`);
+  const spooled = await spoolBody(request, maxUploadBytes, spoolPath);
+  const drop = () => unlink(spoolPath).catch(() => {});
+  if (spooled.bytes === 0) {
+    await drop();
+    return fail(response, 400, 'That file was empty.');
+  }
 
   // The exact check, now that the length is known. `spent` above could only refuse a link that had *already*
   // crossed the line; this one refuses the file that would cross it.
-  if (spent.bytes + body.length > maxRequestBytes) {
+  if (spent.bytes + spooled.bytes > maxRequestBytes) {
     const left = Math.max(0, maxRequestBytes - spent.bytes);
+    await drop();
     return fail(
       response,
       413,
@@ -5516,9 +5702,15 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
   }
 
   // The server refuses a file it could read. Storing one and calling it encrypted would make
-  // the product's central claim false in a way nobody would notice until it mattered.
-  const envelope = readEnvelope(body);
+  // the product's central claim false in a way nobody would notice until it mattered. Only the header
+  // is read back: an envelope is decided by its first bytes and its length, and the body stays on disk
+  // where it already is.
+  const envelope =
+    spooled.bytes < HEADER_BYTES + 1
+      ? { ok: false, reason: 'too short to be an envelope' }
+      : readEnvelope(await readHead(spoolPath));
   if (!envelope.ok) {
+    await drop();
     return fail(
       response,
       400,
@@ -5540,16 +5732,19 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
       )
       .get(claimedKey, requestId);
     if (!key) {
+      await drop();
       return fail(response, 400, 'That upload named a key this practice does not have. Nothing was stored.');
     }
     keyId = key.id;
   }
 
-  const uploadId = newId();
+  // Moved under the request's directory only now that it is accepted — see the spool note above. A
+  // rename on the same volume is the cheap kind; a crash before it leaves an unreferenced `.incoming`
+  // file and no row, which is the safe direction (and swept by hand if it ever happens).
   const directory = join(blobDir, requestId);
   await mkdir(directory, { recursive: true });
   const storagePath = join(directory, `${uploadId}.bin`);
-  await writeFile(storagePath, body);
+  await rename(spoolPath, storagePath);
 
   recordUpload(db, {
     id: uploadId,
@@ -5557,15 +5752,15 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
     requestItemId,
     filename: header('x-file-name', 'upload.bin', 255),
     mime: header('x-file-type', 'application/octet-stream', 120),
-    sizeBytes: body.length,
-    sha256: createHash('sha256').update(body).digest('hex'),
+    sizeBytes: spooled.bytes,
+    sha256: spooled.sha256,
     storagePath,
     clientNote: header('x-note', null, 500),
     keyId,
     at: now(),
   });
 
-  return { uploadId, bytes: body.length };
+  return { uploadId, bytes: spooled.bytes };
 }
 
 /**
@@ -5579,7 +5774,8 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
  * It answers no item, so it clears nothing and marks nothing received — the checklist is what the practice
  * asked for, and a client's own addition is not an answer to a question.
  */
-async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer }) {
+async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, clientLimiter }) {
+  if (!clientWriteAllowed({ clientLimiter, token: params[0], response })) return;
   const found = tokenLookup(db, params[0]);
   if (found.state !== 'open') {
     return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
@@ -5617,7 +5813,8 @@ async function receiveExtra({ db, request, response, params, blobDir, maxUploadB
  * A form post rather than an upload: there is nothing to encrypt, and pretending otherwise would be worse
  * than useless. The practice's page shows the words and the history keeps them.
  */
-async function clientMessage({ db, request, response, params, mailer }) {
+async function clientMessage({ db, request, response, params, mailer, clientLimiter }) {
+  if (!clientWriteAllowed({ clientLimiter, token: params[0], response })) return;
   const found = tokenLookup(db, params[0]);
   if (found.state !== 'open') {
     return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
@@ -5660,8 +5857,9 @@ async function clientMessage({ db, request, response, params, mailer }) {
  * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
  * starts joining the filename into a path.
  */
-async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer }) {
+async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, clientLimiter }) {
   const [token, itemId] = params;
+  if (!clientWriteAllowed({ clientLimiter, token, response })) return;
   const found = tokenLookup(db, token);
   if (found.state !== 'open') {
     return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
@@ -5803,7 +6001,7 @@ function setupForm({ db, response, practitioner, practiceId }) {
   }));
 }
 
-async function saveKeys({ db, request, response, practitioner, practiceId }) {
+async function saveKeys({ db, request, response, practitioner, practiceId, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const fields = formFields(await readBody(request));
@@ -5812,12 +6010,40 @@ async function saveKeys({ db, request, response, practitioner, practiceId }) {
   const problem = keyProblem(publicKeyJson, wrapped);
   if (problem) return fail(response, 400, problem, practitioner);
 
+  // Read before the insert below: "did this practice already have a key?" is what separates a
+  // rotation from a first setup.
+  const hadKey = practiceKeys(db, practiceId, practitioner.id).length > 0;
   addPracticeKey(db, practiceId, {
     publicKey: JSON.parse(publicKeyJson),
     wrappedPrivateKey: wrapped,
     createdBy: practitioner.id,
   });
-  return redirect(response, '/keys');
+  redirect(response, '/keys');
+
+  // **The one change this product emails about unprompted, and the reason is detection.** A member
+  // adding a key of their own is exactly the attack `src/totp.js` describes: from that moment every
+  // client document is sealed to them, and *nothing anywhere looks wrong*. It cannot be prevented —
+  // the member is legitimately signed in — so the only defence is that the practice hears about it
+  // while it is still a routine rotation. Sent after the response, best effort, never the actor's
+  // problem if the relay is down.
+  //
+  // **The first key is silent on purpose.** At setup there is one member — the person pressing the
+  // button — no clients have been sent anything, and "a key was added" addressed to the person who
+  // just made it is noise. The announcement matters when a key arrives at a practice that already
+  // has one, which is precisely the rotation-or-hijack moment it exists for.
+  if (hadKey) {
+    await tellOwners(db, practiceId, mailer, {
+      subject: `A new encryption key was added at ${practiceFor(db, practiceId)?.name ?? 'the practice'}`,
+      lines: [
+        `${practitioner.email} added a new encryption key.`,
+        '',
+        'Documents clients send from now on will be sealed to it. Everything already here is untouched.',
+        '',
+        'This is the one change that quietly decides who can read what arrives next, so it is worth a glance even when it is routine.',
+      ],
+    });
+  }
+  return;
 }
 
 /**
@@ -5850,6 +6076,7 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
   const justRemoved = url.searchParams.get('removed');
   const saved = url.searchParams.get('saved');
   const roleChanged = url.searchParams.get('changed');
+  const revokedInvite = url.searchParams.get('revoked');
   // Whose role cannot be changed: the only owner. Computed once for the whole table rather than per row.
   const owners = ownersOf(db, practiceId);
   const soleOwner = (person) => owners.length === 1 && owners[0].id === person.id;
@@ -5870,6 +6097,9 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
         ? html`<p class="success">Saved. ${practice.notifyOnUpload
             ? html`You will be told when a client sends something.`
             : html`You will not be emailed about what clients send. The board still shows it, of course.`}</p>`
+        : revokedInvite
+        ? html`<p class="success"><strong>That invitation has been taken back.</strong> Whoever holds
+            the link can no longer join with it — make a new one if it went to the wrong place.</p>`
         : null,
     body: html`
       <div class="page-head">
@@ -6001,16 +6231,23 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
         ? html`<section class="card">
             <h2>Invitations</h2>
             <div class="scroll"><table>
-              <thead><tr><th align="left">Sent by</th><th align="left">When</th><th align="left">Outcome</th></tr></thead>
+              <thead><tr><th align="left">Sent by</th><th align="left">When</th><th align="left">Outcome</th><th align="left"></th></tr></thead>
               <tbody>
                 ${invites.map((row) => html`<tr>
                   <td><span class="cell-t">${row.created_by_email}</span></td>
                   <td><span class="muted">${row.created_at.slice(0, 10)}</span></td>
                   <td>${row.used_at
                     ? html`accepted by ${row.used_by_email} on ${row.used_at.slice(0, 10)}`
-                    : row.expires_at <= new Date().toISOString()
-                      ? html`${badge('expired, and was never accepted', TONES.done_for)}`
-                      : html`${badge('not accepted yet', TONES.waiting)}`}</td>
+                    : row.revoked_at
+                      ? html`${badge('taken back', TONES.done_for)} ${row.revoked_at.slice(0, 10)}`
+                      : row.expires_at <= new Date().toISOString()
+                        ? html`${badge('expired, and was never accepted', TONES.done_for)}`
+                        : html`${badge('not accepted yet', TONES.waiting)}`}</td>
+                  <td>${!row.used_at && !row.revoked_at && row.expires_at > new Date().toISOString()
+                    ? html`<form method="post" action="/members/invite/${row.id}/revoke" class="inline">
+                        <button type="submit" class="sm">Take it back</button>
+                      </form>`
+                    : ''}</td>
                 </tr>`)}
               </tbody>
             </table>`
@@ -6109,6 +6346,7 @@ async function invitePage({ db, response, params, error = null }) {
     const said = {
       unknown: 'There is no invitation at that address.',
       used: 'That invitation has been used. An invitation works once — ask for another one.',
+      revoked: 'That invitation has been taken back by the practice. Ask whoever sent it for a new one.',
       expired: 'That invitation has expired. Ask whoever sent it for a new one.',
     }[found.state];
     return sendPage(response, found.state === 'unknown' ? 404 : 410, page({
@@ -6219,6 +6457,9 @@ async function acceptInvite({ db, request, response, params }) {
     wrappedPrivateKey: wrapped,
   });
 
+  if (claimed.state === 'just-claimed') {
+    return refuse('That invitation was accepted somewhere else at the same moment, so it is used up. Ask for a new one.');
+  }
   if (claimed.state === 'email-taken') {
     return refuse('There is already an account for that email address. Sign in instead — an invitation is not needed to join a practice you are already in.');
   }
@@ -6272,7 +6513,7 @@ async function acceptInvite({ db, request, response, params }) {
  * The second is the one that matters — demoting the last owner would leave a practice with nobody who can
  * invite a replacement, and the only way back in would be a hand-edit of the database.
  */
-async function changeRolePage({ db, request, response, practitioner, practiceId, params }) {
+async function changeRolePage({ db, request, response, practitioner, practiceId, params, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
   const wanted = field(fields, 'role') ?? '';
@@ -6299,7 +6540,17 @@ async function changeRolePage({ db, request, response, practitioner, practiceId,
     );
   }
 
-  return redirect(response, '/members?changed=1');
+  redirect(response, '/members?changed=1');
+  // A role change moves the boundary between "can chase clients" and "can read what they sent", so it
+  // is announced alongside the other two changes to who can read what.
+  const member = memberIn(db, practiceId, params[0]);
+  if (member) {
+    await tellOwners(db, practiceId, mailer, {
+      subject: `A member's role changed at ${practiceFor(db, practiceId)?.name ?? 'the practice'}`,
+      lines: [`${member.email} is now ${ROLE_WORDS[roleName(wanted)]} (changed by ${practitioner.email}).`],
+    });
+  }
+  return;
 }
 
 function removeMemberPage({ db, response, practitioner, practiceId, params, url }) {
@@ -6354,7 +6605,7 @@ function removeMemberPage({ db, response, practitioner, practiceId, params, url 
   }));
 }
 
-function removeMemberAction({ db, response, practitioner, practiceId, params }) {
+async function removeMemberAction({ db, response, practitioner, practiceId, params, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   // Yourself is a request about your own membership rather than about somebody who has left. Refusing
@@ -6371,7 +6622,18 @@ function removeMemberAction({ db, response, practitioner, practiceId, params }) 
     return fail(response, 400, 'That is the only person in this practice. A practice with nobody in it could never be signed in to again, so this is refused.', practitioner);
   }
 
-  return redirect(response, `/members?removed=${encodeURIComponent(result.email)}`);
+  redirect(response, `/members?removed=${encodeURIComponent(result.email)}`);
+  // Who is in the practice decides who can read what — the same reason a new key is announced. Sent
+  // after the response and best effort; the members page already records the act either way.
+  await tellOwners(db, practiceId, mailer, {
+    subject: `A member was removed from ${practiceFor(db, practiceId)?.name ?? 'the practice'}`,
+    lines: [
+      `${result.email} was removed by ${practitioner.email}.`,
+      '',
+      'Their key copies are gone and their sessions ended. Anything they already downloaded stays theirs — removal is a statement about what happens next.',
+    ],
+  });
+  return;
 }
 
 /** The practice's decision about being told when a client sends something. */
@@ -6593,4 +6855,302 @@ async function changePassphrase({ db, request, response, practitioner, params, p
   const changed = replaceWrappedKey(db, practiceId, practitioner.id, params[0], wrapped);
   if (!changed) return fail(response, 404, 'There is no key of yours with that id.', practitioner);
   return redirect(response, '/keys');
+}
+
+// ---------------------------------------------------------------------------------
+// A person's own sign-in: their password, their address, and where they are signed in
+// ---------------------------------------------------------------------------------
+//
+// Before this section, the only way to change a password was `tools/reset-password.mjs` on the
+// server's command line — fine for the operator, useless for a member who suspects their password
+// is loose and cannot get to the machine. Three pages, all about *this person's* account rather
+// than the practice's records, which is why none of them is role-gated.
+//
+// Two rules run through all of them:
+//
+// 1. **Changing anything here asks for the current password.** These pages are the prize a stolen
+//    session is played for: without the check, a borrowed tab becomes a permanent account. And
+//    guessing the current password is bounded by the same limiter as sign-in — a bucket of its own,
+//    so a person changing a password cannot lock themselves out of signing in.
+// 2. **A password change ends every other session.** The point of changing a password is that
+//    whatever else was holding the old one stops working; a change that left a thief's session
+//    alive would be a change that only helped the thief.
+
+/** The bucket for guessing at the current password from one of these pages. */
+const credentialBucket = (practitionerId) => `credential-guess:${practitionerId}`;
+
+/** Say no when the guess budget is spent. Returns true when the caller may continue. */
+function credentialGuessAllowed({ signInLimiter, practitioner, response }) {
+  const blockedFor = signInLimiter?.blockedFor(credentialBucket(practitioner.id)) ?? 0;
+  if (blockedFor > 0) {
+    const minutes = Math.ceil(blockedFor / 60000);
+    fail(response, 429, `Too many wrong passwords from here. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`, practitioner);
+    return false;
+  }
+  return true;
+}
+
+/** Check the current password against the record, counting the attempt either way. */
+async function currentPasswordIsRight({ db, signInLimiter, practitioner, current }) {
+  const record = practitionerByEmail(db, practitioner.email);
+  const right = record ? await verifyPassword(current, record.password_hash) : false;
+  if (right) signInLimiter?.succeeded(credentialBucket(practitioner.id));
+  else signInLimiter?.failed(credentialBucket(practitioner.id));
+  return right;
+}
+
+function accountPasswordForm({ response, practitioner, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const changed = url.searchParams.get('changed') === '1';
+  return sendPage(response, 200, page({
+    title: 'Change your password',
+    practitioner,
+    here: '/members',
+    banner: changed
+      ? html`<p class="success"><strong>Saved.</strong> Every other session was signed out — whatever
+          was holding the old password stops working.</p>`
+      : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/account/two-factor">Your account</a></p>
+          <h1>Change your password</h1>
+          <p class="sub">The password signs you in. It is not your passphrase — changing it cannot
+          open or close a single document, and nothing that has been sent to this practice is
+          affected.</p>
+        </div>
+      </div>
+      <form method="post" action="/account/password" class="card narrow stack">
+        <label for="current">Your current password</label>
+        <input id="current" name="current" type="password" required autocomplete="current-password">
+        <label for="fresh">A new password <span class="note">at least ${MIN_PASSWORD} characters</span></label>
+        <input id="fresh" name="fresh" type="password" required minlength="${MIN_PASSWORD}" autocomplete="new-password">
+        <label for="again">The new one again</label>
+        <input id="again" name="again" type="password" required autocomplete="new-password">
+        <div class="row tight"><button type="submit">Change it</button></div>
+      </form>
+      <p class="note"><a href="/account/sessions">Where you are signed in</a> — worth a look while
+      you are here.</p>`,
+  }));
+}
+
+async function changeOwnPassword({ db, request, response, practitioner, signInLimiter, onCredentialChanged }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const current = typeof fields.current === 'string' ? fields.current : '';
+  const fresh = typeof fields.fresh === 'string' ? fields.fresh : '';
+  const again = typeof fields.again === 'string' ? fields.again : '';
+
+  if (!credentialGuessAllowed({ signInLimiter, practitioner, response })) return;
+  if (!(await currentPasswordIsRight({ db, signInLimiter, practitioner, current }))) {
+    return fail(response, 400, 'That is not your current password, so nothing was changed.', practitioner);
+  }
+
+  const problem = fresh.length < MIN_PASSWORD
+    ? `A password of at least ${MIN_PASSWORD} characters is required.`
+    : fresh.length > 1024
+      ? 'That password is too long.'
+      : fresh !== again
+        ? 'Those two are not the same.'
+        : null;
+  if (problem) return fail(response, 400, problem, practitioner);
+
+  const passwordHash = await hashPassword(fresh);
+  setPractitionerPassword(db, practitioner.id, passwordHash);
+
+  // Everything else stops working — including the session a thief is holding. `keepToken` is this
+  // browser's own cookie, so the person changing the password is the one who stays signed in.
+  const token = parseCookies(request.headers.cookie)[COOKIE_NAME];
+  endAllSessionsExcept(db, practitioner.id, token);
+
+  // The hosted layer keeps its platform account in step (same seam as `onLinkIssued`); single-tenant
+  // has nowhere else to update.
+  onCredentialChanged?.({ email: practitioner.email, passwordHash });
+
+  return redirect(response, '/account/password?changed=1');
+}
+
+function accountEmailForm({ response, practitioner, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const changed = url.searchParams.get('changed') === '1';
+  return sendPage(response, 200, page({
+    title: 'Change your email',
+    practitioner,
+    here: '/members',
+    banner: changed ? html`<p class="success"><strong>Saved.</strong> Sign in with the new address from now on.</p>` : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/account/two-factor">Your account</a></p>
+          <h1>Change your email</h1>
+          <p class="sub">This is the address you sign in with, and where the practice's notifications
+          about your requests are sent. Everyone here sees it on the members page.</p>
+        </div>
+      </div>
+      <form method="post" action="/account/email" class="card narrow stack">
+        <label for="current">Your current password</label>
+        <input id="current" name="current" type="password" required autocomplete="current-password">
+        <label for="email">A new email</label>
+        <input id="email" name="email" type="email" required value="${practitioner.email}">
+        <div class="row tight"><button type="submit">Change it</button></div>
+      </form>`,
+  }));
+}
+
+async function changeOwnEmail({ db, request, response, practitioner, signInLimiter, onCredentialChanged }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const current = typeof fields.current === 'string' ? fields.current : '';
+  const wanted = field(fields, 'email')?.toLowerCase() ?? null;
+
+  if (!credentialGuessAllowed({ signInLimiter, practitioner, response })) return;
+  if (!(await currentPasswordIsRight({ db, signInLimiter, practitioner, current }))) {
+    return fail(response, 400, 'That is not your current password, so nothing was changed.', practitioner);
+  }
+
+  const problem = !wanted
+    ? 'An email address is required.'
+    : wanted.length > 254
+      ? 'That email address is too long.'
+      : !EMAIL_SHAPE.test(wanted)
+        ? 'That does not look like an email address.'
+        : null;
+  if (problem) return fail(response, 400, problem, practitioner);
+  if (wanted === practitioner.email) return redirect(response, '/account/email?changed=1');
+
+  // An address is how everybody finds everybody here, and the column is UNIQUE: two people sharing
+  // one is refused rather than merged, the same rule as two clients with one name.
+  const clash = practitionerByEmail(db, wanted);
+  if (clash && clash.id !== practitioner.id) {
+    return fail(response, 400, 'There is already an account for that email address in this practice.', practitioner);
+  }
+
+  const oldEmail = practitioner.email;
+  setPractitionerEmail(db, practitioner.id, wanted);
+  onCredentialChanged?.({ oldEmail, newEmail: wanted });
+  return redirect(response, '/account/email?changed=1');
+}
+
+/** Where this person is signed in, and the two ways to stop. */
+function accountSessionsPage({ db, request, response, practitioner, url }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const token = parseCookies(request.headers.cookie)[COOKIE_NAME] ?? '';
+  const currentId = sessionIdFor(db, token);
+  const sessions = sessionsOf(db, practitioner.id);
+  const ended = url.searchParams.get('ended');
+
+  return sendPage(response, 200, page({
+    title: 'Where you are signed in',
+    practitioner,
+    here: '/members',
+    banner: ended
+      ? html`<p class="success">${ended === '1'
+          ? 'That session was signed out.'
+          : `${ended} ${ended === '1' ? 'session was' : 'sessions were'} signed out.`}</p>`
+      : null,
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <p class="crumbs"><a href="/account/two-factor">Your account</a></p>
+          <h1>Where you are signed in</h1>
+          <p class="sub">Every session that is signed in as ${practitioner.email} right now. A
+          session here is a browser holding your cookie — signing one out ends it there.</p>
+        </div>
+        <div class="do">
+          <form method="post" action="/account/sessions/end-others" class="inline">
+            <button type="submit">Sign out everywhere else</button>
+          </form>
+        </div>
+      </div>
+      ${ended === '0'
+        ? html`<p class="note">There was nothing else to sign out — this is the only session.</p>`
+        : ''}
+      <div class="scroll"><table>
+        <thead><tr><th align="left">Signed in</th><th align="left">Expires</th><th align="left"></th></tr></thead>
+        <tbody>
+          ${sessions.map((row) => html`<tr>
+            <td><span class="cell-t">${row.created_at.slice(0, 16).replace('T', ' ')}</span>
+              ${row.id === currentId ? html` ${badge('this one', TONES.done)}` : ''}</td>
+            <td><span class="muted">${row.expires_at.slice(0, 10)}</span></td>
+            <td>${row.id === currentId
+              ? html`<span class="muted">use Sign out in the header</span>`
+              : html`<form method="post" action="/account/sessions/end" class="inline">
+                  <input type="hidden" name="id" value="${row.id}">
+                  <button type="submit" class="sm">Sign it out</button>
+                </form>`}</td>
+          </tr>`)}
+        </tbody>
+      </table></div>
+      <p class="note">Signing out everywhere else is the button for a machine you no longer hold.
+      Changing your <a href="/account/password">password</a> does it too, and is the one to reach for
+      if you think somebody else has been using your account.</p>`,
+  }));
+}
+
+async function endOneSessionPage({ db, request, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const id = field(fields, 'id');
+  const token = parseCookies(request.headers.cookie)[COOKIE_NAME] ?? '';
+
+  // Ending the session you are holding is what Sign out is for; this route is for the other ones, and
+  // saying so beats signing somebody out from under a form they meant to aim at a row below.
+  if (id && id === sessionIdFor(db, token)) {
+    return fail(response, 400, 'That is this session. Use Sign out in the header for that.', practitioner);
+  }
+  if (!id || !endSessionById(db, practitioner.id, id)) {
+    return fail(response, 404, 'That session is not one of yours, or it is already gone.', practitioner);
+  }
+  return redirect(response, '/account/sessions?ended=1');
+}
+
+async function endOtherSessionsPage({ db, request, response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const token = parseCookies(request.headers.cookie)[COOKIE_NAME] ?? '';
+  const ended = endAllSessionsExcept(db, practitioner.id, token);
+  return redirect(response, `/account/sessions?ended=${ended}`);
+}
+
+/** Take an invitation back before it was used. Owner-gated, like everything under /members. */
+function revokeInviteAction({ db, response, practitioner, practiceId, params }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  if (!revokeInvite(db, practiceId, params[0])) {
+    return fail(
+      response,
+      400,
+      'That invitation cannot be taken back: it was already used, already taken back, or it is not one of yours.',
+      practitioner,
+    );
+  }
+  return redirect(response, '/members?revoked=1');
+}
+
+/**
+ * Tell the practice's owners that something changed about the people or keys that open its documents.
+ *
+ * This is the second automatic email the product sends, and its reason is **detection** rather than
+ * bookkeeping. The attack `src/totp.js` describes — a signed-in member adds a wrapping of their own
+ * and every future client document is silently sealed to them — looks like nothing anywhere in the
+ * interface. It cannot be prevented (the member is legitimately signed in), so the only defence is
+ * that somebody hears about it while it is still routine. Key added, member removed, role changed:
+ * the three events that decide who can read what from then on.
+ *
+ * Best effort by design, like the client notification: none of those three acts may fail because a
+ * mail relay was down, so a failure here is logged and swallowed.
+ */
+async function tellOwners(db, practiceId, mailer, { subject, lines }) {
+  try {
+    if (!mailer) return 'no-mail-server';
+    const practice = practiceFor(db, practiceId);
+    const owners = ownersOf(db, practiceId);
+    if (owners.length === 0) return 'nobody-to-tell';
+    const body = [...lines, '', 'If this was not you, sign in and check the members and keys pages.', '', ...signOff(practice?.name ?? null)].join('\n');
+    for (const owner of owners) {
+      await sendMail(mailer, { to: owner.email, subject, body });
+    }
+    return 'sent';
+  } catch (error) {
+    console.error(`tickmark: could not tell the practice about "${subject}":`, error);
+    return 'failed';
+  }
 }

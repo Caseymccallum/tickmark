@@ -82,6 +82,9 @@ export function readBody(request, limit = 64 * 1024) {
  * the shared secret — cannot be reached cross-origin with a session, because `SameSite=Lax` means a cross-origin
  * request arrives unauthenticated and is answered with the sign-in page.
  */
+import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 
 /**
@@ -124,6 +127,62 @@ export function withEncoding(headers, encoding) {
 /** `application/x-www-form-urlencoded` as an object. */
 export function formFields(body) {
   return Object.fromEntries(new URLSearchParams(body.toString('utf8')));
+}
+
+/**
+ * Spool a request body straight to a file, rather than into memory.
+ *
+ * `readBody` is right for forms and everything else small. It is wrong for uploads: a 25 MB ceiling
+ * times a few concurrent clients is hundreds of megabytes of heap for bytes that are going to the
+ * disk anyway. This streams them there — one chunk of memory however big the file is — hashes them
+ * on the way past (the record's `sha256` is the digest of the ciphertext, so it must be the bytes as
+ * they arrive), and enforces the same limit with the same sentence.
+ *
+ * A refusal leaves **nothing behind**: the partial file is removed before the `RequestError` is
+ * raised, so the caller's "a refused upload leaves no file and no row" stays true without every
+ * caller remembering to clean up. (The socket is left open after a refusal, for the same reason
+ * `readBody` leaves it open: the client has to be able to read the answer.)
+ */
+export function spoolBody(request, limit, path) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const out = createWriteStream(path);
+    let size = 0;
+    let settled = false;
+
+    const giveUp = (error) => {
+      if (settled) return;
+      settled = true;
+      out.destroy();
+      unlink(path).catch(() => {});
+      reject(error);
+    };
+
+    request.on('data', (chunk) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > limit) {
+        giveUp(new RequestError(413, 'the request body is larger than this endpoint accepts'));
+        return;
+      }
+      hash.update(chunk);
+      // Backpressure, honoured: a fast sender to a slow disk should wait, not fill memory — which is
+      // the whole point of this function.
+      if (!out.write(chunk)) {
+        request.pause();
+        out.once('drain', () => request.resume());
+      }
+    });
+    request.on('error', giveUp);
+    out.on('error', giveUp);
+    request.on('end', () => {
+      if (settled) return;
+      out.end(() => {
+        settled = true;
+        resolve({ path, bytes: size, sha256: hash.digest('hex') });
+      });
+    });
+  });
 }
 
 /** A field from a form, trimmed, or `fallback` if it was absent or blank. */
