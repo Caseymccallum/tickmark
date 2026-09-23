@@ -737,6 +737,35 @@ export function openDatabase(file = ':memory:') {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON');
+
+  // **Wait for a lock rather than failing on it.** SQLite's default busy timeout is zero, so a second
+  // connection touching the same file is refused in about a millisecond — and every operator tool opens its
+  // own: `reset-password`, `check-container`, `backup`, this file's own migration script. The moment a partner
+  // phones "I am locked out" is exactly the moment somebody runs the reset tool against a live server, and
+  // that is not the moment to be told the database is busy. Five seconds is long enough for any write this
+  // product makes and short enough that a genuinely stuck process still reports rather than hanging.
+  db.exec('PRAGMA busy_timeout = 5000');
+
+  // **Write-ahead logging, and it belongs with the backup tool rather than before it.** In the default
+  // rollback journal, a reader blocks a writer; in WAL they do not, which is what makes a second process
+  // reading a live database practical at all.
+  //
+  // The reason this is a pair rather than two unrelated changes: **WAL moves committed data out of the main
+  // file and into a `-wal` sidecar.** Until this, `cp -r data` while the server was stopped was a perfectly
+  // good backup; with it, a copy of `data/*.db` alone can silently miss everything since the last checkpoint.
+  // So the documented way to take a backup becomes `VACUUM INTO` — which reads through the WAL correctly and
+  // has existed since SQLite 3.27 — and `tools/backup.mjs` is that, wrapped in something an operator can run.
+  //
+  // `synchronous` is deliberately left at SQLite's default. WAL mode's own documentation says NORMAL is safe
+  // against corruption and may lose recent commits on a power cut; this product's claim is about client
+  // documents, and trading durability for write speed in an accounting tool is not a trade worth making
+  // quietly. The default is FULL and it stays there.
+  //
+  // One honest limit, for the operator: WAL needs shared memory, so it does not work on a network filesystem.
+  // A database on an NFS or SMB mount will refuse to open in this mode — see docs/operations.md, which says
+  // what to do about it.
+  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
+
   db.exec(SCHEMA);
   const changes = migrate(db);
   db.migratedKeys = changes.keys;

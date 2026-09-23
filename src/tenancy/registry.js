@@ -407,8 +407,18 @@ export function tenantForSlug(registry, slug) {
  * data — not a fork of the server. An unknown plan reads as `standard`, never as unlimited.
  */
 export const PLANS = {
-  free: { chaseBudgetMs: 15_000, maxUploadBytes: 10 * 1024 * 1024 },
-  standard: { chaseBudgetMs: 60_000, maxUploadBytes: 25 * 1024 * 1024 },
+  free: {
+    chaseBudgetMs: 15_000,
+    maxUploadBytes: 10 * 1024 * 1024,
+    maxRequestBytes: 512 * 1024 * 1024,
+    maxRequestFiles: 100,
+  },
+  standard: {
+    chaseBudgetMs: 60_000,
+    maxUploadBytes: 25 * 1024 * 1024,
+    maxRequestBytes: 2 * 1024 * 1024 * 1024,
+    maxRequestFiles: 500,
+  },
 };
 
 // --- the link index --------------------------------------------------------------------------

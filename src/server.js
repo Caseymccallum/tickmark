@@ -43,6 +43,11 @@ if (process.env.MULTI_TENANT === '1') {
   // whole backup instruction and not a sentence with a second path in it.
   const blobDir = process.env.TICKMARK_BLOBS ?? join(dirname(dataFile), 'blobs');
   const maxUploadBytes = Number(process.env.TICKMARK_MAX_UPLOAD ?? 25 * 1024 * 1024);
+  // What one client link may store in total, and how many files it may hold. Both exist so that one client —
+  // or one leaked link — cannot fill the disk, which would take the whole install down rather than failing
+  // one upload. See docs/operations.md for what they are and when to raise them.
+  const maxRequestBytes = Number(process.env.TICKMARK_MAX_REQUEST_BYTES ?? 2 * 1024 * 1024 * 1024);
+  const maxRequestFiles = Number(process.env.TICKMARK_MAX_REQUEST_FILES ?? 500);
 
   const db = openDatabase(dataFile);
 
@@ -55,7 +60,7 @@ if (process.env.MULTI_TENANT === '1') {
     console.error(`tickmark: mail is misconfigured, so reminders cannot be sent — ${error.message}`);
   }
 
-  const server = createApp(db, { blobDir, maxUploadBytes, mailer });
+  const server = createApp(db, { blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer });
 
   server.listen(port, () => {
     console.log(`tickmark listening on http://localhost:${port}`);

@@ -1208,6 +1208,77 @@ to sixteen tables. The `stack.test.js` list caught the additions, as it is desig
 decision"* — and the decision is written where the list is. No new event kinds: signing in is not something that
 happens to a request.
 
+## Phase 2ac — Safe to run, which is the operator's half of the promise
+
+The product's claim is *your data, on your hardware*. That claim is only worth as much as being able to get the
+data back, and three things stood in the way of that.
+
+### The documented backup was unsafe, and had been for one release
+
+`cp -r data` was correct advice until this release, and it is wrong now — because the previous pass put the
+database into **write-ahead logging**, which keeps recent commits in a `tickmark.db-wal` sidecar rather than in
+the main file. A copy of `data/*.db` on its own can therefore be missing **everything since the last
+checkpoint**, while looking perfectly fine. That is the worst kind of wrong: you find out on the day you need it.
+
+This is why the two changes belong in one pass rather than two. WAL is what lets a second process read a live
+database at all — the thing every operator tool needs — and WAL is exactly what broke the naive copy. Shipping
+WAL without the tool would have been shipping a silent data-loss path.
+
+`tools/backup.mjs` is the replacement:
+
+- **`VACUUM INTO` for the database**, which takes a transactionally consistent snapshot of a *live* database and
+  reads correctly through the WAL. It has been in SQLite since 3.27.
+- **The database first, then the documents.** Every row in the snapshot points at a blob written before the
+  snapshot existed, so every row has a file to find. Copying files first leaves a window where a row points at a
+  file that is not there — a document a practice believes it has. Orphans in the other direction are harmless and
+  are counted rather than ignored.
+- **A manifest written last**, so a manifest only ever describes a copy that finished. An interrupted backup
+  leaves a directory with no manifest, which `--verify` refuses.
+- **`--verify` does the check that matters.** Hashing the database proves the copy has not changed; it says
+  nothing about whether the documents are in it, and a backup missing every file would pass a checksum happily.
+  So verification opens the copy's database and confirms **every upload row's file is present** — and the test
+  proves it *fails* when one is deleted, because a check that cannot fail is decoration.
+
+### The lock that refused in a millisecond
+
+SQLite's default busy timeout is zero, so a second connection touching the same file is refused almost instantly.
+That was invisible while one process served every request — and it is the exact moment a partner phones "I am
+locked out" that somebody runs the password-reset tool against a live server. Five seconds now, and the test is
+not "the pragma is set" but **a child process that waits for a lock and then succeeds**.
+
+`synchronous` is deliberately left at SQLite's default. WAL's own documentation says NORMAL is safe against
+corruption and may lose recent commits on a power cut; trading durability for write speed in an accounting tool
+is not a trade to make quietly. There is a test asserting it stays FULL, so nobody "optimises" it by accident.
+
+### Nothing bounded what one link could store
+
+A per-file ceiling existed; nothing else did. A link is a bearer token anybody holding it can post to, so the
+number of files behind one was never the practice's decision — and a full disk does not fail that upload, it fails
+**SQLite's writes**, taking the whole install down for every practice rather than for the one client.
+
+Two ceilings, both injected so a hosted plan can set its own: **2 GB per link** and **500 files per link**. The
+count matters as much as the bytes, because two hundred thousand tiny files exhausts inodes long before it
+exhausts anything else. Checked **before the body is read**, so a refusal costs no memory and leaves nothing
+behind, and refusal names the room that is left rather than saying "too large".
+
+### The bug the tests caught, and it is the instructive one
+
+**The ceilings were silent no-ops.** The dispatcher builds each handler's context field by field rather than
+passing the whole scope — a deliberate design — and the two new limits were never added to that list. So
+`maxRequestBytes` reached `acceptEnvelope` as `undefined`, and `anything > undefined` is `false`. Every ceiling
+test failed, which is what the tests were for; the comment left at the dispatcher says why a new limit is not in
+force until it is named there.
+
+### What is documented now
+
+`docs/operations.md` is new, and it is the operator's half of the product rather than a footnote: how to take a
+backup while the server is running, why `--verify` is the part that matters, **what a restore actually involves**
+and why there is deliberately no `--restore` command (restoring is a decision about which copy, and one keystroke
+away from losing what is there now), the multi-tenant layout and the per-practice backup loop, the storage
+ceilings and how to raise them, and the one honest interaction — a backup taken during a re-encryption pass.
+
+Eight new tests. 330 in all.
+
 ## Phase 3 — Find out if anyone wants it
 
 

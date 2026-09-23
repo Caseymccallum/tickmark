@@ -234,6 +234,26 @@ const MAX_PRACTICE_NAME = 120;
 const MAX_ITEMS = 50;
 const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
 
+/**
+ * What one client link may store, in total.
+ *
+ * The per-file ceiling above bounds a single upload, and bounds nothing else: a link is a bearer token that
+ * anybody holding it can post to, so the number of files behind one is not something a practice decides. Two
+ * gigabytes and five hundred files is generous for a season's documents — a client scanning everything at high
+ * resolution lands around a tenth of it — and it turns "fill the disk" from something that happens by accident
+ * into something that has to be deliberate.
+ *
+ * Why a count as well as a size: a full disk is not the only way to run out of room. Two hundred thousand
+ * ten-kilobyte files exhausts inodes long before it exhausts bytes, and the symptom is the same — SQLite cannot
+ * write, so the whole install stops rather than the one upload failing.
+ *
+ * **This bounds a link, not a practice.** A practice with sixty clients has sixty of these, so it is a per-link
+ * ceiling and not a storage plan. A total is a billing question, and billing questions belong to the hosted
+ * layer rather than to the product — see docs/operations.md.
+ */
+const DEFAULT_MAX_REQUEST_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_REQUEST_FILES = 500;
+
 /** The browser-side scripts, served by name. An allowlist, so no request can name a path. */
 const ASSETS = new Map([
   ['tickmark-crypto.js', 'application/javascript; charset=utf-8'],
@@ -419,6 +439,8 @@ async function asset({ response, params, webDir }) {
 export function createApp(db, {
   blobDir = 'data/blobs',
   maxUploadBytes = DEFAULT_MAX_UPLOAD,
+  maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
+  maxRequestFiles = DEFAULT_MAX_REQUEST_FILES,
   webDir = join(HERE, '..', 'web'),
   mailer = null,
   // How long a run of reminders may take. Injected so that a test can watch the run stop halfway, which
@@ -469,7 +491,7 @@ export function createApp(db, {
     // The one object every handler below reads from, resolved per request before any routing.
     // Declared here so that the catch block reports against the practice the request was
     // actually answered by, not whichever one started the process.
-    let scoped = { db, blobDir, mailer, chaseBudgetMs, maxUploadBytes, onLinkIssued };
+    let scoped = { db, blobDir, mailer, chaseBudgetMs, maxUploadBytes, maxRequestBytes, maxRequestFiles, onLinkIssued };
 
     try {
       if (preHandle) {
@@ -489,6 +511,10 @@ export function createApp(db, {
           mailer: tenant.mailer ?? mailer,
           chaseBudgetMs: tenant.chaseBudgetMs ?? chaseBudgetMs,
           maxUploadBytes: tenant.maxUploadBytes ?? maxUploadBytes,
+          // A hosted plan's storage ceiling arrives the same way the per-file one does: injected, so plan limits
+          // are a deployment concern and the core never learns what a plan is.
+          maxRequestBytes: tenant.maxRequestBytes ?? maxRequestBytes,
+          maxRequestFiles: tenant.maxRequestFiles ?? maxRequestFiles,
           onLinkIssued: tenant.onLinkIssued ?? onLinkIssued,
         };
       }
@@ -522,6 +548,11 @@ export function createApp(db, {
           ...context,
           blobDir: scoped.blobDir,
           maxUploadBytes: scoped.maxUploadBytes,
+          // These two were missing when the ceilings were first written, and every ceiling test failed — which is
+          // what the tests are for. The dispatcher lists what a handler may have rather than passing the whole
+          // scope, so a new limit is not in force until it is named here.
+          maxRequestBytes: scoped.maxRequestBytes,
+          maxRequestFiles: scoped.maxRequestFiles,
           webDir,
           mailer: scoped.mailer,
           chaseBudgetMs: scoped.chaseBudgetMs,
@@ -5146,10 +5177,35 @@ async function clientSays({ db, request, response, params, mailer }) {
  * Returns null when it has already answered the request with a failure, which is this file's idiom — `fail`
  * writes the response, so a caller only has to return.
  */
-async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, requestId, requestItemId = null }) {
+async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, requestId, requestItemId = null }) {
   const type = String(request.headers['content-type'] ?? '');
   if (!type.startsWith('application/octet-stream')) {
     return fail(response, 415, 'This page sends files as raw bytes, which needs JavaScript to be enabled.');
+  }
+
+  // **Before a byte is read.** The ceiling is checked ahead of the body for the same reason the per-file limit
+  // is enforced by `readBody`: refusing after reading two gigabytes has already spent the memory the refusal was
+  // meant to save. It also means a refused upload leaves nothing behind — no file on disk and no row.
+  const spent = db
+    .prepare('SELECT COUNT(*) AS files, COALESCE(SUM(size_bytes), 0) AS bytes FROM upload WHERE request_id = ?')
+    .get(requestId);
+  if (spent.files >= maxRequestFiles) {
+    return fail(
+      response,
+      413,
+      `This link has reached its limit of ${maxRequestFiles} files. Nothing was stored. Ask the practice to send a fresh link, or to raise the limit.`,
+    );
+  }
+
+  // The size is only known after reading, so this is checked against what has already arrived plus the ceiling,
+  // and enforced again below once the length is known. Two checks rather than one because they answer different
+  // questions: this one refuses early, the other refuses exactly.
+  if (spent.bytes >= maxRequestBytes) {
+    return fail(
+      response,
+      413,
+      `This link has reached its ${(maxRequestBytes / 1024 / 1024 / 1024).toFixed(1)} GB limit. Nothing was stored. Ask the practice to send a fresh link.`,
+    );
   }
 
   // Before anything is read or written: the header helper, because the key check below needs it and a
@@ -5159,6 +5215,17 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
 
   const body = await readBody(request, maxUploadBytes);
   if (body.length === 0) return fail(response, 400, 'That file was empty.');
+
+  // The exact check, now that the length is known. `spent` above could only refuse a link that had *already*
+  // crossed the line; this one refuses the file that would cross it.
+  if (spent.bytes + body.length > maxRequestBytes) {
+    const left = Math.max(0, maxRequestBytes - spent.bytes);
+    return fail(
+      response,
+      413,
+      `That file would take this link past its limit. ${(left / 1024 / 1024).toFixed(1)} MB is left of ${(maxRequestBytes / 1024 / 1024 / 1024).toFixed(1)} GB. Nothing was stored.`,
+    );
+  }
 
   // The server refuses a file it could read. Storing one and calling it encrypted would make
   // the product's central claim false in a way nobody would notice until it mattered.
@@ -5224,7 +5291,7 @@ async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, 
  * It answers no item, so it clears nothing and marks nothing received — the checklist is what the practice
  * asked for, and a client's own addition is not an answer to a question.
  */
-async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, mailer }) {
+async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer }) {
   const found = tokenLookup(db, params[0]);
   if (found.state !== 'open') {
     return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
@@ -5236,6 +5303,8 @@ async function receiveExtra({ db, request, response, params, blobDir, maxUploadB
     response,
     blobDir,
     maxUploadBytes,
+    maxRequestBytes,
+    maxRequestFiles,
     requestId: found.request.id,
   });
   if (!stored) return;
@@ -5303,7 +5372,7 @@ async function clientMessage({ db, request, response, params, mailer }) {
  * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
  * starts joining the filename into a path.
  */
-async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, mailer }) {
+async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer }) {
   const [token, itemId] = params;
   const found = tokenLookup(db, token);
   if (found.state !== 'open') {
@@ -5324,6 +5393,8 @@ async function receiveUpload({ db, request, response, params, blobDir, maxUpload
     response,
     blobDir,
     maxUploadBytes,
+    maxRequestBytes,
+    maxRequestFiles,
     requestId: found.request.id,
     requestItemId: item.id,
   });

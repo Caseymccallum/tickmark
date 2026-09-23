@@ -15,7 +15,8 @@
     "check:pages": "node tools/check-pages.mjs",
     "check:site": "node tools/check-site.mjs",
     "snapshot": "node tools/snapshot.mjs",
-    "reset-password": "node tools/reset-password.mjs"
+    "reset-password": "node tools/reset-password.mjs",
+    "backup": "node tools/backup.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

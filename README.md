@@ -296,6 +296,7 @@ Worth being precise, because it is the product's main claim:
 | `docs/design.md` | The look: what it is, the rules behind it, and how to review a page |
 | `docs/saas.md` | The audit of a multi-tenant codebase, and the plan for wrapping this one — including which parts of it are built and which are unproven |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
+| `docs/operations.md` | Running it for a practice: backup and restore, the storage ceilings, and what a restore means |
 | `docs/roadmap.md` | What comes next and why, including what is deliberately not being built |
 | `docs/verify-demand.md` | The pre-build check: who is asked, what is asked, and what the answers decide |
 | `docs/demand-posts.md` | The posts for that check, ready to send |

@@ -100,6 +100,8 @@ export function createResolver({ registry, pool, defaults = {}, onBlocked = null
       blobDir: join(pool.root, tenant.id, 'blobs'),
       chaseBudgetMs: plan.chaseBudgetMs,
       maxUploadBytes: plan.maxUploadBytes,
+      maxRequestBytes: plan.maxRequestBytes,
+      maxRequestFiles: plan.maxRequestFiles,
       ...defaults,
     };
   }
