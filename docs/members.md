@@ -136,3 +136,10 @@ it in the same pass as A would have meant a single commit where a data migration
 could not be told apart — and when something failed, the culprit would have been unclear. It was still
 worth doing in one pass with A already banked: with one member, the switch is behaviour-preserving, and
 the 113 tests that existed before it were the guard.
+
+**Since those stages.** Three things a membership needs landed afterwards: an invitation can be taken
+back before it is used (`invite.revoked_at`, a status like every other end-of-life column — the members
+page carries the button), a member manages their own account (password and address changes, each
+costing the current password, and a page for where they are signed in), and the owners are told by
+email when a key is added or a membership changes — the change that silently decides who can read what
+arrives next.

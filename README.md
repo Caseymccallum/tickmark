@@ -15,9 +15,11 @@ nothing but the passphrase. [What is encrypted, and what is not](docs/encryption
 account of that, including four things it does not protect.
 
 Every workflow step the research named is built, and `docs/roadmap.md` says where each one's reasoning lives.
-What has not happened is the demand check in `docs/verify-demand.md` — a person asking practitioners, which
-no amount of code can do. That is the honest state of this: feature-complete for a first version, and unproven
-about whether anyone wants it.
+The demand check in `docs/verify-demand.md` has been run once and is still running: practitioners have been
+interviewed (their words, recorded there), and a competitor's own revenue — 1,300 firms paying for "so
+nothing gets chased twice" — settles that the problem is real while leaving the segment open. That is the
+honest state of this: feature-complete for a first version, the need proven by somebody else's invoice, and
+the question narrowed to who buys this one.
 
 What works today: creating a practice, making an encryption key, building a request, **adding to it
 and taking things off it later**, creating a link the client opens with no account, receiving
@@ -80,9 +82,19 @@ Since then, and in the order a practice meets them:
   closure recorded exactly as the single-request path records it.
 - **Your own calendar**: overdue dates are read where *you* are rather than in UTC, which said "overdue" a
   day early in Auckland and a day late in Honolulu for part of every day.
-- **A way back in**: `tools/reset-password.mjs` replaces a lost password from the command line and ends that
-  person's sessions. The passphrase that unwraps the key is untouched and unrecoverable, because that is the
-  design — see [the encryption document](docs/encryption.md).
+- **Your own account**: change your password — it costs the current one, and ends every other session —
+  change your address, and see where you are signed in, with a button per session. And for the day the
+  password is lost entirely, `tools/reset-password.mjs` replaces it from the command line. The passphrase
+  that unwraps the key is untouched and unrecoverable, because that is the design — see [the encryption
+  document](docs/encryption.md).
+- **An invitation you can take back**: a link that hands over a copy of the practice's key can be revoked
+  before it is used, instead of waiting seven days for it to die.
+- **A letter, not a memo**: the ask and the reminder leave as plain text *and* as a styled letter with
+  your name at the top and the link as a button — the same words in both, so what the draft shows is
+  what gets sent.
+- **The change that gets announced**: when a key is added or the membership changes, the owners hear by
+  email. That is the one change that silently decides who can read what arrives next, so it is never
+  silent here.
 - **A mail relay you can test**: a hidden page that sends one message through your own configuration and
   reports the relay's exact reply — `535` for credentials, a refused connection for the port — rather than
   leaving you to guess which of the three things is wrong.
@@ -130,6 +142,10 @@ node src/server.js
 Then open <http://localhost:3000>. It needs Node 24 or later and nothing else — no
 `npm install`, because there are no dependencies to install. Data goes in `data/`.
 
+Behind anything other than localhost, set `TICKMARK_PUBLIC_URL` to the address you reach it at: the
+links inside emails are built from it, and without it they are built from whatever the request claimed.
+`.env.example` has the full list of settings.
+
 You will be asked for a passphrase the first time you try to send a client a link. It protects the
 key your clients' documents are encrypted to, it is never sent to the server, and nothing can
 recover it. Read [the encryption document](docs/encryption.md) before choosing it.
@@ -148,8 +164,10 @@ node tools/check-container.mjs --after-restart # signs back in and opens the fil
 
 It exists because `npm test` cannot check the install path — the suite runs on the host, where `web/` is
 on disk, and the image once built successfully and then died on `ERR_MODULE_NOT_FOUND` because it had
-not copied that directory. `docs/mvp.md` has the design, and `docs/verify-demand.md` is the check that
-was supposed to come before the code.
+not copied that directory. `npm test` runs the suite itself (386 tests today), and CI runs it on both
+Windows and Linux, runs the style/navigation/site checks, renders every page and boots that container
+on every push. `docs/mvp.md` has the design, and `docs/verify-demand.md` has the demand check — run
+once, still running, with the interviews and the decision recorded in it.
 
 ## The problem it exists for
 

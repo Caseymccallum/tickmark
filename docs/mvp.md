@@ -5,7 +5,9 @@ what would make the whole thing not worth building.
 
 ## Where the build is
 
-Written down so that this document is never mistaken for a description of the software.
+Written down so that this document is never mistaken for a description of the software. It records the
+state of the build as each era found it; `CHANGELOG.md` is the running record, and `docs/roadmap.md` is
+the map.
 
 **Built:** accounts and sessions; the practice's ECDH P-256 key, made in the browser and stored
 with the private half wrapped under a passphrase the server never sees; requests, clients and

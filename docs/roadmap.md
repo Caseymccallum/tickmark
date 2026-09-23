@@ -10,7 +10,7 @@ told them it exists.** A feature nobody can find, or that needs a tutorial, is n
 ## Where things stand
 
 ```
-Phase 0   Verify the demand            NOT RUN — and it decides whether Phase 4 matters
+Phase 0   Verify the demand            RUN — interviews recorded; the decision note is open (docs/verify-demand.md)
 Phase 1   Version one                  COMPLETE
 Phase 2   Make it usable in the field
           2a email sending             COMPLETE
@@ -38,20 +38,29 @@ Phase 2   Make it usable in the field
           2x the season notice       COMPLETE — the board says the year has come round, where the practice looks
           2y looking inside a file   COMPLETE — locked PDFs and duplicate files, caught in the browser, before upload
           2z inviting an assistant  COMPLETE — a role on the invite form, and a link that carries no key
-Phase 3   Find out if anyone wants it  RUNNING — posted to two practitioner groups; see docs/verify-demand.md
+          2aa the hardening pass    COMPLETE — a fresh audit's ten findings closed; the account pages, invite
+                                  revocation, and the letter that announces a key or a membership change
+          2ab a strict CSP          COMPLETE — one nonce per response, and no unsafe-inline anywhere
+          2ac the letter and the drill COMPLETE — reminders leave as styled mail; the documented restore
+                                  decrypts a document out of the backup on every run; v0.2.0 tagged
+Phase 3   Find out if anyone wants it  RUNNING — interviews and a competitor's revenue have answered half;
+                                  the other half is real practices, not more posts
 Phase 4   Grow the surface             NOT PLANNED
 ```
 
 **Everything in version one and every phase of Phase 2 is now built.** What is left is not a feature
-list: it is 2k, which has never been driven against a real Stripe account, and Phase 3, which is the
-same question Phase 0 asked and which still has no answer.
+list: it is 2k, which has never been driven against a real Stripe account, and Phase 3's open half —
+who does not buy the incumbent, and whether the privacy wedge matters to a buyer — which now needs real
+practices on the receiving end rather than more posts.
 
 ## Phase 0 — Verify the demand
 
-**Status: not run.** `docs/verify-demand.md` holds the questions and the decision table, written before
-any code; `docs/demand-posts.md` holds the posts ready to send. Nothing in this repository can run it:
-it needs a person asking practitioners, and the table says what their answers mean — including the
-answer *"stop"*.
+**Status: run, and still running.** `docs/verify-demand.md` holds the questions and the decision table,
+written before any code; `docs/demand-posts.md` holds the posts that were sent. The posts drew little.
+What answered instead: practitioners interviewed and recorded in their own words, and a competitor's own
+homepage — 1,300 firms and 800,000 clients paying for *"so nothing gets chased twice"* — which settles
+that the problem is real and leaves the segment open. The decision at the bottom of that file is
+deliberately not yet taken, and the table says what the answers mean — including the answer *"stop"*.
 
 It sits at the top because the projects that failed in this author's history did not fail for want of
 features. They stopped at the point where the interesting work was done.

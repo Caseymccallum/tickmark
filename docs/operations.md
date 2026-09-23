@@ -125,7 +125,7 @@ node src/server.js
 Then **read the lines the server prints.** It says its version and what the schema did:
 
 ```
-tickmark 0.1.0 listening on http://localhost:3000
+tickmark 0.2.0 listening on http://localhost:3000
 schema:   up to date, no migration needed
 ```
 
@@ -144,7 +144,7 @@ printed rather than logged quietly.
 
 ```
 curl localhost:3000/healthz
-{"ok":true,"version":"0.1.0","practices":1}
+{"ok":true,"version":"0.2.0","practices":1}
 ```
 
 **Downgrading is not supported.** Migrations only go forwards, and a database that has been through a rebuild is

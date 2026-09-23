@@ -243,10 +243,11 @@ on purpose; when it arrives it talks to `registry.js` and never to a tenant file
 ### 2.6 The plan, in order — and what was built
 
 All five steps are **built and green** (`test/saas.test.js`, `test/import-tenant.test.js`, and the
-rest of the suite at 190 passing):
+suite at 386 passing):
 
-1. **`resolveTenant` + flag. Built.** `createApp` grew three optional injected dependencies —
-   `resolveTenant`, `onLinkIssued`, `healthCheck` — each defaulting to today's behaviour, so the
+1. **`resolveTenant` + flag. Built.** `createApp` grew optional injected dependencies —
+   `resolveTenant`, `onLinkIssued`, `healthCheck`, and later `preHandle` and `onCredentialChanged` —
+   each defaulting to today's behaviour, so the
    route table and every handler are otherwise untouched. `server.js` checks
    `MULTI_TENANT=1` and delegates to `src/tenancy/entry.js`, which is the only file that wires them
    together. Acceptance: two practices, two files, one process; every page answers only for its own
@@ -417,16 +418,21 @@ and every practice is a directory inside it.
 Ready to **try in a test environment**: yes. Ready to **charge a customer**: not yet, and these are
 the reasons, in the order they would bite:
 
-1. **No password reset.** A practice that forgets its password needs an operator with database
-   access. There is no "forgot password" and no email verification of a new account.
-2. **No rate limiting on `/login` or `/signup`.** The core's own sign-in has the same gap; a
-   public endpoint makes it worth closing.
+1. **No password reset *by email*.** A member can now change their own password from the account
+   pages (it costs the current one), and an operator can replace a lost one with
+   `tools/reset-password.mjs` — but there is still no emailed "forgot password" link and no email
+   verification of a new account. `docs/security.md` keeps both on the list.
+2. **Sign-up is rate limited now — platform sign-in is not.** Both sign-up doors (the core's and
+   this one) cap attempts by address and by caller, and the two-factor actions have a guess budget.
+   `/login` here still has no limit of its own, and a public endpoint makes it worth closing before
+   charging anybody.
 3. **Webhook events are not deduplicated.** Every handler sets state rather than appending to it, so
    a repeated event is harmless — but nothing records which event ids have been seen, so a replay
    inside the five-minute window would be executed twice.
-4. **A password changed inside the practice does not change the registry's copy.** The practice's
-   own pages hash their own password; the gateway hashes the registry's. They are separate records
-   and can drift, which matters for gateway sign-in and password reset.
+4. **A password changed inside the practice did not change the registry's copy — fixed.** The two
+   records (the practice's and the registry's) can still drift at the edges — an operator's CLI reset
+   touches only the practice file — but an ordinary password or address change now mirrors to both
+   through `onCredentialChanged`, so one password stays one password.
 5. **No tenant deletion or export for a leaving customer.** `tools/import-tenant.mjs` goes one way.
 6. **One mail relay for the whole installation.** A hosted practice cannot yet send reminders from
    its own address.

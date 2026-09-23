@@ -130,3 +130,9 @@ status note does not need a letterhead.
 Email HTML follows email's rules rather than the web's: no scripts, no external anything (most
 clients block remote content by default), every style inline, and a table for the frame — because a
 good share of financial inboxes render mail with Microsoft Word.
+
+What the conversation looks like on the wire, recorded: `npm run transcript` runs five real sends
+against the test double — a plain send with the message exactly as it went out, STARTTLS with the
+handshake marked so the login is visibly inside it, `smtps://` from the first byte, the refusal to
+send a password in the clear, and a `550` rendered as the sentence a support ticket needs — and
+writes them to `tmp-transcript/smtp-transcript.md`.

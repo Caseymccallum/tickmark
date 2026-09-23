@@ -3,6 +3,9 @@
 The security half has its own file — `docs/security.md`. This is the other two thirds of the same exercise: the
 feature gaps, and the code.
 
+*This is a record of that day's audit. For what is true now — including the second-pass findings and
+the fixes for the gaps listed below — `docs/security.md` and `CHANGELOG.md` are the living documents.*
+
 Done by reading the source rather than the documentation, because the documentation is what the previous passes
 *claimed* and the source is what is true. Where a number appears below it was measured with `tools/bench.mjs`
 rather than estimated.
