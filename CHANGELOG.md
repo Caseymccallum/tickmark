@@ -12,6 +12,44 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### Every practice on the machine, backed up and checked in one command
+
+Hosting several practices had a documented procedure that could not work. `docs/operations.md` gave a shell loop —
+one `tools/backup.mjs` per directory under `data/tenants` — and then a final line for the registry,
+`tools/backup.mjs --data data`, which looks for `data/tickmark.db`. In a multi-tenant install there is no such file,
+so the last step would have failed every single time and left a fleet backup with no accounts, hosts or subscription
+state in it: every practice a directory nobody could sign in to. Nothing checked any of the results either, and a
+loop prints fifty reassuring lines whether or not one of them lost its documents.
+
+`tools/backup-all.mjs` replaces it. It walks the tenants root, takes each practice and **verifies it before moving to
+the next one**, then takes the registry, then writes `fleet.json` — the file that says which practices this backup
+holds. `tools/backup.mjs --verify` checks a fleet backup too, from the top, so which tool checks what is not something
+an operator has to remember.
+
+Four decisions in it are the ones worth keeping:
+
+- **A practice is backed up because its directory holds a database, not because the registry mentions it.** A tenant
+  the registry has forgotten still has a practice's documents in it, so it is taken — and the discrepancy is reported,
+  because a directory nobody wrote down is worth looking at.
+- **One broken practice does not stop the run, and is never quietly claimed.** It is named, the others are still
+  taken, and it is left out of `fleet.json` rather than counted as a success. The exit code says whether everything
+  was good, so a cron job can tell.
+- **`fleet.json` is written last**, which is the per-practice manifest rule one level up: a run that dies halfway
+  leaves verified practices and no fleet manifest, and verification from the top refuses it — rather than a directory
+  that looks complete and is missing forty practices.
+- **The registry goes last.** It points at the practices; a backup where the registry claims practices that are not
+  there is the one kind of lie a restore cannot detect, while a practice whose registry row is missing is a directory
+  whose own database carries its name.
+
+The take-and-verify half of `tools/backup.mjs` moved into `tools/backup-lib.mjs`, unchanged in behaviour down to the
+wording of its refusals — the existing tests pin those sentences, and a second implementation of the copy order is the
+one thing that would make a second caller dangerous. `test/backup-all.test.js` drills the fleet end to end: two
+practices with real encrypted documents made by the real server, one document decrypted out of a copy with the
+practice's own private key, a practice the registry has forgotten still backed up, one practice deliberately broken and
+named while the rest verify, and an interrupted run refused.
+
+409 tests, all green.
+
 ### The browser's scripts are cached by content, and compressed at last
 
 The scripts a page needs in order to encrypt or move a document were served `no-store`: the right instinct for the

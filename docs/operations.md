@@ -33,6 +33,10 @@ database names is actually present in the copy**. A backup missing every file wo
 
 **Back up somewhere else.** A copy on the same disk is not a backup; it is a second copy of the same problem.
 
+**Hosting several practices?** `tools/backup-all.mjs` does all of the above for every one of them, and the registry
+that names them, in one command with each practice verified as it goes. See *Multi-tenant installs* at the bottom of
+this file.
+
 ### What a restore involves
 
 There is no `--restore` command, deliberately. Restoring is a decision about *which* copy and *what to do with
@@ -56,6 +60,12 @@ running, deletes the original, performs these steps, and decrypts a document out
 5 automated, which is the only end-to-end proof that the key, the envelope and the bytes all came
 across. It also proves `--verify` has teeth and that backups are never overwritten. If that test is
 red, nothing in this section is true any more.
+
+**The multi-tenant version is drilled too.** `test/backup-all.test.js` builds a registry with two practices, each
+holding a real encrypted document, takes the whole fleet, verifies it, and decrypts a document out of one practice's
+copy. It also proves the things a fleet adds: that a practice the registry has forgotten is still backed up, that one
+broken practice is named rather than claimed and does not cost the others their backup, and that a run interrupted
+before `fleet.json` was written is refused from the top.
 
 ### The honest limits
 
@@ -161,20 +171,37 @@ data/tenants/<id>/tickmark.db
 data/tenants/<id>/blobs/
 ```
 
-**Each practice is backed up separately**, and the reason is the same one that made this architecture worth
-having: a practice's documents are in one directory, so copying that directory is copying that practice.
-`tools/backup.mjs` takes one `--data` at a time, so a full backup is a loop:
+**Each practice is backed up separately, and all of them in one command:**
 
 ```
-for tenant in data/tenants/*; do
-  node tools/backup.mjs --data "$tenant" --to "backups/$(date +%F)/$(basename "$tenant")"
-done
-node tools/backup.mjs --data data --to "backups/$(date +%F)/registry"
+node tools/backup-all.mjs --data data --to /wherever/backups/2026-09-23
+node tools/backup-all.mjs --verify /wherever/backups/2026-09-23
 ```
 
-The registry holds no documents and no plaintext — it is accounts, host names and subscription state — but a
-restore needs it, or every practice is a directory nobody can sign in to.
+That walks every directory under `data/tenants` that holds a database, takes each practice's backup, **verifies it
+before moving to the next one**, then takes the registry, and finally writes `fleet.json` — the file that says which
+practices this backup holds. `node tools/backup.mjs --verify` checks a fleet backup too, from the top, so you do not
+have to remember which tool checks which kind.
 
-Copies the registry's `saas.db` alongside the tenants, and `--verify` each one. A directory of practices where
-one failed verification is a directory where one practice has silently lost files, and the way to find out is to
-check, not to hope.
+The reasons for the shape, in the order they matter:
+
+- **The registry is included, and a shell loop could not do it.** The registry holds no documents and no plaintext —
+  accounts, host names and subscription state — but without it every practice is a directory nobody can sign in to.
+  `tools/backup.mjs --data data` looks for `data/tickmark.db`, which a multi-tenant install does not have, so the
+  loop this file used to give would have failed on its last line every time.
+- **A practice is backed up because its directory has a database in it, not because the registry mentions it.** A
+  tenant the registry has forgotten still has a practice's documents in its directory, so it is taken, and the
+  discrepancy is reported so somebody looks at it.
+- **One broken practice does not stop the run, and is never quietly claimed.** Every practice is verified as it
+  goes. A practice that fails is named, the rest are still taken, and it is **left out of `fleet.json`** rather than
+  counted as a success.
+- **`fleet.json` is written last, so an interrupted run is refused rather than mistaken.** A directory with fifty
+  verified practices and no `fleet.json` is not a fleet backup, and both tools say so. That is the same rule as a
+  practice's own manifest, one level up.
+- **Free re-take for one practice:** `--only <id>` backs up a named practice into a fresh directory, which is how
+  one failed practice is re-taken without rewriting the backup you already have.
+
+**Restoring a fleet** is restoring one practice at a time — each practice's directory in this backup *is* a complete
+copy of that practice, in the layout `data/tenants/<id>/` expects — plus the registry's `saas.db` into `data/`, or
+nobody can sign in to any of them. Restore the practice whose day is on fire first, and take your time over the
+rest.

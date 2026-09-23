@@ -18,6 +18,7 @@
     "snapshot": "node tools/snapshot.mjs",
     "reset-password": "node tools/reset-password.mjs",
     "backup": "node tools/backup.mjs",
+    "backup:all": "node tools/backup-all.mjs",
     "bench": "node tools/bench.mjs",
     "bench:breakdown": "node tools/bench-breakdown.mjs",
     "bench:gzip": "node tools/bench-gzip.mjs",
