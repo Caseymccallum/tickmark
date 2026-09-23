@@ -202,6 +202,29 @@ from being the route table it says it is.
 
 392 tests, all green.
 
+### The sign-in pages leave the file, and the split is finished
+
+`src/signin-views.js`, 680 lines: home, the credential forms, sign-up, sign-in, the second factor and sign-out — every
+way into the product and the one way out. `app.js` is **423 lines and 25 KB**: the imports, the route table,
+`contextFor`, `asset` and `createApp`. From the 7,173 lines and 357 KB the audit measured, **94% of the lines and 93%
+of the bytes are gone**, and the file the audit called the one real maintainability problem is the route table it says
+it is.
+
+The last move was the one that had to be last, and it went the way the recipe predicted: the analysis found nothing the
+section needed from `app.js` — `createApp`, `contextFor` and `asset` sit directly above it and stay behind — so the
+thirteenth module left in one cut. Forty-two imports stayed behind with the dispatcher; thirteen names went with the
+pages, `signUpForm` and `signInForm` among them, because the route table hands those two forms straight to the browser
+and they have to be exported rather than private. That is what the analysis's MUST EXPORT column is for, and it caught
+them before a test had to.
+
+The split is finished, and no fifth section was invented to keep it going. `docs/splitting.md` keeps the recipe, the
+tool, and the thirteen modules with what left in each; what it no longer has is a list of what remains. The product is
+the same — 392 tests say so — and the point of arriving back at a few hundred lines is that somebody can now find the
+part of it they need: the board is one file, the chase another, the client's page a third, and `app.js` is the table
+that puts them together.
+
+392 tests, all green.
+
 ### The browser's half, executed rather than served
 
 `web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so
