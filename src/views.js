@@ -446,3 +446,16 @@ export function fail(response, status, message, practitioner = null, extra = nul
     }),
   );
 }
+
+/**
+ * Send a signed-out visitor to the sign-in page. Returns true if the handler may continue.
+ *
+ * The guard every signed-in page opens with, and it lives here rather than in `src/auth.js` because what it does is
+ * answer a request — it redirects — and `auth.js` knows nothing about responses. Both halves of the idiom are load
+ * bearing: the boolean is what a handler checks, and no handler keeps its own copy of the sentence.
+ */
+export function requireSignIn({ practitioner, response }) {
+  if (practitioner) return true;
+  redirect(response, '/signin');
+  return false;
+}

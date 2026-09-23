@@ -6,9 +6,9 @@
  * head is read on its own rather than the file: 84 bytes are allocated for a 20 MB scan, and no path here loads a
  * document into this process's memory.
  *
- * It is its own file because two modules on opposite sides of the product need it, for the same reason and with the
- * same sentence: the client's upload path (refusing to store something a browser did not encrypt) and the practice's
- * replace-a-file route (refusing the same thing on the same grounds). Reading the *whole* file happens in exactly one
+ * It is its own file because two modules on opposite sides of the product need it, and both are refusing the same
+ * thing: the client's upload path will not store something a browser did not encrypt, and the key-retirement pass
+ * will not replace a stored envelope with bytes that are not one. Reading the *whole* file happens in exactly one
  * place — where a response's headers are being decided — and that one streams rather than buffers.
  *
  * Nothing here joins a path: the storage path comes from a row the caller has already scoped to a practice.

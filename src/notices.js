@@ -17,7 +17,7 @@
  */
 import { dateIn, todayIn } from './clock.js';
 import { sendMail } from './mailer.js';
-import { history, itemsOf, lastNoticeAt, practiceFor, recordEvent, requestOwner, uploadsOf } from './store.js';
+import { history, itemsOf, lastNoticeAt, ownersOf, practiceFor, recordEvent, requestOwner, uploadsOf } from './store.js';
 
 /**
  * The message a practice gets when a client does something.
@@ -338,4 +338,34 @@ export function reminderDraft({
   );
 
   return { subject: `Still needed for ${title}`, body: lines.join('\n') };
+}
+
+/**
+ * Tell the practice's owners that something changed about the people or keys that open its documents.
+ *
+ * This is the second automatic email the product sends, and its reason is **detection** rather than
+ * bookkeeping. The attack `src/totp.js` describes — a signed-in member adds a wrapping of their own
+ * and every future client document is silently sealed to them — looks like nothing anywhere in the
+ * interface. It cannot be prevented (the member is legitimately signed in), so the only defence is
+ * that somebody hears about it while it is still routine. Key added, member removed, role changed:
+ * the three events that decide who can read what from then on.
+ *
+ * Best effort by design, like the client notification: none of those three acts may fail because a
+ * mail relay was down, so a failure here is logged and swallowed.
+ */
+export async function tellOwners(db, practiceId, mailer, { subject, lines }) {
+  try {
+    if (!mailer) return 'no-mail-server';
+    const practice = practiceFor(db, practiceId);
+    const owners = ownersOf(db, practiceId);
+    if (owners.length === 0) return 'nobody-to-tell';
+    const body = [...lines, '', 'If this was not you, sign in and check the members and keys pages.', '', ...signOff(practice?.name ?? null)].join('\n');
+    for (const owner of owners) {
+      await sendMail(mailer, { to: owner.email, subject, body });
+    }
+    return 'sent';
+  } catch (error) {
+    console.error(`tickmark: could not tell the practice about "${subject}":`, error);
+    return 'failed';
+  }
 }

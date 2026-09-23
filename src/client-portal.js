@@ -36,6 +36,9 @@ import {
   uploadsOf,
 } from './store.js';
 import { TONES, badge, empty, fail, html, jsonTag, page, raw, redirect, sendJson, sendPage } from './views.js';
+// The envelope format, so that the server can tell an encrypted upload from a plaintext one — which is the whole of
+// what it can do with it. It cannot use the rest of that module: the key needed to open an envelope is wrapped under
+// a passphrase this process has never seen.
 import { ENVELOPE_VERSION, HEADER_BYTES, readEnvelope } from '../web/tickmark-crypto.js';
 
 /**

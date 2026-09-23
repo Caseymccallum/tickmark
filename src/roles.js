@@ -49,13 +49,6 @@ export const ROLE_WORDS = {
   assistant: 'Assistant',
 };
 
-/** One line each, for the picker on the members page. The trade, not the job title. */
-export const ROLE_BLURBS = {
-  owner: 'Everything: the client work, the keys, and who else is in the practice.',
-  accountant: 'The client work — including opening what clients send.',
-  assistant: 'Can ask for documents and chase them, but cannot open what comes back.',
-};
-
 /**
  * What a nothing-in-this-column means, and the project's convention: the behaviour before the column
  * existed. Before roles, every member could do everything, so that is what an absent role reads as.

@@ -336,11 +336,12 @@ every test touches — for a readability gain rather than a behaviour one.
 That leaves `app.js` as the route table, the dispatcher and the sign-in handlers — around 2,000 lines, which is a
 file somebody can read in an afternoon.
 
-**Since this was written, two of the four steps are done** — `src/notices.js` holds the letters and
-`notifyPracticeOfChange`, and `src/client-portal.js` holds the client's page and the five things a client can do on it.
-Between them, `app.js` has gone from 7,173 lines to 6,224, and three helpers that both sides needed moved out to
-`src/views.js`, `src/http.js` and a new `src/blobs.js`. The two view layers below are unstarted; `CHANGELOG.md` has
-both entries.
+**Since this was written, three of the four steps are done** — `src/notices.js` holds the letters and
+`notifyPracticeOfChange`, `src/client-portal.js` holds the client's page and the five things a client can do on it, and
+`src/keys-views.js` holds the key: making one, seeing them, moving files onto a new one, changing a passphrase.
+`app.js` has gone from **7,173 lines to 5,692** (357 KB to 285 KB), and the helpers more than one side needed moved out
+to `src/views.js`, `src/http.js` and a new `src/blobs.js`. The board views — the last row of the table above — are
+unstarted; `CHANGELOG.md` has all three entries.
 
 **Also found, and stated rather than fixed:** three things this audit *thought* were dead code and were not — a
 `href` helper in the board that is used eight times, an unused-looking binding in the first-run card that is live,

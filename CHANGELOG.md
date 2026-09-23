@@ -12,12 +12,12 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
-### The split, two steps in
+### The split, three steps in
 
 `src/app.js` was **357 KB** — the one thing `docs/audit.md` called a real maintainability problem rather than a
-measured trade-off, with a four-step split proposed and nothing done about it. **Two steps are done.** At 6,224 lines
-the file is 949 shorter than when the audit measured it, and what is left of it is the signed-in surface, the assets
-and the route table.
+measured trade-off, with a four-step split proposed and nothing done about it. **Three steps are done.** At 5,692 lines
+the file is 1,481 shorter than when the audit measured it — 285 KB against 357, a fifth of it gone — and what is left is
+the signed-in surface, the members and account pages, the assets and the route table.
 
 **Step one** was the audit's own first choice, for the audit's own reason: no route coupling, and the suite already
 owned it. The letters moved to `src/notices.js` — `arrivalDraft`, `openingDraft`, `reminderDraft`,
@@ -40,10 +40,35 @@ them and a helper left behind becomes a circular import:
   them. Six store imports (`MAX_CLIENT_MESSAGE`, `tokenLookup`, `itemInRequest`, `recordUpload`, `setClientSays`,
   `recordClientMessage`) left `app.js` with the code that was their only user.
 
+**Step three** is the key: `src/keys-views.js`, 526 lines — making one (`setupForm`, `saveKeys`), seeing them
+(`keysPage`), moving files onto a new one (`pendingFor`, `reencryptFile`, `retireKey`, `moveWithoutScript`) and changing
+a passphrase. It is the only module that touches key material, and it does it without ever being able to use it:
+`publicKeyProblem`, `wrappedKeyProblem` and `keyProblem` validate the *shape* of a key and nothing more. Two more
+helpers moved for the same reason as before — `requireSignIn`, the guard thirty-odd signed-in pages open with, to
+`src/views.js`, and `tellOwners`, the letter announcing a key or a membership change, to `src/notices.js` where the
+other letters live. Eleven imports left `app.js` with the code that was their only user, and the whole envelope-format
+import went with them: the server's half of the encryption no longer appears in `app.js` at all. And the note
+describing the keys page, which had drifted hundreds of lines from its function to sit above `saveKeys`, is now above
+`keysPage`.
+
+**A dead export that only an unused import was hiding.** Cleaning up after the move made the `find:unused` gate fail:
+`ROLE_BLURBS` — three sentences describing the roles — had been exported from `roles.js` and rendered nowhere at all.
+The gate could not see it while `app.js` imported it, because the import line itself counted as a reference. The blurbs
+are gone, and the picker on the invite form writes its own copy. A gate that counts references cannot tell an import
+from a use, which is worth knowing about every gate in this repository.
+
 **One bug the move caused, and it is the interesting part.** `CLIENT_SAYS` is a module-level constant that was never
 exported, so it appeared in no import list — and an analysis of *exports* therefore did not find it. The client page
 answered 500 until it moved. Every static check said the seam was clean; the thing that caught it was 392 tests
 driving a link, which is the difference this repository keeps writing down between reading a claim and checking it.
+
+**The same shape of bug happened again in step three, and that is the part worth keeping.** Widening the analysis to
+every top-level declaration worked — nothing was missing from the new module. What went wrong instead was a hand edit:
+rewriting one import line dropped `tellOwners` while the routes that used it stayed behind, and every member-removal
+test went red with `ReferenceError: tellOwners is not defined`. Twice now the failure has been an import list
+disagreeing with the code, and twice the only thing that noticed was the suite — not reading, and not a static check.
+The lesson is not about the analysis being wrong; it is that a mechanical move should stay mechanical, and that 392
+tests driving real pages remain the only check here that reads the whole system.
 
 ### The browser's half, executed rather than served
 
