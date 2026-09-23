@@ -127,3 +127,23 @@ Two notes for whoever does it:
 - **The client records and the templates both use `parseItems`**, which lives in `http.js` — so neither needs a helper
   rehomed in step 3. Their turn may be the first since step one where nothing has to move out of `app.js` before the
   section does.
+
+## Picking this up in a fresh session
+
+Read this file first, then the entries under *The split* in `CHANGELOG.md` — they carry the reasoning, and the three
+mistakes with what caught each one. `docs/audit.md` §3 has why the file was split at all.
+
+**Where it stands.** `app.js` is 2,326 lines and 117 KB, down from 7,173 and 357 KB: two thirds of it gone, the product
+unchanged, 392 tests green and every check passing. Nine modules have left it — `notices` (405), `client-portal` (607),
+`keys-views` (526), `board-views` (1,096), `members-views` (720), `chase-views` (626), `account-views` (261),
+`request-actions` (737) and `blobs` (30) — and fifteen helpers now live in `views`, `http`, `clock`, `store`, `auth` and
+`notices`. The last move needed none rehomed at all, which is the sign the seams are in the right places.
+
+**Do the four remaining sections one at a time, and commit each.** Six commits took the file from 7,173 lines to 2,326;
+eleven are not worse than six, and a half-moved section cannot be verified.
+
+**The one thing that has gone wrong three times is an import list disagreeing with the code.** Two were names the
+analysis could not report because they were never exported. The third was a name it *did* report and the transcription
+got wrong: two import lines merged into one, so `stat` came from `node:fs` — the callback API — instead of
+`node:fs/promises`, and every test that served an envelope failed. So copy the analysis's import list **verbatim, one
+module per line**, and run the unused-import scan afterwards to catch the orphans in the other direction.
