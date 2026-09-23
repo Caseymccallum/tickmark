@@ -14,6 +14,7 @@
  * kind of red.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -50,11 +51,36 @@ export function agent(base) {
 }
 
 /**
+ * One request, raw: the status, the headers exactly as sent, and the bytes exactly as they arrived.
+ *
+ * `fetch` decompresses transparently and hides what a test like this needs to see — whether the bytes were
+ * compressed, what `content-length` says, whether the answer was a 304 — so a raw socket is the only way to ask.
+ * One copy, here, for the same reason the cookie jar is one copy.
+ */
+export function raw(base, path, { headers = {} } = {}) {
+  const url = new URL(base + path);
+  return new Promise((resolve, reject) => {
+    const call = httpRequest(
+      { hostname: url.hostname, port: url.port, path: url.pathname + url.search, headers },
+      (answer) => {
+        const chunks = [];
+        answer.on('data', (chunk) => chunks.push(chunk));
+        answer.on('end', () =>
+          resolve({ status: answer.statusCode, headers: answer.headers, body: Buffer.concat(chunks) }),
+        );
+      },
+    );
+    call.on('error', reject);
+    call.end();
+  });
+}
+
+/**
  * Start the real server on a port nobody chose, in a data directory that is thrown away
  * afterwards — including the uploaded blobs, because a test that leaves files behind is a
  * test that fills a disk.
  */
-export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter } = {}) {
+export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter, webDir } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'tickmark-test-'));
   const blobDir = join(directory, 'blobs');
   const db = openDatabase(join(directory, 'tickmark.db'));
@@ -68,6 +94,7 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
     signInLimiter,
     signUpLimiter,
     clientLimiter,
+    webDir,
   });
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://127.0.0.1:${server.address().port}`;

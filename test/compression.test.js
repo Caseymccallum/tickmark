@@ -3,36 +3,17 @@
  *
  * `fetch` decompresses transparently, so a test written with it can prove the body round-trips but cannot prove the
  * bytes were ever compressed, what `content-length` says, or what happens when a client says it does not want its
- * response altered. This opens a raw socket instead, because those are the questions that matter.
+ * response altered. This opens a raw socket instead, because those are the questions that matter — the socket helper
+ * is `raw` in `test/helpers.js`, where the asset tests use it too.
  *
  * 88% of a Tickmark page is the inlined stylesheet, and the stylesheet is inlined so that a page needs no second
  * request — so this is where the bytes are, and it is worth an assertion rather than a shrug.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { request as httpRequest } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 
-import { createLink, denonce, practiceWithRequest, upload, withServer } from './helpers.js';
-
-/** One request, raw: the status, the headers as sent, and the bytes exactly as they arrived. */
-function raw(base, path, { headers = {} } = {}) {
-  const url = new URL(base + path);
-  return new Promise((resolve, reject) => {
-    const call = httpRequest(
-      { hostname: url.hostname, port: url.port, path: url.pathname + url.search, headers },
-      (answer) => {
-        const chunks = [];
-        answer.on('data', (chunk) => chunks.push(chunk));
-        answer.on('end', () =>
-          resolve({ status: answer.statusCode, headers: answer.headers, body: Buffer.concat(chunks) }),
-        );
-      },
-    );
-    call.on('error', reject);
-    call.end();
-  });
-}
+import { createLink, denonce, practiceWithRequest, raw, upload, withServer } from './helpers.js';
 
 test('a page is compressed when the browser asks, and the numbers add up', async (t) => {
   await withServer(async ({ base, agent, db }) => {

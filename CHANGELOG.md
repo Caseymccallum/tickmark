@@ -12,6 +12,30 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### The browser's scripts are cached by content, and compressed at last
+
+The scripts a page needs in order to encrypt or move a document were served `no-store`: the right instinct for the
+wrong reason. A browser holding an old copy of the encryption script is a class of bug this product cannot afford, so
+the answer taken was to never let it hold one — at the cost of re-sending the file on every visit. They are served
+`no-cache` with an `ETag` now, which gets both halves: the browser may keep the file, must ask before using it, and is
+told *not modified* unless the bytes have actually changed. The hash is taken from the bytes being sent rather than
+from a remembered copy, because a remembered hash beside a freshly read body is a 304 that lies — the exact failure
+`no-store` was there to prevent. `test/assets.test.js` rewrites a script underneath a running server and asserts the
+validator moves with it.
+
+They had never been compressed either: the asset route was the one place in the product that skipped `acceptableBody`,
+and nothing tested it. A client's page pulls `upload.js`, `preflight.js` and the crypto module — 28.4 KB of scripts,
+re-sent on every visit to the one page somebody opens on a phone on a train. That is **11.0 KB** on a first visit now,
+and on a repeat one a 304 and its headers.
+
+The compression numbers in `src/http.js` were re-measured while passing, because they had drifted with the sheet: a
+page is 43 KB rather than 37.9, and **brotli has changed sides** on the larger sheet — quality 5 takes the stylesheet
+to 10.9 KB where gzip's level 1 takes it to 13.6, for 2.5 ms against 1.0. Stated rather than switched: every page
+inlines the sheet, so a live server pays that CPU on every response, and the paragraph says where to measure again if
+bandwidth ever matters more than CPU.
+
+406 tests, all green.
+
 ### The tests reach the browser's other half, and the checks learn arithmetic
 
 Two things were true and are now not. Five of the nine browser modules — `setup.js`, `keys.js`, `reencrypt.js`,

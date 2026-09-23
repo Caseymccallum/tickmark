@@ -55,26 +55,30 @@ export function readBody(request, limit = 64 * 1024) {
 /**
  * Compression, and why this product does it in-process rather than leaving it to a proxy.
  *
- * **The case for it**, measured on a real page: 37.9 KB of HTML — of which 33 KB is the stylesheet, which is inlined
- * on purpose so a page needs no second request — compresses to 8.3 KB. That is 22% of the bytes for **0.76 ms** of
- * CPU. On a slow connection it is the difference between 39 ms and 8 ms of transfer for every single navigation, and
- * a practice on a VPN or a poor line feels that far more than they feel anything the server does.
+ * **The case for it**, measured on a real page: 43 KB of HTML — of which 42.8 KB is the stylesheet, which is inlined
+ * on purpose so a page needs no second request — compresses to 11.4 KB at gzip's default level and 13.6 KB at the
+ * level this actually uses. That is a quarter of the bytes for about a millisecond of CPU. On a slow connection it is
+ * the difference between 43 KB and 13.6 KB of transfer for every single navigation, and a practice on a VPN or a poor
+ * line feels that far more than they feel anything the server does.
  *
  * The deployment documentation says to put a reverse proxy in front, and a proxy would gzip as well. This is for the
  * installs that do not have one — a machine on a local network, a trial, a VPS behind nothing — which is a real share
  * of how this gets run, and the whole reason the product has no build step and no dependencies.
  *
- * **gzip rather than brotli**, which is the wrong way round from habit: brotli wins on JavaScript and on text with a
- * large dictionary, and this content is highly repetitive CSS and HTML where gzip measured *smaller* (8.3 KB against
- * 8.5 KB) as well as cheaper to compute.
+ * **gzip rather than brotli, re-measured rather than assumed.** On that 42.8 KB sheet: gzip level 1 gives 13.6 KB in
+ * 1.0 ms, gzip level 6 gives 11.4 KB for the same, and brotli at quality 5 gives **10.9 KB for 2.5 ms**. So brotli is
+ * smaller on this content now — half a kilobyte, for a millisecond and a half more CPU on every response, and every
+ * page inlines the sheet. That is the level-1-against-6 trade one rung up, and it lands the same way for a live
+ * server; a proxy in front can spend that CPU once and cache the result. If bandwidth ever matters more than CPU
+ * here, this is the paragraph to measure again.
  *
  * **Level 1, not the default 6**, and `tools/bench-gzip.mjs` is why. Measured on the three shapes of page this product
  * sends:
  *
  * | | level 1 | level 6 |
  * | --- | --- | --- |
- * | a page with one row (33 KB) | 10.2 KB in 0.48 ms | 8.4 KB in 0.67 ms |
- * | a board with 500 rows (122 KB) | 12.1 KB in 0.37 ms | 10.3 KB in 0.93 ms |
+ * | a page with one row (43 KB) | 13.8 KB in 0.44 ms | 11.5 KB in 0.78 ms |
+ * | a board with 500 rows (132 KB) | 15.8 KB in 0.44 ms | 13.5 KB in 1.20 ms |
  *
  * Level 1 is where the knee is: on the biggest page it sends 1.8 KB more and costs **0.56 ms less**. Higher levels buy
  * progressively fewer bytes for progressively more CPU, which is the right trade for an archive and the wrong one for

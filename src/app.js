@@ -23,6 +23,7 @@
  *    operator and answered with a sentence, because a stack trace in a browser is
  *    information for an attacker and nothing for a user.
  */
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 
 import { readFile } from 'node:fs/promises';
@@ -30,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { practitionerFor } from './auth.js';
-import { RequestError } from './http.js';
+import { RequestError, acceptableBody, withEncoding } from './http.js';
 import { SECURITY_HEADERS, fail, requireSignIn, sendJson } from './views.js';
 
 import { VERSION } from './version.js';
@@ -245,8 +246,21 @@ async function contextFor(db, request, response, url, params) {
  * allowlist — so a request cannot name a path that does not exist as a key in this map. There
  * is no path joining of anything the caller sent, which is why there is no traversal to test
  * for.
+ *
+ * **Cached by content, so it cannot be stale.** These were served `no-store`, because a browser holding an
+ * old copy of the encryption script is a class of bug this product cannot afford: a page that encrypts to a
+ * key the practice has retired looks like it worked. `no-cache` with an `ETag` gets both halves — the
+ * browser may keep the file, must ask before using it, and is told *not modified* unless the bytes have
+ * actually changed. The hash is taken **of the bytes in hand** rather than of a remembered copy, because a
+ * remembered hash served beside a freshly read body is a 304 that lies, which is the exact failure
+ * `no-store` was there to prevent. `test/assets.test.js` rewrites a file underneath a running server and
+ * asserts the validator moves with it.
+ *
+ * Compressed like every other text response, which these were not before: a client's page pulls
+ * `upload.js`, `preflight.js` and the crypto module — 28 KB of scripts, on the page somebody opens on a
+ * phone on a train.
  */
-async function asset({ response, params, webDir }) {
+async function asset({ request, response, params, webDir }) {
   const type = ASSETS.get(params[0]);
   if (!type) return fail(response, 404, 'There is no such file here.');
   let body;
@@ -255,15 +269,19 @@ async function asset({ response, params, webDir }) {
   } catch {
     return fail(response, 404, 'There is no such file here.');
   }
-  response.writeHead(200, {
-    ...SECURITY_HEADERS,
-    'content-type': type,
-    'content-length': body.length,
-    // Not cached: a stale copy of the encryption script is a class of bug this product cannot
-    // afford, and the file is a few kilobytes.
-    'cache-control': 'no-store',
-  });
-  return response.end(body);
+
+  const { body: sent, encoding } = acceptableBody(response, body, type);
+  const etag = `"${createHash('sha256').update(sent).digest('base64url')}"`;
+  const headers = withEncoding({ ...SECURITY_HEADERS, etag, 'cache-control': 'no-cache' }, encoding);
+
+  // The browser already holds these exact bytes, so the whole of the answer is that nothing has changed.
+  if (String(request.headers['if-none-match'] ?? '') === etag) {
+    response.writeHead(304, headers);
+    return response.end();
+  }
+
+  response.writeHead(200, { ...headers, 'content-type': type, 'content-length': sent.length });
+  return response.end(sent);
 }
 
 export function createApp(db, {
