@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseItems } from '../src/app.js';
-import { PASSWORD, signUp, withServer } from './helpers.js';
+import { PASSWORD, denonce, signUp, withServer } from './helpers.js';
 
 // The cookie jar and the server-starting helper live in `helpers.js`, shared with the
 // link tests: two copies of a harness are two chances for it to be wrong in different
@@ -135,9 +135,9 @@ test('one practice cannot see another practice\'s request, and cannot tell that 
     const nonsense = await theirs.get('/requests/00000000-0000-0000-0000-000000000000');
     assert.equal(nonsense.status, 404);
     assert.equal(
-      await peek.text(),
-      await nonsense.text(),
-      'a foreign request and an imaginary one must be indistinguishable',
+      denonce(await peek.text()),
+      denonce(await nonsense.text()),
+      'a foreign request and an imaginary one must be indistinguishable (modulo the per-response nonce)',
     );
   });
 });

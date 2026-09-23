@@ -724,7 +724,23 @@ const CLIENT_AND_MISC = `
 `;
 
 /**
+ * Column widths, as classes.
+ *
+ * They were inline `style="width: …"` attributes on colgroup columns and header cells — and a strict
+ * Content-Security-Policy refuses style *attributes*: a nonce can bless a `<style>` block, never an
+ * attribute. So the widths live here, where styling lives, and the markup says `class="w34"` instead
+ * of inventing a number per table. (`tools/check-pages.mjs` fails a page that brings one back.)
+ */
+const WIDTHS = `
+.w8  { width: 8%; }  .w9  { width: 9%; }  .w10 { width: 10%; } .w12 { width: 12%; }
+.w14 { width: 14%; } .w15 { width: 15%; } .w17 { width: 17%; } .w18 { width: 18%; }
+.w21 { width: 21%; } .w22 { width: 22%; } .w23 { width: 23%; } .w24 { width: 24%; }
+.w26 { width: 26%; } .w29 { width: 29%; } .w30 { width: 30%; } .w32 { width: 32%; }
+.w34 { width: 34%; } .w42 { width: 42%; } .w44 { width: 44%; } .w55 { width: 55%; }
+.w78 { width: 78%; }`;
+
+/**
  * The sheet, assembled. Order matters only in that later sections may refine earlier ones; nothing
  * here needs to win an argument with a `!important`.
  */
-export const STYLE = `${TOKENS}\n${BASE}\n${COMPONENTS}\n${FORMS}\n${TABLES}\n${SURFACES}\n${CLIENT_AND_MISC}`;
+export const STYLE = `${TOKENS}\n${BASE}\n${COMPONENTS}\n${FORMS}\n${TABLES}\n${SURFACES}\n${CLIENT_AND_MISC}\n${WIDTHS}`;

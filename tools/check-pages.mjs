@@ -20,7 +20,17 @@ for (const file of files) {
 
   if (page.includes('undefined')) issues.push('contains "undefined"');
   if (page.includes('[object Object]')) issues.push('contains "[object Object]"');
-  if (count(page, '<style>') !== count(page, '</style>')) issues.push('unbalanced style tags');
+  if (count(page, '<style') !== count(page, '</style>')) issues.push('unbalanced style tags');
+  // The three things a strict Content-Security-Policy refuses and a careless edit reintroduces. The
+  // nonce cannot bless a style *attribute* or an inline *handler*, and an un-stamped placeholder is a
+  // page whose styling the browser silently discards. Keeping these out of the product is everyone's
+  // job, so this checks every rendered page rather than trusting the review.
+  if (/\sstyle="/.test(page)) issues.push('has an inline style attribute');
+  if (/\s(?:on(?:click|load|error|submit|change|focus|blur|input|keydown|keyup|dblclick|contextmenu|toggle|animationend|pointerdown|pointerup))="/.test(page)) {
+    issues.push('has an inline event handler');
+  }
+  if (!page.includes('<style nonce="')) issues.push('no nonced style block');
+  if (page.includes('{{nonce}}')) issues.push('an un-stamped nonce placeholder');
   if (count(page, '{') !== count(page, '}')) issues.push('unbalanced braces');
   if (!page.includes('<svg class="mark"')) issues.push('no brand mark');
   if (!page.includes('<footer class="foot">')) issues.push('no footer');

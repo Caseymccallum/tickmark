@@ -82,6 +82,13 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
 
 export const PASSWORD = 'a long enough password';
 export const PASSPHRASE = 'a passphrase long enough';
+
+/**
+ * Two fetches of one page differ in exactly one thing: the CSP nonce is per response by design (see
+ * `src/views.js`), so tests that compare rendered bodies compare them modulo their nonces. One
+ * helper, because two normalisers would be two chances to drift from what the server stamps.
+ */
+export const denonce = (markup) => markup.replace(/nonce="[A-Za-z0-9_-]+"/g, 'nonce="…"');
 export const signUp = (client, email, password = PASSWORD) => client.post('/signup', { email, password });
 
 /**

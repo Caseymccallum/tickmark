@@ -30,6 +30,10 @@ shape of it is here:
   client directory aggregates in two grouped joins rather than four subqueries per client, and expired sessions
   are swept at open. The documents list — the one list that grows forever — pages at a hundred with "Show more";
   the CSV still gives everything.
+- **A Content-Security-Policy, at last** — the last thing `docs/security.md` admitted to. One nonce per
+  response, minted and stamped where every page already passes through; no `unsafe-inline` anywhere; and
+  the inline widths and click-handlers a strict policy refuses became classes and one nonced script.
+  `check:pages` fails any rendered page that brings either back.
 
 **The schema changed**: `invite` gained `revoked_at` (added in place, and present in the rebuild path — see
 `docs/operations.md`).

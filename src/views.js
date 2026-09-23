@@ -11,6 +11,8 @@
  *
  * The stylesheet lives in `style.js` — what a page says and how it looks are separate files.
  */
+import { randomBytes } from 'node:crypto';
+
 import { STYLE } from './style.js';
 import { acceptableBody, withEncoding } from './http.js';
 
@@ -22,6 +24,17 @@ class Safe {
 
 /** Mark a string as already-safe markup. Use sparingly; every use is auditable. */
 export const raw = (value) => new Safe(String(value));
+
+/**
+ * Where the per-response CSP nonce goes, and how it gets there.
+ *
+ * The value is minted and stamped in `sendPage` — the one seam every page already passes through —
+ * rather than threaded through sixty render sites, which is how nonces get forgotten. The
+ * placeholder is only ever replaced **as a whole attribute** (`nonce="{{nonce}}"` → `nonce="…"`),
+ * and every occurrence of that exact attribute text is one this file wrote: user content cannot
+ * forge it, because escaping turns any quote in user text into `&quot;` long before the stamp runs.
+ */
+export const NONCE_PLACEHOLDER = 'nonce="{{nonce}}"';
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
@@ -172,7 +185,7 @@ export function page({
   <title>${title} · Tickmark</title>
   <link rel="icon" href="${FAVICON}">
   <meta name="color-scheme" content="light dark">
-  <style>${raw(STYLE)}</style>
+  <style ${raw(NONCE_PLACEHOLDER)}>${raw(STYLE)}</style>
 </head>
 <body>
   <header class="top">
@@ -206,6 +219,7 @@ export function page({
     arrives. Files are encrypted in the browser before they are sent; the server stores what it
     cannot read.
   </footer>
+  <script ${raw(NONCE_PLACEHOLDER)}>for (const el of document.querySelectorAll('[data-select-on-click]')) el.addEventListener('click', () => { el.focus(); el.select(); });</script>
 </body>
 </html>`;
 }
@@ -276,16 +290,21 @@ export function empty(heading, sentence, action = null) {
  * - **`X-Frame-Options: DENY`** — nobody should be able to put a Tickmark page in an iframe, because the buttons
  *   on these pages are "close this request", "remove this member" and "turn two-factor off". Clickjacking a
  *   practice into switching its own second factor off is a cheap attack and this is a cheap answer to it. (The
- *   modern spelling of this is `frame-ancestors` in a CSP; there is no CSP yet, and one mechanism that works
- *   today is worth more than one that would work if something else existed.)
+ *   policy now says `frame-ancestors 'none'` as well; the header stays for the browsers that predate it —
+ *   one mechanism that works everywhere beats one that works only where things are new.)
  * - **`Cross-Origin-Opener-Policy: same-origin`** — the encryption and decryption happen in this page's own
  *   scripts. Nothing here opens a window or embeds a frame, so nothing needs a reference to one.
  *
- * **No `Content-Security-Policy` yet**, and that is a decision with a reason rather than an omission: the pages
- * are built from inline `<style>` and small inline `<script type="application/json">` blocks, so a policy strict
- * enough to be worth having needs a nonce per response threaded through every rendering path. That is a real
- * piece of work rather than a header, and it is written down in `docs/security.md` as the next thing to do here
- * rather than left for somebody to notice.
+ * **A `Content-Security-Policy`**, and this is the whole of it: `default-src 'none'` with a per-response
+ *   nonce blessing the one inline `<style>` block and the one inline script, `script-src 'self'` for the
+ *   browser-side modules under `/assets`, `img-src 'self' data:` for the data-URI favicon, `connect-src`
+ *   'self' for the fetches those modules make, `base-uri 'none'`, `form-action 'self'`, and
+ *   `frame-ancestors 'none'`. No `unsafe-inline` anywhere — a policy containing it would be decoration.
+ *   The nonce is minted and stamped in `sendPage` (see `NONCE_PLACEHOLDER`), which is why nothing in
+ *   the rendering path has to remember it. The two things a nonce cannot bless — inline `style="…"`
+ *   attributes and inline `on…=` handlers — do not exist anywhere in the product: the widths are
+ *   classes in `src/style.js`, and "click selects this field" is one nonced script plus a data
+ *   attribute. `tools/check-pages.mjs` refuses a rendered page that reintroduces either.
  *
  * **No `Strict-Transport-Security`** either, deliberately: this software is often run over plain HTTP on a
  * local network, and a browser told to refuse HTTP for the host cannot be un-told for the length of the
@@ -300,13 +319,28 @@ export const SECURITY_HEADERS = {
   'cross-origin-opener-policy': 'same-origin',
 };
 
+/**
+ * What the policy allows, and nothing else. One function because the nonce is per response — a
+ * constant here would be a nonce shared by every visitor, which is a nonce that means nothing.
+ */
+const policyWith = (nonce) =>
+  `default-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'nonce-${nonce}'; ` +
+  `img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+
 /** Send a rendered page. */
 export function sendPage(response, status, rendered, cookies = []) {
   const type = 'text/html; charset=utf-8';
-  const { body, encoding } = acceptableBody(response, Buffer.from(rendered.value, 'utf8'), type);
+  // Minted here and stamped into both the header and the page, because this is the one place every
+  // page passes through. Threading a nonce through sixty render sites is how a nonce gets forgotten
+  // in the sixty-first — and an un-stamped `nonce="{{nonce}}"` is a page whose styling the browser
+  // silently throws away.
+  const nonce = randomBytes(16).toString('base64url');
+  const stamped = rendered.value.replaceAll(NONCE_PLACEHOLDER, `nonce="${nonce}"`);
+  const { body, encoding } = acceptableBody(response, Buffer.from(stamped, 'utf8'), type);
   const headers = withEncoding(
     {
       ...SECURITY_HEADERS,
+      'content-security-policy': policyWith(nonce),
       'content-type': type,
       'content-length': body.length,
     },

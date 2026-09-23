@@ -3012,7 +3012,7 @@ function askEveryoneReportPage({ practitioner, template, title, results, without
         : ''}
 
       <div class="scroll"><table>
-        <colgroup><col style="width:26%"><col style="width:32%"><col style="width:42%"></colgroup>
+        <colgroup><col class="w26"><col class="w32"><col class="w42"></colgroup>
         <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr></thead>
         <tbody>
           ${results.map((entry) => html`<tr>
@@ -3086,10 +3086,10 @@ function templatesPage({ db, response, practitioner, practiceId, url }) {
         ? empty('No templates yet', 'Make one below — or open a request and save its list, which is less typing if the list already exists.')
         : html`<div class="scroll"><table>
             <thead><tr>
-              <th style="width: 34%">Name</th>
-              <th style="width: 10%">Documents</th>
-              <th style="width: 30%">Standing note</th>
-              <th class="num" style="width: 26%">Use it</th>
+              <th class="w34">Name</th>
+              <th class="w10">Documents</th>
+              <th class="w30">Standing note</th>
+              <th class="num w26">Use it</th>
             </tr></thead>
             <tbody>
               ${templates.map((template) => html`<tr>
@@ -3173,7 +3173,7 @@ function templatePage({ db, response, practitioner, practiceId, params, url }) {
         ${found.items.length === 0
           ? empty('Nothing on it yet', 'Add the documents below, one per line.')
           : html`<div class="scroll"><table>
-              <thead><tr><th style="width: 78%">Document</th><th class="num" style="width: 22%">Remove</th></tr></thead>
+              <thead><tr><th class="w78">Document</th><th class="num w22">Remove</th></tr></thead>
               <tbody>
                 ${found.items.map((item) => html`<tr>
                   <td><span class="cell-t">${item.label}</span>${item.note ? html`<span class="cell-s">${item.note}</span>` : ''}</td>
@@ -3482,8 +3482,8 @@ function filesPage({ db, response, practitioner, practiceId, url }) {
               : ''}.</p>
             <div class="scroll"><table class="wide">
               <colgroup>
-                <col style="width:30%"><col style="width:17%"><col style="width:23%">
-                <col style="width:12%"><col style="width:8%"><col style="width:10%">
+                <col class="w30"><col class="w17"><col class="w23">
+                <col class="w12"><col class="w8"><col class="w10">
               </colgroup>
               <thead><tr>
                 <th align="left">File</th><th align="left">Client</th><th align="left">Request</th>
@@ -4043,13 +4043,14 @@ const CHASE_BUDGET_MS = 120000;
 /**
  * A block of text the practice is meant to copy.
  *
- * `onclick` selecting the contents is the whole interaction: a practice with a mouse clicks once
+ * `data-select-on-click` selecting the contents is the whole interaction: a practice with a mouse clicks once
  * and types Ctrl-C, which is one more step than a copy button and one fewer than a broken
- * clipboard API in a page served over plain HTTP.
+ * clipboard API in a page served over plain HTTP. The behaviour is one nonced script in `src/views.js`,
+ * because a strict CSP refuses inline `on…=` handlers — a nonce can bless a script, never an attribute.
  */
 const copyableField = (name, text, rows) => html`
   <label for="${name}">${name}</label>
-  <textarea id="${name}" rows="${rows}" readonly onclick="this.focus(); this.select();">${text}</textarea>`;
+  <textarea id="${name}" rows="${rows}" readonly data-select-on-click>${text}</textarea>`;
 
 /**
  * Draft the reminder, and make the link it needs.
@@ -4398,7 +4399,7 @@ function reminderPage({
         </div>
         <div class="field">
           <label for="message">Message <span class="note">what you see is what gets sent</span></label>
-          <textarea id="message" name="message" rows="18" onclick="this.focus(); this.select();">${draft.body}</textarea>
+          <textarea id="message" name="message" rows="18" data-select-on-click>${draft.body}</textarea>
         </div>
         ${canSend
           ? html`<button type="submit">Send it to ${found.client_email}</button>`
@@ -4641,8 +4642,8 @@ function chasePage({ db, response, practitioner, practiceId, mailer, url }) {
       )
     : html`<div class="scroll"><table class="chase">
         <colgroup>
-          <col style="width:17%"><col style="width:24%"><col style="width:29%">
-          <col style="width:18%"><col style="width:12%">
+          <col class="w17"><col class="w24"><col class="w29">
+          <col class="w18"><col class="w12">
         </colgroup>
         <thead>
           <tr>
@@ -5020,7 +5021,7 @@ function chaseReportPage({ practitioner, results, skipped, held = [], cadenceDay
       ${results.length + skipped.length + held.length === 0
         ? empty('There was nothing to send.', 'Nobody owed anything that this run could write to.')
         : html`<div class="scroll"><table>
-            <colgroup><col style="width:22%"><col style="width:34%"><col style="width:44%"></colgroup>
+            <colgroup><col class="w22"><col class="w34"><col class="w44"></colgroup>
             <thead>
               <tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr>
             </thead>
@@ -6143,7 +6144,7 @@ function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
         <div class="actions"><button type="submit">Save</button></div>
       </form>
       <div class="scroll"><table class="members">
-        <colgroup><col style="width:34%"><col style="width:14%"><col style="width:34%"><col style="width:18%"></colgroup>
+        <colgroup><col class="w34"><col class="w14"><col class="w34"><col class="w18"></colgroup>
         <thead>
           <tr><th align="left">Email</th><th align="left">Joined</th><th align="left">Can open the newest files?</th><th align="left"></th></tr>
         </thead>
@@ -6778,7 +6779,7 @@ function keysPage({ db, response, practitioner, practiceId, url }) {
         ? html`<p class="info">There is no key yet. <a href="/setup">Make one</a> and clients can start
             sending.</p>`
         : html`<div class="scroll"><table class="keys">
-            <colgroup><col style="width:15%"><col style="width:21%"><col style="width:9%"><col style="width:55%"></colgroup>
+            <colgroup><col class="w15"><col class="w21"><col class="w9"><col class="w55"></colgroup>
             <thead>
               <tr>
                 <th align="left">Made</th>

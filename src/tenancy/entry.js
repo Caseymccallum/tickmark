@@ -14,6 +14,7 @@ import { join } from 'node:path';
 
 import { createApp } from '../app.js';
 import { mailerFromEnvironment } from '../mailer.js';
+import { sendPage } from '../views.js';
 
 import { createGateway } from './gateway.js';
 import { createPool } from './pool.js';
@@ -46,8 +47,10 @@ export function createSaasServer({
       // handler would have been given. Without it the wall's header offered "Sign in" to somebody who was already
       // signed in, and the page had no way out except the Back button.
       const account = response.req ? accountForRequest(registry, response.req) : null;
-      response.writeHead(402, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(billingWallPage({ tenant, status, account }).value);
+      // Through `sendPage` rather than a hand-rolled `writeHead`: the wall is a page like any other,
+      // and `sendPage` is where the security headers and the per-response nonce are stamped. A wall
+      // written by hand would ship with neither — and with a raw nonce placeholder in its markup.
+      sendPage(response, 402, billingWallPage({ tenant, status, account }));
     },
   });
 

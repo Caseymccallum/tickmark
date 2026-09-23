@@ -67,7 +67,7 @@ Three of the four added are specific to this product rather than general hardeni
 They ride on every response type — pages, JSON, CSV and served documents — not only on the ones that render HTML,
 because the document response is the one a browser could most easily be persuaded to misinterpret.
 
-### 4. No Content-Security-Policy — **deliberately not done, and here is why**
+### 4. No Content-Security-Policy — **fixed at last**, and here is how it landed
 
 This is the honest one. The pages are built from inline `<style>` and small inline `<script type="application/json">`
 blocks, so a policy strict enough to be worth having needs a **per-response nonce threaded through every rendering
@@ -78,6 +78,17 @@ would be worse than none: `unsafe-inline` in a CSP is a claim that a page is pro
 nonce has one natural home. The work is threading it into the four places that emit inline `<script>` or `<style>`,
 then a test asserting the nonce in the header matches one in the body and that no inline script lacks it. Worth
 doing before a hosted launch, where the pages sit on a public origin; less urgent self-hosted behind TLS.
+
+**Landed afterwards**, with the trade paid rather than avoided. Every page now carries
+`default-src 'none'` with a **per-response nonce** blessing the one inline style block and the one
+inline script; `script-src 'self'` covers the browser-side modules; `frame-ancestors 'none'` joins the
+`X-Frame-Options` it was going to replace. No `unsafe-inline` anywhere. The nonce is minted and stamped
+in `sendPage` — the one seam every page already passes through — instead of being threaded through
+sixty render sites, which is how nonces get forgotten. The two things a nonce cannot bless were removed
+from the product entirely: thirteen inline `style="width: …"` attributes became classes in
+`src/style.js`, and the two inline `onclick` handlers became one nonced script plus a data attribute.
+`tools/check-pages.mjs` now fails any rendered page that reintroduces any of the three, and
+`test/csp.test.js` holds the header to its own markup.
 
 ### 5. Platform sign-in walked around the second factor — **fixed**, and found by accident
 
@@ -181,12 +192,10 @@ Recorded so the next audit does not have to redo it:
 
 | Gap | Why it is not fixed | How bad |
 | --- | --- | --- |
-| **No CSP** | Needs a per-response nonce threaded through four rendering paths — work, described above | Medium on a public origin, low self-hosted |
-| **Sign-up reveals whether an address has an account** | A returning user needs to be told, and the alternative — emailing a link — needs a mailer the product may not have | Low. A stranger can learn that a given address uses Tickmark. On a self-hosted install there is nobody to enumerate |
+| **Email-verified sign-up does not exist** | A returning user needs to be told they have an account, and the alternative — emailing a link — needs a mailer the product may not have | Low. A stranger can learn that a given address uses Tickmark. On a self-hosted install there is nobody to enumerate |
 | **`/healthz` is unauthenticated** and names the version and one count | It is the one address an operator can reach when *sign-in is the thing that is broken*, and a health check that requires the broken thing is a health check that lies. The count carries no names | Low |
 | **An operator can turn two-factor off** by editing the database | They run the server and can read everything about an account anyway. Said on the page rather than left to be found | By design. What they cannot do is read documents |
 | **No signed releases or reproducible-build attestation** | The Dockerfile copies source and there is nothing to build | Low today; worth having before distributing binaries |
 
-Two of these are worth doing before a hosted launch rather than before a self-hosted one: **the CSP**, and
-**email-verified sign-up** — which fixes the enumeration leak and gives the hosted product a way to reach a
+The last of these worth doing before a hosted launch is **email-verified sign-up** — which fixes the enumeration leak and gives the hosted product a way to reach a
 practice that has lost its password.

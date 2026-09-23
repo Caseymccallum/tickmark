@@ -13,7 +13,7 @@ if (!file) {
   process.exit(1);
 }
 
-let page = readFileSync(file, 'utf8').replace(/<style>[\s\S]*?<\/style>/, '<style>…</style>');
+let page = readFileSync(file, 'utf8').replace(/<style[^>]*>[\s\S]*?<\/style>/, '<style>…</style>');
 if (!flags.includes('--scripts')) {
   page = page.replace(/<script[\s\S]*?<\/script>/g, '<script>…</script>');
 }

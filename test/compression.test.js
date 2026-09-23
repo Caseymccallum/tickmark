@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 
-import { createLink, practiceWithRequest, upload, withServer } from './helpers.js';
+import { createLink, denonce, practiceWithRequest, upload, withServer } from './helpers.js';
 
 /** One request, raw: the status, the headers as sent, and the bytes exactly as they arrived. */
 function raw(base, path, { headers = {} } = {}) {
@@ -49,8 +49,8 @@ test('a page is compressed when the browser asks, and the numbers add up', async
     assert.equal(Number(zipped.headers['content-length']), zipped.body.length, 'content-length matches what arrived');
     assert.ok(zipped.body.length < plain.body.length, 'the compressed body is smaller');
     assert.equal(
-      gunzipSync(zipped.body).toString('utf8'),
-      plain.body.toString('utf8'),
+      denonce(gunzipSync(zipped.body).toString('utf8')),
+      denonce(plain.body.toString('utf8')),
       'and decompresses to exactly the same page',
     );
 
