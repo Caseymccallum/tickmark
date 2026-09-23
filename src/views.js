@@ -13,7 +13,7 @@
  */
 import { randomBytes } from 'node:crypto';
 
-import { STYLE } from './style.js';
+import { CANVAS, STYLE } from './style.js';
 import { acceptableBody, withEncoding } from './http.js';
 
 class Safe {
@@ -176,6 +176,11 @@ export const tick = (text) => html`<li>${icon('tick')}<span>${text}</span></li>`
  *
  * `banner` is a rendered fragment rather than a string, so a caller who wants a link in it can build one with `html`
  * and get escaping everywhere else.
+ *
+ * Two small things the shell owns because every page needs them and no page should have to remember them: the
+ * `.skip` link that puts a page's own content before its eight navigation links for anybody using a keyboard, and
+ * the `theme-color` pair that keeps a phone's browser chrome the same colour as the page beneath it — both read
+ * from constants rather than typed again here.
  */
 export function page({
   title,
@@ -196,9 +201,12 @@ export function page({
   <title>${title} · Tickmark</title>
   <link rel="icon" href="${FAVICON}">
   <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="${CANVAS.light}" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="${CANVAS.dark}" media="(prefers-color-scheme: dark)">
   <style ${raw(NONCE_PLACEHOLDER)}>${raw(STYLE)}</style>
 </head>
 <body>
+  <a class="skip" href="#main">Skip to content</a>
   <header class="top">
     <a class="brand" href="${practitioner ? '/requests' : account ? '/dashboard' : '/'}">${mark()}<span>Tickmark</span></a>
     <nav>
@@ -221,7 +229,7 @@ export function page({
             : ''}
     </nav>
   </header>
-  <main class="wrap">
+  <main class="wrap" id="main">
     ${banner}
     ${body}
   </main>

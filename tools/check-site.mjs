@@ -22,6 +22,11 @@ for (const tag of ['html', 'head', 'body', 'header', 'nav', 'section', 'div', 'p
 if (!/^<!doctype html>/i.test(html.trim())) problems.push('no doctype');
 if (!html.trim().endsWith('</html>')) problems.push('does not end with </html>');
 if (/undefined|\[object Object\]/.test(html)) problems.push('an undefined or stringified object leaked into the page');
+// The same two facts the application's checker requires of every page it serves: a keyboard's first Tab lands
+// on the content, and a phone's browser chrome matches the page. This page is opened from a phone more often
+// than the app is, so the skip link matters here at least as much.
+if (!html.includes('class="skip"')) problems.push('no skip link, so a keyboard meets the nav before the page');
+if (!html.includes('name="theme-color"')) problems.push('no theme-color for a phone&rsquo;s own browser chrome');
 if (/&[a-z]+[^;\s]/.test(html.replace(/&[a-z]+;/g, '').replace(/&[a-z]+ /g, ' '))) problems.push('unterminated HTML entity');
 
 // The stylesheet must be one block, and every rule in it must actually close. A brace *count* is not enough:

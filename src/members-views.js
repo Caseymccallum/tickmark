@@ -388,7 +388,7 @@ export async function invitePage({ db, response, params, error = null }) {
       ${error ? html`<p class="error">${error}</p>` : ''}
       <form method="post" action="/invite/${params[0]}" id="accept-form">
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" required autocomplete="username">
+        <input id="email" name="email" type="email" required autocomplete="username" spellcheck="false">
         <label for="password">Password <span class="note">for signing in</span></label>
         <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
           autocomplete="new-password">

@@ -56,6 +56,18 @@ product's promise changed, not that a class name moved.
    not repeat it in the table below; the wall derives its tone from the same `STATUS_LOOK` the
    dashboard uses, so one state cannot look like a warning on one page and a neutral fact on another.
    Two descriptions of one thing drifting apart is the bug this project has fixed most often.
+10. **The keyboard is a first-class way through, and the phone is a first-class place to be.** Every page
+    opens with a skip link, everything focusable has a visible ring, the gutter respects a notch, links land
+    below the sticky header rather than behind it, and a printed page loses the chrome it cannot use. None of
+    these shows up in a screenshot; all of them are what "finished" means. `tools/check-pages.mjs` refuses a
+    page without the skip link or the theme-colour pair, so they cannot go missing one page at a time.
+
+**The faint ink is measured, not chosen by eye.** `--faint` was `#8b95a3`, which is 2.9:1 on the canvas — a
+table header, an eyebrow and a footer a person has to work to read, which makes them missing rather than
+subtle. It is `#656e7b` now: 4.9:1 on the canvas, 5.2 on a card and 4.7 on the sunken fill, with `#7a8491`
+in the dark (5.1 / 4.8). The four ink weights keep their order; the quietest one simply stops being
+decoration. The same values are in `site/index.html`, because the marketing page and the application are
+meant to be the same product and a token that drifts is the first sign they have stopped being one.
 
 ## Where the ideas came from
 
@@ -73,7 +85,8 @@ Three systems in `plain-forms/design-systems/`, and one thing taken from each:
 
 ```text
 src/style.js      TOKENS · BASE · COMPONENTS · FORMS · TABLES · SURFACES · CLIENT_AND_MISC
-                  → one exported STYLE string, inlined into every page
+                  → one exported STYLE string, inlined into every page, plus CANVAS — the two canvas
+                    colours the shell hands to the browser's own theme-color
 src/views.js      page() — the shell, the header, the footer, and html/raw escaping
                   badge() tile() section() empty() — the four components markup asks for by name
                   icon() and the ten drawings it looks up, plus tick() for a list of truths
@@ -96,7 +109,8 @@ The look can be reviewed without a browser:
 
 ```sh
 node tools/snapshot.mjs    [dir]   # renders every page, writes an INDEX.txt
-node tools/check-pages.mjs [dir]   # catches "undefined", unbalanced styles, a missing header/footer
+node tools/check-pages.mjs [dir]   # catches "undefined", unbalanced styles, a missing header/footer,
+                                   # a page that lost its skip link or its theme-colour pair
 node tools/show-page.mjs   <page>  # prints one captured page with the CSS collapsed
 node tools/preview-gateway.mjs [dir] # the thirteen states of the public pages, including the ones
                                      # that otherwise need a webhook to have fired

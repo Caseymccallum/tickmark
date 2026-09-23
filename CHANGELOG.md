@@ -12,6 +12,33 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### The front door gets the details the work pages already had
+
+A design pass over the shell, the public pages and the landing page: no new colour, no new dependency, and the
+stylesheet went from 315 rules to 339. Most of it is the kind of thing that is invisible until it is missing.
+
+**What was missing, rather than what was wrong.** Every page now opens with a skip link — eight navigation links
+stood between a keyboard and the page's own content — and it is off-screen until it is focused. A phone's browser
+chrome takes its colour from the page, through the two `theme-color` values the shell reads from a `CANVAS`
+constant rather than typing out twice. Anchors land below the sticky header instead of behind it. A tap is not
+held back by a double-tap that will never come, and a recovery code or an email address no longer attracts a
+spellchecker's red line. The landing page's hero has one orchestrated arrival — five elements, 60ms apart — which
+is the only motion on that page beyond a hover state, and it is off for anybody who asked for less.
+
+**The one thing measured rather than chosen.** `--faint` was `#8b95a3`: 2.9:1 on the canvas, which made table
+headers, eyebrows and the footer something a person had to work to read. It is `#656e7b` now — 4.9:1 on the
+canvas, 5.2 on a card, 4.7 on the sunken fill, and `#7a8491` in the dark — so the four ink weights keep their
+order and the quietest one stops being decoration. Both sheets carry the same values, because a token that drifts
+is the first sign the marketing page and the application have stopped being one product.
+
+**A practice prints things**, so there is a print stylesheet: the header, the nav, the footer, the buttons and the
+search boxes come off, shadows and tints go, a row or a card is not split across two sheets, and the one block a
+reader must not miss keeps its tint through `print-color-adjust`. And because two of these are invisible in a
+screenshot of a page that has lost them, `tools/check-pages.mjs` now refuses a page without its skip link or its
+theme-colour pair, and `tools/check-site.mjs` holds the landing page to the same rule.
+
+392 tests, all green.
+
 ### The split, all five steps in
 
 `src/app.js` was **357 KB** — the one thing `docs/audit.md` called a real maintainability problem rather than a

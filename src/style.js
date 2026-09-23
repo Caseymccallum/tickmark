@@ -16,12 +16,22 @@
  * `input`, `h1`, `h2`, `.note` and `.warning` are styled by element or by names the product already
  * used. A class is added only when it names something that exists — `.card`, `.badge`, `.tile`.
  */
+/**
+ * The canvas colour, named once.
+ *
+ * The sheet paints it, and `page()` hands the same two values to `<meta name="theme-color">` — a phone's
+ * browser chrome in a slightly different grey from the page beneath it is the first thing a person sees, and
+ * exactly the kind of detail that makes an interface feel assembled rather than designed. One source, so the
+ * bar and the page cannot drift apart.
+ */
+export const CANVAS = { light: '#f7f8fa', dark: '#0a0e15' };
+
 const TOKENS = `
   :root {
     color-scheme: light;
 
     /* Surfaces: canvas, card, and the recessed fill used for table headers and inputs. */
-    --canvas: #f7f8fa;
+    --canvas: ${CANVAS.light};
     --surface: #ffffff;
     --sunken: #f2f4f7;
     --line: #e6e9ee;
@@ -32,7 +42,12 @@ const TOKENS = `
     --ink: #131c2b;
     --ink-2: #2b3644;
     --soft: #5c6875;
-    --faint: #8b95a3;
+    /* The quietest ink, and the only one whose whole job is small type: table headers, eyebrows, the footer.
+       It was #8b95a3, which measures 2.9:1 on the canvas — a label a person has to work to read is not a
+       subtle label, it is a missing one. #656e7b measures 4.9:1 on the canvas, 5.2 on a card and 4.7 on
+       the sunken fill, so the smallest type in the product clears AA on every surface it is actually used
+       on. Measured with the same formula the checkers would use, not chosen by eye. */
+    --faint: #656e7b;
 
     --link: #2a5bd7;
     --brand: #0d9f6e;
@@ -56,6 +71,15 @@ const TOKENS = `
 
     --r-xs: 5px; --r-sm: 7px; --r-md: 9px; --r-lg: 12px; --r-pill: 999px;
     --control: 34px; --control-sm: 28px;
+    /* The sticky header's height: the shell uses it, and so does the offset an anchor needs. */
+    --header: 3.5rem;
+    /* The page's side margin, and the notch. A client opens their page on a phone, often in landscape, and
+       the content must not run under the rounded corner of the screen. One gutter for the whole shell, so no
+       page invents its own — and two derived tokens, because one max() per rule would be four copies of
+       one fact. */
+    --gutter: 1.5rem;
+    --pad-l: max(var(--gutter), env(safe-area-inset-left));
+    --pad-r: max(var(--gutter), env(safe-area-inset-right));
 
     --fs-xs: 11.5px; --fs-sm: 12.5px; --fs-md: 13.5px;
     --fs-base: 15px; --fs-lg: 16.5px; --fs-xl: 19px; --fs-2xl: 23px; --fs-3xl: 28px;
@@ -67,7 +91,7 @@ const TOKENS = `
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --canvas: #0a0e15;
+      --canvas: ${CANVAS.dark};
       --surface: #10151e;
       --sunken: #0d121a;
       --line: #1b2230;
@@ -76,7 +100,9 @@ const TOKENS = `
       --ink: #e9edf4;
       --ink-2: #d2dae5;
       --soft: #94a0b1;
-      --faint: #6b7686;
+      /* The same rule as the light faint — 5.1:1 on the canvas, 4.8 on a card — so a table header is as
+         readable in the dark as it is in the light. */
+      --faint: #7a8491;
 
       --link: #8ab0ff;
       --brand: #35d39a;
@@ -98,7 +124,12 @@ const TOKENS = `
 
 const BASE = `
   *, *::before, *::after { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* A page that scrolls and a page that does not must not differ by a scrollbar's width, or every move
+       to a longer list shifts the whole layout sideways. */
+    scrollbar-gutter: stable;
+  }
   body {
     margin: 0;
     font: var(--fs-base)/1.6 var(--sans);
@@ -109,6 +140,10 @@ const BASE = `
     text-rendering: optimizeLegibility;
   }
   ::selection { background: color-mix(in srgb, var(--brand) 26%, transparent); }
+  /* Every control here has its own hover and pressed state, so the grey flash a phone paints on tap is a
+     second, worse signal — and the double-tap delay it arrives with is a third. */
+  a, button, .btn, label, summary, input, select, textarea { touch-action: manipulation; }
+  a, button, .btn, label, summary { -webkit-tap-highlight-color: transparent; }
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
   }
@@ -116,15 +151,19 @@ const BASE = `
   /* --- the page frame ---------------------------------------------------------------------- */
   .wrap {
     width: 100%; max-width: 68rem; margin: 0 auto;
-    padding: 1.75rem 1.5rem 4.5rem;
+    padding: 1.75rem var(--pad-r) 4.5rem var(--pad-l);
   }
-  @media (max-width: 40rem) { .wrap { padding: 1.25rem 1rem 3rem; } }
+  @media (max-width: 40rem) {
+    /* The narrow-screen gutter is a token rather than a second padding, so the notch is inside it too. */
+    :root { --gutter: 1rem; }
+    .wrap { padding: 1.25rem var(--pad-r) 3rem var(--pad-l); }
+  }
 
   /* --- the top of every page --------------------------------------------------------------- */
   .top {
     position: sticky; top: 0; z-index: 20;
     display: flex; align-items: center; gap: 1.25rem;
-    padding: 0 1.5rem; height: 3.5rem;
+    padding: 0 var(--pad-r) 0 var(--pad-l); height: var(--header);
     background: color-mix(in srgb, var(--canvas) 82%, transparent);
     backdrop-filter: saturate(180%) blur(12px);
     border-bottom: 1px solid var(--line);
@@ -154,17 +193,21 @@ const BASE = `
   .top .who:hover { color: var(--ink); }
   .top form { margin: 0; display: inline-flex; }
   @media (max-width: 44rem) {
-    .top { height: auto; flex-wrap: wrap; gap: .5rem .9rem; padding: .6rem 1rem; }
+    .top { height: auto; flex-wrap: wrap; gap: .5rem .9rem; padding: .6rem var(--pad-r) .6rem var(--pad-l); }
     .top nav { margin-left: 0; width: 100%; }
     .top .who { display: none; }
   }
 
   .foot {
-    max-width: 68rem; margin: 0 auto; padding: 1.5rem 1.5rem 3rem;
+    max-width: 68rem; margin: 0 auto; padding: 1.5rem var(--pad-r) 3rem var(--pad-l);
     border-top: 1px solid var(--line);
     font-size: var(--fs-sm); color: var(--faint); line-height: 1.65;
   }
   .foot strong { color: var(--soft); font-weight: 600; }
+
+  /* The sticky header must not land on top of whatever a link just jumped to — an anchor, or the skip
+     link's own target. One rule rather than an offset invented per page. */
+  [id] { scroll-margin-top: calc(var(--header) + .9rem); }
 
   /* --- type -------------------------------------------------------------------------------- */
   h1, h2, h3 {
@@ -193,6 +236,9 @@ const BASE = `
   .note { color: var(--soft); font-size: var(--fs-md); }
   .muted { color: var(--faint); }
   .lead { font-size: var(--fs-lg); line-height: 1.55; color: var(--soft); max-width: 46rem; }
+  /* A sentence should break where it means to rather than where the column ends. Two extra lines per
+     paragraph is what a widow costs; this is the cheapest way not to pay it, where the browser can. */
+  .lead, .note, .empty .p, .page-head .sub, .foot { text-wrap: pretty; }
   .count { font-size: var(--fs-base); font-weight: 550; color: var(--ink); margin: .85rem 0 .35rem; }
   .eyebrow, .crumbs {
     font-size: var(--fs-xs); font-weight: 650; letter-spacing: .07em;
@@ -204,6 +250,18 @@ const BASE = `
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
+  /* The first thing a keyboard meets, and nothing at all until it is used: eight navigation links stand
+     between somebody pressing Tab and the page's own content, and a link that skips them is worth more
+     than the eight it passes. It is revealed by focus rather than hidden from a screen reader. */
+  .skip {
+    position: absolute; left: .75rem; top: .6rem; z-index: 60;
+    padding: .45rem .7rem; border-radius: var(--r-sm);
+    background: var(--surface); border: 1px solid var(--line-2); box-shadow: var(--sh-2);
+    color: var(--ink); font-size: var(--fs-md); font-weight: 550; text-decoration: none;
+    transform: translateY(-250%);
+    transition: transform .12s ease;
+  }
+  .skip:focus { transform: none; text-decoration: none; }
 `;
 
 const COMPONENTS = `
@@ -437,6 +495,9 @@ const TABLES = `
     height: 20px; padding: 0 .5rem; border-radius: var(--r-pill);
     font-size: var(--fs-xs); font-weight: 600; letter-spacing: .01em;
     border: 1px solid; white-space: nowrap; vertical-align: middle;
+    /* Most badges carry a count — documents, codes, people — and a count that shifts the pill's width as
+       it grows is a list that twitches as it loads. */
+    font-variant-numeric: tabular-nums;
   }
   .badge::before {
     content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%;
@@ -530,7 +591,7 @@ const SURFACES = `
     background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--r-lg); box-shadow: var(--sh-1); margin: 0 0 1rem;
   }
-  .empty .h { font-size: var(--fs-base); font-weight: 600; color: var(--ink); }
+  .empty .h { font-size: var(--fs-lg); font-weight: 600; letter-spacing: -.015em; color: var(--ink); }
   .empty .p { font-size: var(--fs-md); color: var(--soft); max-width: 34rem; margin: .35rem auto 0; }
   .empty .actions { justify-content: center; }
 
@@ -548,7 +609,10 @@ const SURFACES = `
 
   /* --- a key/value list, for facts about one thing ------------------------------------------- */
   .facts { display: grid; grid-template-columns: auto 1fr; gap: .4rem 1.25rem; margin: 0; }
-  .facts dt { font-size: var(--fs-md); color: var(--soft); }
+  .facts dt {
+    font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--faint); padding-top: .14rem;
+  }
   .facts dd { margin: 0; font-size: var(--fs-md); color: var(--ink-2); }
 `;
 
@@ -631,10 +695,19 @@ const CLIENT_AND_MISC = `
   /* A correction hiding behind a word, rather than three inputs in every row. */
   details.rename { margin-top: .35rem; }
   details.rename > summary {
-    cursor: pointer; list-style: none;
+    cursor: pointer; list-style: none; position: relative;
     font-size: var(--fs-sm); color: var(--faint); width: fit-content;
-    padding: .1rem .3rem; border-radius: var(--r-xs);
+    padding: .1rem .95rem .1rem .3rem; border-radius: var(--r-xs);
   }
+  /* It had no mark of its own, so the only way to know it opened was to click it. A small chevron in the
+     current ink turns "there is something behind this word" into something a person can see. */
+  details.rename > summary::after {
+    content: ''; position: absolute; right: .42rem; top: .42rem;
+    width: .3rem; height: .3rem;
+    border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+    transform: rotate(45deg); transition: transform .14s ease;
+  }
+  details.rename[open] > summary::after { transform: rotate(-135deg); top: .58rem; }
   details.rename > summary::-webkit-details-marker { display: none; }
   details.rename > summary:hover { color: var(--soft); background: color-mix(in srgb, var(--ink) 5%, transparent); }
   details.rename[open] > summary { color: var(--soft); }
@@ -721,6 +794,28 @@ const CLIENT_AND_MISC = `
   .gateway .card { margin-top: 1.5rem; }
   .gateway .aside { margin-top: 1.25rem; font-size: .9375rem; color: var(--soft); }
   .gateway .aside a { font-weight: 550; }
+
+  /* --- on paper ----------------------------------------------------------------------------------
+     A practice prints things: a checklist for a meeting, a request page to write on. On paper the header,
+     the nav, the footer and every button are furniture — and a shadow is a grey smudge. What is left is
+     what the page says. Nothing here changes a screen; it is the same document with the chrome taken off. */
+  @media print {
+    @page { margin: 1.4cm; }
+    .top, .foot, .skip, .actions, .search, .bar, .onward, .pick, form button, .tile[href] { display: none; }
+    body { background: #fff; }
+    .wrap { max-width: none; padding: 0; }
+    .card, .scroll, .empty, .greeting { box-shadow: none; }
+    /* A row or a card split across two sheets is a list nobody can read; let the printer move it whole. */
+    .card, .scroll, .empty, .greeting, tr, .tile { break-inside: avoid; }
+    .card > h2:first-child { border-radius: 0; }
+    /* With the shadow gone a border is the only structure left, so it has to survive the toner. */
+    .card, .scroll, .empty, .greeting { border-color: #c9ccd2; }
+    thead th { background: none; color: var(--ink); }
+    a { color: inherit; text-decoration: none; }
+    /* The one block a reader must not miss keeps its tint, which needs saying out loud to a printer. */
+    .danger { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    table { font-size: 11.5px; }
+  }
 `;
 
 /**

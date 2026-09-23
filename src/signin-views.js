@@ -95,7 +95,7 @@ function credentialsForm({ action, title, submit, error = null, email = '', hint
         ${error ? html`<p class="error">${error}</p>` : ''}
         <form method="post" action="${action}">
           <label for="email">Email</label>
-          <input id="email" name="email" type="email" required value="${email}" autocomplete="username" autofocus>
+          <input id="email" name="email" type="email" required value="${email}" autocomplete="username" spellcheck="false" autofocus>
           <label for="password">Password</label>
           <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
                  autocomplete="${action === '/signup' ? 'new-password' : 'current-password'}">
@@ -217,7 +217,7 @@ function codeForm({ error = null, action = '/signin/code' }) {
       <form method="post" action="${action}">
         <label for="code">Code <span class="note">— or one of your recovery codes</span></label>
         <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
-          maxlength="20" class="code-input">
+          maxlength="20" spellcheck="false" autocapitalize="none" class="code-input">
         <button type="submit">Continue</button>
       </form>
       <p class="note">Codes change every thirty seconds. If the app on the phone is not with you, a recovery
@@ -352,7 +352,7 @@ const twoFactorPendingCard = ({ db, practitioner, secret }) => html`
   <form method="post" action="/account/two-factor/confirm" class="stack">
     <label for="code">The six digits it shows</label>
     <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="6"
-      class="code-input">
+      spellcheck="false" autocapitalize="none" class="code-input">
     <div class="row"><button type="submit" class="primary">Turn it on</button></div>
   </form>`;
 
@@ -367,11 +367,11 @@ const twoFactorOnCard = ({ practitioner, left }) => html`
     : ''}
   <div class="actions">
     <form method="post" action="/account/two-factor/codes" class="inline">
-      <input name="code" inputmode="numeric" maxlength="6" placeholder="code" aria-label="A code" required>
+      <input name="code" inputmode="numeric" maxlength="6" placeholder="code" aria-label="A code" spellcheck="false" autocapitalize="none" required>
       <button type="submit">New recovery codes</button>
     </form>
     <form method="post" action="/account/two-factor/off" class="inline">
-      <input name="code" inputmode="numeric" maxlength="20" placeholder="code"
+      <input name="code" inputmode="numeric" maxlength="20" placeholder="code" spellcheck="false" autocapitalize="none"
         aria-label="A code or a recovery code" required>
       <button type="submit" class="danger">Turn it off</button>
     </form>

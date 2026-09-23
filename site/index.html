@@ -46,7 +46,9 @@
   --ink: #131c2b;
   --ink-2: #2b3644;
   --soft: #5c6875;
-  --faint: #8b95a3;
+  /* The quietest ink, in step with src/style.js: lifted from #8b95a3, which measured 2.9:1 on the canvas.
+     A label nobody can read comfortably is a missing label, not a subtle one. */
+  --faint: #656e7b;
 
   --link: #2a5bd7;
   --brand: #0d9f6e;
@@ -85,7 +87,7 @@
     --ink: #e9edf4;
     --ink-2: #d2dae5;
     --soft: #94a0b1;
-    --faint: #6b7686;
+    --faint: #7a8491;
 
     --link: #8ab0ff;
     --brand: #35d39a;
@@ -119,7 +121,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scrollbar-gutter: stable; }
 body {
   margin: 0;
   font: var(--fs-base)/1.65 var(--sans);
@@ -138,8 +140,27 @@ a { color: var(--link); text-underline-offset: 3px; text-decoration-thickness: 1
 a:hover { text-decoration-thickness: 2px; }
 :focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-xs); }
 
+/* The application's sheet states these three, and this page is the same product: an anchor lands below the
+   sticky header, a tap is not held back by a double-tap that will never come, and the system's tap flash is
+   not a second, worse hover state on controls that already have one. */
+[id] { scroll-margin-top: calc(var(--header) + .9rem); }
+a, button, .btn, summary, label, input { touch-action: manipulation; }
+a, button, .btn, summary { -webkit-tap-highlight-color: transparent; }
+
+/* Invisible until it is focused, then the first thing on the page. Five nav links and a call to action stand
+   between a keyboard and the headline, and this is the shortest way past them. */
+.skip {
+  position: absolute; left: .75rem; top: .6rem; z-index: 60; padding: .45rem .7rem;
+  border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--line-2);
+  box-shadow: var(--sh-2); color: var(--ink); font-size: var(--fs-md); font-weight: 550;
+  text-decoration: none; transform: translateY(-250%); transition: transform .12s ease;
+}
+.skip:focus { transform: none; }
+
 /* --- frame --------------------------------------------------------------------------------- */
-.wrap { width: 100%; max-width: var(--measure-wide); margin: 0 auto; padding: 0 var(--gutter); }
+.wrap { width: 100%; max-width: var(--measure-wide); margin: 0 auto; padding: 0 var(--gutter);
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right)); }
 .narrow { max-width: var(--measure); margin: 0 auto; }
 section.band { padding: var(--section-y) 0; border-top: 1px solid var(--line); }
 section.band.flush { border-top: 0; }
@@ -156,6 +177,9 @@ p { margin: .7rem 0; }
 p:first-child { margin-top: 0; }
 .lead { font-size: var(--fs-sub); color: var(--soft); line-height: 1.6; max-width: var(--measure); }
 .note { font-size: var(--fs-md); color: var(--soft); line-height: 1.65; }
+/* Break a sentence where it means to rather than where the column ends — the application's rule, and the
+   reason a paragraph does not finish on a single orphaned word. */
+.lead, .note, .card p, .tiny { text-wrap: pretty; }
 .tiny { font-size: var(--fs-sm); color: var(--faint); line-height: 1.6; }
 strong, b { font-weight: 600; color: var(--ink); }
 code, kbd, pre { font-family: var(--mono); }
@@ -201,6 +225,9 @@ input[type=email]:focus, input[type=text]:focus { outline: none; border-color: v
 .top {
   position: sticky; top: 0; z-index: 20; height: var(--header);
   display: flex; align-items: center; gap: 1.25rem; padding: 0 var(--gutter);
+  /* A notch in landscape must not put the brand under the corner of the screen. */
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right));
   background: color-mix(in srgb, var(--canvas) 82%, transparent);
   backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--line);
@@ -239,6 +266,17 @@ input[type=email]:focus, input[type=text]:focus { outline: none; border-color: v
   font-size: var(--fs-md); color: var(--soft); }
 .hero .reassure span { display: inline-flex; align-items: center; gap: .4rem; }
 .hero .reassure svg { flex: none; color: var(--brand); }
+/* One orchestrated arrival for the first screen: five elements, 60ms apart, and nothing else on the page
+   animates beyond a hover state. Off for anybody who asked for less motion, which is what the media query
+   is for rather than a preference about taste. */
+@media (prefers-reduced-motion: no-preference) {
+  .hero .wrap > * { animation: rise .55s cubic-bezier(.22, .7, .3, 1) both; }
+  .hero .wrap > *:nth-child(2) { animation-delay: .06s; }
+  .hero .wrap > *:nth-child(3) { animation-delay: .12s; }
+  .hero .wrap > *:nth-child(4) { animation-delay: .18s; }
+  .hero .wrap > *:nth-child(5) { animation-delay: .24s; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 
 /* --- stat strip ---------------------------------------------------------------------------- */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
@@ -338,6 +376,11 @@ section.band.sunken { background: var(--sunken); }
 .card.lift:hover { transform: translateY(-2px); box-shadow: var(--sh-2); }
 .card h3 { margin-bottom: .35rem; }
 .card p { margin: 0; font-size: var(--fs-md); color: var(--soft); line-height: 1.65; }
+/* Two blocks that would otherwise carry the spacing as a style attribute. The application refuses those on
+   purpose (its policy cannot bless one), and a page that is the same product should not need them either. */
+.stack > * + * { margin-top: 1rem; }
+.preview-hold { margin-top: 2.5rem; }
+.appbar svg { border-radius: 4px; }
 .card .ico { display: grid; place-items: center; width: 2rem; height: 2rem; margin-bottom: .9rem;
   border-radius: var(--r-sm); background: var(--sunken); border: 1px solid var(--line); color: var(--ink); }
 
@@ -433,6 +476,8 @@ details .answer p:last-child { margin-bottom: 0; }
 </head>
 <body>
 
+<a class="skip" href="#top">Skip to content</a>
+
 <header class="top">
   <a class="brand" href="#top">
     <svg class="mark" width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
@@ -509,7 +554,7 @@ details .answer p:last-child { margin-bottom: 0; }
 <!-- The product itself, at the size a reader can take it in. Everything inside is markup rather than a
      picture: it costs no request, it is legible with the stylesheet off, and it cannot silently become a
      screenshot of a version of the software that no longer exists. -->
-<div class="wrap" style="margin-top:2.5rem">
+<div class="wrap preview-hold">
   <div class="preview">
     <div class="chrome">
       <i></i><i></i><i></i>
@@ -518,7 +563,7 @@ details .answer p:last-child { margin-bottom: 0; }
     <div class="body">
       <div class="appbar">
         <span class="name">
-          <svg width="15" height="15" viewBox="0 0 32 32" aria-hidden="true" style="border-radius:4px">
+          <svg width="15" height="15" viewBox="0 0 32 32" aria-hidden="true">
             <rect width="32" height="32" rx="8" fill="#131c2b"/>
             <path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#35d39a" stroke-width="3.4"
                   stroke-linecap="round" stroke-linejoin="round"/>
@@ -779,8 +824,8 @@ details .answer p:last-child { margin-bottom: 0; }
         </div>
       </div>
 
-      <div>
-        <div class="card" style="margin-bottom:1rem">
+      <div class="stack">
+        <div class="card">
           <h3>Nothing here needs an account</h3>
           <p>
             The link is an unguessable address with an expiry you choose, not a login. It works once you send
@@ -788,7 +833,7 @@ details .answer p:last-child { margin-bottom: 0; }
             disturbing the files already there.
           </p>
         </div>
-        <div class="card" style="margin-bottom:1rem">
+        <div class="card">
           <h3>They can tell you they cannot</h3>
           <p>
             Beside every item there are two buttons: <em>I do not have this</em> and <em>I will send it
@@ -1158,7 +1203,7 @@ docker compose up -d</pre>
         all have a free tier) and delete the sentence underneath. Nothing else on this page has to change.
       -->
       <form class="signup" action="mailto:hello@tickmarkpractice.com?subject=Tickmark%20trial" method="post" enctype="text/plain">
-        <input type="email" name="email" required placeholder="you@yourpractice.co.uk" aria-label="Your email address">
+        <input type="email" name="email" required placeholder="you@yourpractice.co.uk" spellcheck="false" aria-label="Your email address">
         <button class="btn primary lg" type="submit">Start the trial</button>
       </form>
 

@@ -96,7 +96,7 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
             placeholder="Acme Accounting" autofocus>
           <p class="note">This becomes your address here, and can be changed later.</p>
           <label for="email">Your email</label>
-          <input id="email" name="email" type="email" required value="${values.email ?? ''}"
+          <input id="email" name="email" type="email" required value="${values.email ?? ''}" spellcheck="false"
             autocomplete="username">
           <label for="password">A password <span class="note">at least 12 characters</span></label>
           <input id="password" name="password" type="password" required autocomplete="new-password">
@@ -124,7 +124,7 @@ export function loginPage({ values = {}, problem = null }) {
 
         <form method="post" action="/login" class="card">
           <label for="email">Your email</label>
-          <input id="email" name="email" type="email" required value="${values.email ?? ''}"
+          <input id="email" name="email" type="email" required value="${values.email ?? ''}" spellcheck="false"
             autocomplete="username" autofocus>
           <label for="password">Your password</label>
           <input id="password" name="password" type="password" required autocomplete="current-password">

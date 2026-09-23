@@ -36,6 +36,12 @@ for (const file of files) {
   if (!page.includes('<footer class="foot">')) issues.push('no footer');
   if (!/<title>[^<]+<\/title>/.test(page)) issues.push('no title');
   if (!page.includes('name="viewport"')) issues.push('no viewport');
+  // Two things the shell owes every page, and the two that are invisible until the day they are missing: the
+  // skip link that makes a keyboard's first Tab land on the content rather than on eight nav links, and the
+  // theme-colour pair that keeps a phone's own browser chrome the same colour as the page beneath it. Both
+  // are asserted here because neither shows up in a screenshot of a page that has lost them.
+  if (!page.includes('class="skip"')) issues.push('no skip link');
+  if (count(page, 'name="theme-color"') !== 2) issues.push('not exactly two theme-color tags');
 
   // Every form control that renders as an input should be inside a form or a known exception.
   const buttonsOutsideForms = count(page, '</form>') === 0 && count(page, '<button') > 0;
