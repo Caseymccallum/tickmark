@@ -7,6 +7,8 @@
  * upload triggers — comes from there.
  */
 
+import { MAX_ITEMS } from './store.js';
+
 export class RequestError extends Error {
   constructor(status, message) {
     super(message);
@@ -196,6 +198,31 @@ export const field = (fields, name, fallback = null) => {
   const trimmed = value.trim();
   return trimmed.length === 0 ? fallback : trimmed;
 };
+
+/**
+ * One item per line, trimmed, blanks dropped, duplicates collapsed, capped.
+ *
+ * The list a practice types into a request's textarea, and the same rules the template pages apply to theirs — which
+ * is why it lives here rather than in either of the two pages that use it: it is about the shape of what a browser
+ * sent, which is this module's whole subject.
+ *
+ * Duplicates collapse case-insensitively, because "Bank statements" twice in one request is a mistake rather than an
+ * intention. The cap is the store's own `MAX_ITEMS`, because that is where the limit is defined.
+ */
+export function parseItems(text) {
+  const seen = new Set();
+  const items = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const label = line.trim();
+    if (label.length === 0) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(label.slice(0, 200));
+    if (items.length >= MAX_ITEMS) break;
+  }
+  return items;
+}
 
 /**
  * Where this server is, as a client would reach it.

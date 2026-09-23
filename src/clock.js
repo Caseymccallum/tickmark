@@ -106,3 +106,21 @@ export const COMMON_ZONES = [
   'Australia/Brisbane',
   'Pacific/Auckland',
 ];
+
+/**
+ * How long ago something happened, in words, for a page a person reads.
+ *
+ * Minutes, hours, then days, and "just now" below a minute — no weeks and no months, because nothing this product
+ * says "ago" about is older than a season: a chase list is about this week. It lives with the time arithmetic rather
+ * than beside either page that uses it, because two pages phrasing "3 days ago" differently is exactly the kind of
+ * divergence nobody notices until a practitioner does.
+ */
+export function agoWords(iso, nowIso) {
+  const minutes = Math.floor((Date.parse(nowIso) - Date.parse(iso)) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}

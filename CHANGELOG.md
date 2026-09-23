@@ -12,12 +12,13 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
-### The split, three steps in
+### The split, all five steps in
 
 `src/app.js` was **357 KB** — the one thing `docs/audit.md` called a real maintainability problem rather than a
-measured trade-off, with a four-step split proposed and nothing done about it. **Three steps are done.** At 5,692 lines
-the file is 1,481 shorter than when the audit measured it — 285 KB against 357, a fifth of it gone — and what is left is
-the signed-in surface, the members and account pages, the assets and the route table.
+measured trade-off, with a four-step split proposed and nothing done about it. **All four are done, and a fifth
+besides.** At 3,901 lines the file is 3,272 shorter than when the audit measured it — 191 KB against 357, which is 46%
+of it gone — and what is left is the sign-in and two-factor pages, the account pages, the chase list, the templates and
+the client records, the assets and the route table.
 
 **Step one** was the audit's own first choice, for the audit's own reason: no route coupling, and the suite already
 owned it. The letters moved to `src/notices.js` — `arrivalDraft`, `openingDraft`, `reminderDraft`,
@@ -56,6 +57,32 @@ describing the keys page, which had drifted hundreds of lines from its function 
 The gate could not see it while `app.js` imported it, because the import line itself counted as a reference. The blurbs
 are gone, and the picker on the invite form writes its own copy. A gate that counts references cannot tell an import
 from a use, which is worth knowing about every gate in this repository.
+
+**Step four** was the last of the plan's four and the biggest: `src/board-views.js`, 1,096 lines — the board
+(`listRequests`, `firstRunCard`), the request view (`viewRequest`), the forms that make a request (`newRequestForm`,
+`createRequestPage`, `requestForm`) and the same board as a file (`requestsCsv`). Everything in it answers one
+question, *whose turn is it?*, and two of its decisions are the kind that rot quietly: a request's state is derived
+from the documents' own columns rather than stored anywhere that could disagree with the list, and the orderings are
+named once so the screen and the export cannot sort differently. Four helpers came out with it —
+`REQUEST_STATE_WORDS` and `stateTone` to `src/views.js`, because they are presentation vocabulary; `parseItems` to
+`src/http.js`, because it parses a submitted textarea; and `agoWords` to `src/clock.js`, because it is time arithmetic
+in words.
+
+**Step five** is not in the plan at all: `src/members-views.js`, 720 lines — who is in a practice, how somebody joins
+it, and what the practice is called. The invitation created, claimed and revoked, roles changed, members removed, and
+the settings that are a practice's own. It exists because of what the plan left behind: once the four were gone, this
+and the account pages were the last things in `app.js` that were about a *subject* rather than about routing. Two more
+helpers moved to where they belong — `EMAIL_SHAPE` and `validateCredentials` to `src/auth.js`, where `MIN_PASSWORD`
+already lived, so that the sign-up page and an invitation claim validate a new credential through one function — and
+two limits (`INVITE_DAYS`, `MAX_PRACTICE_NAME`) moved with the pages that are their only readers.
+
+**The helpers are the shape of the whole exercise.** Fifteen functions and constants left `app.js` for another module
+across the five steps, and not one of them because it was in the way: a helper needed on both sides of a new seam is a
+circular import waiting to happen. That is what a monolith actually is — not one large file, but a file everything else
+is allowed to reach into — and the work of splitting it is mostly the work of finding out what deserves a home of its
+own. `src/views.js` took six (`jsonTag`, `sendJson`, `fail`, `requireSignIn` and the state vocabulary), `src/http.js`
+two (`originOf`, `parseItems`), `src/auth.js` two, `src/store.js` two, `src/clock.js` one, `src/notices.js` one, and
+one — the only thing in the product that reads a stored document — got a module of its own.
 
 **One bug the move caused, and it is the interesting part.** `CLIENT_SAYS` is a module-level constant that was never
 exported, so it appeared in no import list — and an analysis of *exports* therefore did not find it. The client page

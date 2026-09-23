@@ -342,3 +342,24 @@ export function practitionerFor(db, request) {
   const token = parseCookies(request.headers.cookie)[COOKIE_NAME];
   return sessionFor(db, token);
 }
+
+/** The shape an address has to have, in the one place it is written down. */
+export const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The one place a credential is validated, so sign-up and sign-in cannot drift apart.
+ *
+ * Returns the sentence to show a person, or `null` when the pair is acceptable — a shape check and nothing more. It
+ * deliberately does not know whether an address exists or whether a password is right: those questions belong to
+ * `store.js`, and a validator that answered them would be a way to ask.
+ */
+export function validateCredentials(email, password) {
+  if (!email) return 'An email address is required.';
+  if (email.length > 254) return 'That email address is too long.';
+  if (!EMAIL_SHAPE.test(email)) return 'That does not look like an email address.';
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD) {
+    return `A password of at least ${MIN_PASSWORD} characters is required.`;
+  }
+  if (password.length > 1024) return 'That password is too long.';
+  return null;
+}

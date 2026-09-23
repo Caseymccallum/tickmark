@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseItems } from '../src/app.js';
+import { parseItems } from '../src/http.js';
 import { PASSWORD, denonce, signUp, withServer } from './helpers.js';
 
 // The cookie jar and the server-starting helper live in `helpers.js`, shared with the

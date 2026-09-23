@@ -29,6 +29,24 @@ import { holdsKey } from './roles.js';
 export const MAX_CLIENT_MESSAGE = 2000;
 
 /**
+ * How many documents one request may hold.
+ *
+ * Fifty is a checklist; a hundred is a spreadsheet. `parseItems` stops taking lines at this number rather than
+ * refusing the form, so a paste longer than this yields the first fifty items and no error at all — the cap is a
+ * backstop, not a rule anybody is expected to meet.
+ */
+export const MAX_ITEMS = 50;
+
+/**
+ * How long a template's name may be.
+ *
+ * Not a database limit — `name` is TEXT and would take anything — but a display one, like a practice's own name: it
+ * appears in the picker on the request form and in the list of templates, where a long one wraps and stops being a
+ * label.
+ */
+export const MAX_TEMPLATE_NAME = 120;
+
+/**
  * **The one definition of "outstanding", in SQL — used by everything that asks the question.**
  *
  * A document is still wanted if no file has arrived for it, or if the file that arrived was flagged as unusable.

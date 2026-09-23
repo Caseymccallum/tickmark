@@ -459,3 +459,33 @@ export function requireSignIn({ practitioner, response }) {
   redirect(response, '/signin');
   return false;
 }
+
+/**
+ * What each request state is called on a screen.
+ *
+ * "Ready to work on" is the word the research uses and the word a practice would use. The other three are **whose
+ * turn it is**, because that is the question the list exists to answer — and each of the three names a different
+ * job: "files to check" is material nobody has opened, "waiting on the client" is nothing to do but wait, and
+ * "the client answered" is a decision somebody owes them.
+ */
+export const REQUEST_STATE_WORDS = {
+  ready: 'ready to work on',
+  'to-check': 'files to check',
+  // Parallel to "waiting on the client", because the two are the same sentence from opposite sides: this one means
+  // the client has replied and the practice owes them an answer.
+  answered: 'the client answered',
+  waiting: 'waiting on the client',
+};
+
+/**
+ * Which of the three colours a request state is.
+ *
+ * One function rather than the same ternary in four places, which is what it was until `answered` arrived and had to
+ * be added to each of them — a state that renders in the wrong colour in one place is worse than one that is
+ * missing, because it looks like it has been considered.
+ */
+export const stateTone = (state) => (state === 'ready'
+  ? TONES.done
+  : state === 'to-check' || state === 'answered'
+    ? TONES.todo
+    : TONES.waiting);
