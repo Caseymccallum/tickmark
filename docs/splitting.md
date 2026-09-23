@@ -1,10 +1,10 @@
 # Splitting `app.js`: the recipe, and what is left
 
-`src/app.js` was one file of 7,173 lines. It is 3,018 today, and this records how the rest comes out — because the
+`src/app.js` was one file of 7,173 lines. It is 1,830 today, and this records how the rest comes out — because the
 recipe is now known, and the only thing that made it hard the first time was not knowing it.
 
-The reasoning for splitting at all is in `docs/audit.md` §3, and the story of the six modules that have already left
-— including the two mistakes, and what caught them — is in `CHANGELOG.md` under *The split*. This file is the practical
+The reasoning for splitting at all is in `docs/audit.md` §3, and the story of the ten modules that have already left
+— including the four mistakes, and what caught them — is in `CHANGELOG.md` under *The split*. This file is the practical
 half: what to do, in what order, and what is left to do it to.
 
 ## The recipe
@@ -99,51 +99,79 @@ Read `SUSPICIOUS` rather than trusting it: everything a comment mentions ends up
 and `join` have all appeared there and were prose, a `.join()` call, or `item.clientSays`. What it is for is the one
 name in it that is a real declaration nobody imports.
 
+Two repairs were needed to the snippet above, and both were found by running it: the declaration regex must accept
+`let` as well as `const` — the exports-only lesson from the other side — and an import list may span lines, so the names
+are matched with `[\s\S]*?` rather than `[^}]*`. The scan step 5 asks for is this one. It looks the other way, at the
+imports a move orphaned:
+
+```js
+// Run it over every module after a move. `as` is stripped, because an alias is not the name to count.
+import { readdirSync, readFileSync } from 'node:fs';
+for (const file of readdirSync('src').filter((n) => n.endsWith('.js'))) {
+  const source = readFileSync(`src/${file}`, 'utf8');
+  const body = source.replace(/import \{[\s\S]*?\} from '[^']+';/g, '');
+  for (const m of source.matchAll(/import \{([\s\S]*?)\} from '[^']+';/g)) {
+    for (const phrase of m[1].split(',').map((p) => p.trim()).filter(Boolean)) {
+      const name = phrase.split(/\s+as\s+/).pop();
+      if (!new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`).test(body)) console.log(`  src/${file}: ${name}`);
+    }
+  }
+}
+```
+
+Read it the same way as `SUSPICIOUS`: a comment can account for a name nothing calls — `open`, `now` and `history` were
+all reported as used while the word only appeared in prose — so when a name's count is small, grep for the *call*.
+
 ## What is left, measured
 
-`app.js` is 2,326 lines as this is written and four sections remain, each contiguous, so each is one move. The fifth —
-one request's own actions — has been done: `src/request-actions.js`, 737 lines. **The line numbers below are measured
-and will have moved by the time you read this, which is precisely why step 1 exists.**
+`app.js` is 1,830 lines as this is written and three sections remain, each contiguous, so each is one move. Two of the
+five have been done: `src/request-actions.js` (737 lines) and `src/clients-views.js` (528). **The line numbers below
+are measured and will have moved by the time you read this, which is precisely why step 1 exists.**
 
 | New module | Lines | What moves |
 | --- | --- | --- |
-| `signin-views.js` | 494–1124 (~630) | home, the credential forms, sign-up, sign-in, the second factor, sign-out. **Leave `createApp`, `contextFor` and `asset` (302–493) alone** — that is the dispatcher and the route table, which is what `app.js` should end up as |
-| `bulk-ask-views.js` | 1125–1492 (~370) | the *Asking everyone at once* section: the preview page, the run, the per-client opening, the report |
-| `templates-views.js` | 1493–1864 (~370) | the templates pages and the lists they keep, plus close-several |
-| `clients-views.js` | 1865–2344 (~480) | the documents page and its CSV, the client directory, one client's record |
+| `signin-views.js` | 473–1102 (~630) | home, the credential forms, sign-up, sign-in, the second factor, sign-out. **Leave `createApp`, `contextFor` and `asset` alone** — that is the dispatcher and the route table, which is what `app.js` should end up as |
+| `bulk-ask-views.js` | 1104–1470 (~367) | the *Asking everyone at once* section: the preview page, the run, the per-client opening, the report |
+| `templates-views.js` | 1472–1830 (~359) | the templates pages and the lists they keep, plus close-several |
 
-After those four, `app.js` is the imports, the dispatcher, the route table — a few hundred lines a reader can hold in
+After those three, `app.js` is the imports, the dispatcher, the route table — a few hundred lines a reader can hold in
 their head, which is where this started out, and the point of arriving back at it is that the *product* is the same and
 somebody can now find the part of it they need.
 
-The move that is done also settles something worth knowing about the rest: `request-actions.js` needed **nothing** from
-`app.js`. Every helper a seam had forced out over the previous six moves was already where this one wanted it, which is
-the sign the seams are in the right places — and it means the four left should each be a clean move as well.
+The two moves done since this was written settle something worth knowing about the rest: `request-actions.js` needed
+**nothing** from `app.js`, and `clients-views.js` needed nothing but the `FILES_PER_PAGE` ceiling that the documents
+page was already the only reader of — and a constant with one reader moves *with* its section rather than becoming a
+circular import. Every helper a seam had forced out over the earlier moves was already where these wanted it, which is
+the sign the seams are in the right places — and it means the three left should each be a clean move as well.
 
 Two notes for whoever does it:
 
 - **The bulk ask shares `CHASE_BUDGET_MS`** with the chase, which `chase-views.js` exports today. When that section
   moves, the import follows the code and the constant can stay where it is.
-- **The client records and the templates both use `parseItems`**, which lives in `http.js` — so neither needs a helper
-  rehomed in step 3. Their turn may be the first since step one where nothing has to move out of `app.js` before the
-  section does.
+- **The templates use `parseItems`**, which lives in `http.js` — so they need no helper rehomed in step 3. The client
+  records needed none either; their turn was the first since step one where the section left without forcing anything
+  out ahead of it.
 
 ## Picking this up in a fresh session
 
 Read this file first, then the entries under *The split* in `CHANGELOG.md` — they carry the reasoning, and the three
 mistakes with what caught each one. `docs/audit.md` §3 has why the file was split at all.
 
-**Where it stands.** `app.js` is 2,326 lines and 117 KB, down from 7,173 and 357 KB: two thirds of it gone, the product
-unchanged, 392 tests green and every check passing. Nine modules have left it — `notices` (405), `client-portal` (607),
-`keys-views` (526), `board-views` (1,096), `members-views` (720), `chase-views` (626), `account-views` (261),
-`request-actions` (737) and `blobs` (30) — and fifteen helpers now live in `views`, `http`, `clock`, `store`, `auth` and
-`notices`. The last move needed none rehomed at all, which is the sign the seams are in the right places.
+**Where it stands.** `app.js` is 1,830 lines and 92 KB, down from 7,173 and 357 KB: three quarters of it gone, the
+product unchanged, 392 tests green and every check passing. Ten modules have left it — `notices` (405), `client-portal`
+(607), `keys-views` (526), `board-views` (1,096), `members-views` (720), `chase-views` (626), `account-views` (261),
+`request-actions` (737), `blobs` (30) and `clients-views` (528) — and fifteen helpers now live in `views`, `http`,
+`clock`, `store`, `auth` and `notices`. The last two moves needed no helper rehomed at all, which is the sign the seams
+are in the right places.
 
-**Do the four remaining sections one at a time, and commit each.** Six commits took the file from 7,173 lines to 2,326;
-eleven are not worse than six, and a half-moved section cannot be verified.
+**Do the three remaining sections one at a time, and commit each.** Ten commits have taken the file from 7,173 lines to
+1,830; thirteen are not worse than ten, and a half-moved section cannot be verified.
 
-**The one thing that has gone wrong three times is an import list disagreeing with the code.** Two were names the
+**The one thing that has gone wrong four times is an import list disagreeing with the code.** Two were names the
 analysis could not report because they were never exported. The third was a name it *did* report and the transcription
 got wrong: two import lines merged into one, so `stat` came from `node:fs` — the callback API — instead of
-`node:fs/promises`, and every test that served an envelope failed. So copy the analysis's import list **verbatim, one
-module per line**, and run the unused-import scan afterwards to catch the orphans in the other direction.
+`node:fs/promises`, and every test that served an envelope failed. The fourth was the same seam from the other side:
+`clients-views.js`'s six handlers were wired into the route table before they were given `export`, and `app.js` failed
+at import time. So copy the analysis's import list **verbatim, one module per line**, and run the unused-import scan
+afterwards — in both directions, because prose makes it under-report: `open`, `now` and `history` were all reported as
+used when only a comment mentioned the word.

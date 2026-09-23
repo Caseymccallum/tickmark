@@ -141,6 +141,28 @@ run of the suite found it. That is the third time in this series that a hand-wri
 and the third time the tests were the only thing that noticed — and the first time the analysis was right and the
 transcription was wrong, which is its own lesson about doing these at the end of a long session.
 
+### The client records leave the file, and the search says what it cannot read
+
+`src/clients-views.js` — 481 lines of section, plus the `FILES_PER_PAGE` ceiling that only the documents page ever read:
+every document in one searchable list with its CSV, the client directory, and one client's own record. It is the tenth
+module to leave `app.js`, which is **1,830 lines and 92 KB** against the 7,173 and 357 KB the audit measured — **74% of
+both gone** — and the first of the four sections `docs/splitting.md` still had listed.
+
+`FILES_PER_PAGE` was read nowhere but the documents page, so it left *with* the section instead of becoming a circular
+import, and `readableSize` was private to it; nothing else had to be rehomed ahead of the move. That is the second move
+in a row that needed no helper rehomed, which is what the recipe's step three predicted for the easy ones.
+
+**The one mistake was mine, and it was the fourth version of the same mistake.** The six handlers were wired into the
+route table before they were given `export`, so `app.js` failed at import time — *"does not provide an export named
+clientsCsv"* — and one run of the suite found it. The three earlier failures were an import list disagreeing with the
+code in the other direction; the lesson that keeps paying is that the suite is the only thing that checks the seam at
+all. The unused-import scan then found twelve of the fifteen imports that had left with the code — `rename`, `sendCsv`,
+`dateIn`, `monthIn` and eight store functions — and missed three that a comment's prose kept alive (`open`, `now` and
+`history`), which is why the last three were settled with a grep for the call rather than the word. The scan is in
+`docs/splitting.md` now, with the repairs it needed to run without lying.
+
+392 tests, all green.
+
 ### The browser's half, executed rather than served
 
 `web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so

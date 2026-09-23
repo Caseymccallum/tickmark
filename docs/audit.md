@@ -336,15 +336,18 @@ every test touches — for a readability gain rather than a behaviour one.
 That leaves `app.js` as the route table, the dispatcher and the sign-in handlers — around 2,000 lines, which is a
 file somebody can read in an afternoon.
 
-**Since this was written, all four steps are done and three subjects besides** — `src/notices.js` holds the letters,
+**Since this was written, the split is three sections from done** — `src/notices.js` holds the letters,
 `src/client-portal.js` the client's page and the five things a client can do on it, `src/keys-views.js` the key, and
-`src/board-views.js` the board and the request page. The three the table above did not name are
+`src/board-views.js` the board and the request page. Six subjects the table above did not name have left as well:
 `src/members-views.js` (who is in a practice, how somebody joins it, what it is called), `src/chase-views.js` (the
-chase list and every message it can send) and `src/account-views.js` (this person's password, address and sessions).
+chase list and every message it can send), `src/account-views.js` (this person's password, address and sessions),
+`src/request-actions.js` (one request's link, letters and documents), `src/blobs.js` (the one place a stored document
+is read) and `src/clients-views.js` (the documents page, the client directory and one client's record) — the tenth
+module out.
 
-`app.js` has gone from **7,173 lines to 2,326** (357 KB to 117 KB — **67% of it gone**), and the helpers that more than
+`app.js` has gone from **7,173 lines to 1,830** (357 KB to 92 KB — **74% of it gone**), and the helpers that more than
 one side needed moved out to `src/views.js`, `src/http.js`, `src/clock.js`, `src/store.js`, `src/auth.js` and a new
-`src/blobs.js`. What is left is the dispatcher, the route table, the assets, and the four sections `docs/splitting.md`
+`src/blobs.js`. What is left is the dispatcher, the route table, the assets, and the three sections `docs/splitting.md`
 lists — with the recipe for each of them written down there rather than remembered.
 
 **Also found, and stated rather than fixed:** three things this audit *thought* were dead code and were not — a
