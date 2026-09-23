@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 
-import { practiceWithRequest, withServer } from './helpers.js';
+import { practiceWithRequest, withServer, plainBody } from './helpers.js';
 
 /** A relay that accepts everything, and remembers it. */
 async function relay(t) {
@@ -69,7 +69,7 @@ const mailerAt = (port) => ({
   describe: () => `127.0.0.1:${port}`,
 });
 
-const bodyOf = (message) => Buffer.from(message.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
+const bodyOf = (message) => plainBody(message);
 
 test('the request page offers to email it, and the draft carries the list and a link that opens', async (t) => {
   const fake = await relay(t);

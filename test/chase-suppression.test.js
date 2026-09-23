@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 
-import { withServer, practiceWithRequest, createLink, upload } from './helpers.js';
+import { withServer, practiceWithRequest, createLink, upload, plainBody } from './helpers.js';
 
 /** A relay that accepts everything, and remembers it. Copied small from `send.test.js`. */
 async function relay(t) {
@@ -70,7 +70,7 @@ const mailerAt = (port) => ({
 });
 
 /** The body of a message the relay received, decoded. */
-const bodyOf = (message) => Buffer.from(message.split('\r\n\r\n')[1].replace(/=\r\n/g, '').replace(/\r\n/g, ''), 'base64').toString('utf8');
+const bodyOf = (message) => plainBody(message);
 
 /**
  * The messages the relay was asked to carry **to the client**.

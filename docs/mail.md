@@ -116,3 +116,17 @@ exactly as it should when `rejectUnauthorized` was forced on in a mutation proof
 the conversation is what SMTP asks for. It cannot prove delivery or reputation, because both are
 properties of the receiving provider rather than of the message. **Watch your first real send** rather
 than assuming — set the relay up, send yourself a reminder, and confirm it arrives.
+
+## What a message looks like
+
+The letters that go to **clients** — the opening ask and the reminder — leave as
+`multipart/alternative`: the words as plain text, and the same words as an HTML letter with the
+practice's name at the top and the link as a button. The plain part is byte-for-byte the text in the
+draft; the HTML is a rendering of it that adds no words of its own (see `mailHtml` in
+`src/mailer.js`), so "what you see is what gets sent" survives the styling. The notes that go to the
+**practice** — the arrival notice, the key-change notice, the test message — stay plain text: a
+status note does not need a letterhead.
+
+Email HTML follows email's rules rather than the web's: no scripts, no external anything (most
+clients block remote content by default), every style inline, and a table for the frame — because a
+good share of financial inboxes render mail with Microsoft Word.

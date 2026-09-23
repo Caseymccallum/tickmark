@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startRelay } from './smtp-relay.js';
-import { setUpKey, signUp, withServer } from './helpers.js';
+import { setUpKey, signUp, withServer, plainBody } from './helpers.js';
 
 const PAST = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
 
@@ -105,8 +105,7 @@ test('the run sends one message per client, each with its own working link', asy
     assert.match(report, /1 sent, 0 failed, 0 not attempted, 1 with no email address/);
     assert.match(report, /no email address on this client/, 'and the report keeps saying who was left out');
 
-    const [, encoded] = relay.seen.messages[0].split('\r\n\r\n');
-    const body = Buffer.from(encoded.replace(/\r\n/g, ''), 'base64').toString('utf8');
+    const body = plainBody(relay.seen.messages[0]);
     assert.match(body, /Northwind Ltd/, 'the message is the ordinary reminder for that client');
     assert.match(body, /Bank statements/);
     assert.match(body, /Photo ID/);

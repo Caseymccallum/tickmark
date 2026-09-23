@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 
-import { withServer, practiceWithRequest } from './helpers.js';
+import { withServer, practiceWithRequest, plainBody } from './helpers.js';
 
 /** A relay that accepts everything, and remembers it. */
 async function relay(t, { recipientReply = '250 ok' } = {}) {
@@ -66,7 +66,7 @@ const mailerAt = (port) => ({
 });
 
 /** The body of a message the relay received, decoded. */
-const bodyOf = (message) => Buffer.from(message.split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
+const bodyOf = (message) => plainBody(message);
 const headerOf = (message, name) => new RegExp(`\\r\\n${name}: (.*)\\r\\n`).exec(message)?.[1];
 
 test('the reminder page offers to send when a mail server is configured, and names it', async (t) => {

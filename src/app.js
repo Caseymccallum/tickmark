@@ -78,7 +78,7 @@ import { newId, now } from './db.js';
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, HEADER_BYTES, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
 import { VERSION } from './version.js';
-import { MailError, sendMail } from './mailer.js';
+import { MailError, mailHtml, sendMail } from './mailer.js';
 import { COMMON_ZONES, dateIn, knownZone, monthIn, todayIn } from './clock.js';
 import { createAttemptLimiter } from './ratelimit.js';
 import { ROLE_BLURBS, ROLE_WORDS, ROLES, holdsKey, refusalFor, roleMeets, roleName } from './roles.js';
@@ -2947,7 +2947,12 @@ async function sendOneOpening(db, { client, requestId, token }, { origin, title,
   });
 
   try {
-    const { messageId } = await sendMail(mailer, { to: client.email, subject: message.subject, body: message.body });
+    const { messageId } = await sendMail(mailer, {
+      to: client.email,
+      subject: message.subject,
+      body: message.body,
+      html: mailHtml(message.body, practiceName),
+    });
     recordEvent(db, { requestId, kind: 'request.sent', detail: `${client.email} — ${messageId}` });
     return { row: { client, requestId }, outcome: 'sent', to: client.email, messageId };
   } catch (error) {
@@ -4306,7 +4311,12 @@ async function sendOpening({ db, request, response, practitioner, params, mailer
   const body = typeof fields.message === 'string' ? fields.message : '';
 
   try {
-    const messageId = await sendMail(mailer, { to: found.client_email, subject, body });
+    const messageId = await sendMail(mailer, {
+      to: found.client_email,
+      subject,
+      body,
+      html: mailHtml(body, practiceFor(db, practiceId)?.name ?? null),
+    });
     recordEvent(db, {
       requestId: found.id,
       kind: 'request.sent',
@@ -4398,7 +4408,7 @@ function reminderPage({
           <textarea id="subject" name="subject" rows="2">${draft.subject}</textarea>
         </div>
         <div class="field">
-          <label for="message">Message <span class="note">what you see is what gets sent</span></label>
+          <label for="message">Message <span class="note">what you see is what gets sent — as plain text, and as a styled copy of these same words</span></label>
           <textarea id="message" name="message" rows="18" data-select-on-click>${draft.body}</textarea>
         </div>
         ${canSend
@@ -4456,7 +4466,12 @@ async function sendReminder({ db, request, response, practitioner, params, maile
   if (body.trim().length === 0) return refuse('The message was empty.');
 
   try {
-    const { messageId } = await sendMail(mailer, { to: found.client_email, subject, body });
+    const { messageId } = await sendMail(mailer, {
+      to: found.client_email,
+      subject,
+      body,
+      html: mailHtml(body, practiceFor(db, practiceId)?.name ?? null),
+    });
 
     // A reminder with no link in it is a message the client cannot act on — they have nowhere to send
     // anything. It is sent anyway, because the words are the practice's decision, but the page says so
@@ -4842,6 +4857,7 @@ async function sendOneReminder(db, row, origin, mailer, practiceName = null) {
       to: row.client_email,
       subject: message.subject,
       body: message.body,
+      html: mailHtml(message.body, practiceName),
     });
     recordEvent(db, {
       requestId: row.id,

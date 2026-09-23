@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 
-import { createLink, practiceWithRequest, withServer } from './helpers.js';
+import { createLink, practiceWithRequest, withServer, plainBody } from './helpers.js';
 import { openingDraft, reminderDraft } from '../src/app.js';
 
 test('a reminder is signed by the practice, and says nothing it was not told', () => {
@@ -131,7 +131,7 @@ test('what goes out is signed with the current name, and the client\u2019s page 
       message: 'Hello Northwind Ltd,\n\nJust the engagement letter now.\n\nThanks,\n\nLodis Accountancy',
     });
     assert.equal(sent.status, 303);
-    const wire = Buffer.from(fake.seen.messages[0].split('\r\n\r\n')[1].replace(/\r\n/g, ''), 'base64').toString('utf8');
+    const wire = plainBody(fake.seen.messages[0]);
     assert.match(wire, /Lodis Accountancy/, 'and what reached the relay is signed');
 
     // The portal the client is sent to names the sender too, in the tab and on the page.

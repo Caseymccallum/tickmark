@@ -34,6 +34,11 @@ shape of it is here:
   response, minted and stamped where every page already passes through; no `unsafe-inline` anywhere; and
   the inline widths and click-handlers a strict policy refuses became classes and one nonced script.
   `check:pages` fails any rendered page that brings either back.
+- **The reminder is a letter** — client-facing mail leaves as `multipart/alternative`: the exact words
+  of the draft as plain text, and the same words rendered as a styled letter with the practice's name
+  at the top and the link as a button. The plain part is byte-for-byte what the practice typed; the
+  styled copy adds and removes nothing, so "what you see is what gets sent" survives the styling.
+  The notes a practice sends itself stay plain.
 
 **The schema changed**: `invite` gained `revoked_at` (added in place, and present in the rebuild path — see
 `docs/operations.md`).

@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 
 import { createClient, itemsOf, requestsFor } from '../src/store.js';
-import { PASSWORD, signUp, withServer } from './helpers.js';
+import { PASSWORD, signUp, withServer, plainBody } from './helpers.js';
 
 /**
  * A relay that accepts everyone it is asked to, except the addresses named in `refuse` — which get a real
@@ -83,14 +83,7 @@ const mailerAt = (port) => ({
 });
 
 /** What a message's body actually says, decoded. */
-const bodyOf = (message) =>
-  Buffer.from(
-    message
-      .split('\r\n\r\n')[1]
-      .replace(/=\r\n/g, '')
-      .replace(/\r\n/g, ''),
-    'base64',
-  ).toString('utf8');
+const bodyOf = (message) => plainBody(message);
 
 /** A practice with a key, a saved list, and as many clients as the test asks for. */
 async function practiceWithList({ agent: make, db }, clients, items = 'Photo ID\nBank statements') {

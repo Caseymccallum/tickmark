@@ -21,8 +21,10 @@
  */
 import { connect as connectNet, isIP } from 'node:net';
 import { connect as connectTls } from 'node:tls';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+
+import { escapeHtml } from './views.js';
 
 export const DEFAULT_TIMEOUT_MS = 20000;
 export const DEFAULT_PORT = 587;
@@ -137,27 +139,125 @@ const base64Body = (text) =>
   (Buffer.from(String(text), 'utf8').toString('base64').match(/.{1,76}/g) ?? []).join('\r\n');
 
 /**
+ * The same words, dressed as a letter.
+ *
+ * Email HTML is its own medium and its rules are unkind: no scripts (stripped or punished), no
+ * external anything (most clients block remote images and styles by default), and behind half the
+ * inboxes in finance the rendering engine is **Microsoft Word** — so the frame is a table and every
+ * style is inline. What goes in here is the message's plain text, unchanged and unadded-to: the text
+ * a practice edits in the draft stays the single source of truth, and this only renders it. Blank
+ * lines separate paragraphs, the drafts' `  - item` lines become a list, a URL becomes a link, and a
+ * URL on a line of its own becomes the one thing a letter like this is for — a button.
+ */
+export function mailHtml(text, practiceName = null) {
+  // Escaped first, always; the linkifier then works on entities, so no `<` can ever survive to become
+  // markup, and an ampersand in a URL comes out as `&amp;` where HTML wants it.
+  const inline = (line) =>
+    escapeHtml(line).replace(/https?:\/\/[^\s<]+/g, (match) => {
+      const trail = /[.,;:!?)\]]*$/.exec(match)[0];
+      const href = match.slice(0, match.length - trail.length);
+      return `<a href="${href}" style="color:#2a5bd7;">${href}</a>${trail}`;
+    });
+
+  const blocks = [];
+  for (const line of String(text).replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    const item = /^\s+-\s+/.test(line) ? line.replace(/^\s+-\s+/, '') : null;
+    const loneUrl = /^https?:\/\/\S+$/.test(trimmed) ? trimmed : null;
+    const kind = item !== null ? 'ul' : loneUrl !== null ? 'button' : trimmed === '' ? 'gap' : 'p';
+    const carried = item ?? loneUrl ?? line;
+    const last = blocks.at(-1);
+    if (last && last.type === kind && kind !== 'button' && kind !== 'gap') last.lines.push(carried);
+    else blocks.push({ type: kind, lines: [carried] });
+  }
+
+  const rendered = blocks.map((block) => {
+    if (block.type === 'gap') return '';
+    if (block.type === 'ul') {
+      return `<ul style="margin:.4rem 0;padding-left:1.3rem;">${block.lines
+        .map((item) => `<li style="margin:.25rem 0;">${inline(item)}</li>`)
+        .join('')}</ul>`;
+    }
+    if (block.type === 'button') {
+      // The label is the URL itself: honest in every client (including the ones that will not style a
+      // button), copyable by hand if the link dies, and unambiguous about where it goes.
+      const url = escapeHtml(block.lines[0]);
+      return (
+        `<p style="margin:1.1rem 0 .3rem;"><a href="${url}" style="display:inline-block;background:#131c2b;` +
+        `color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;">${url}</a></p>` +
+        `<p style="margin:.2rem 0 .55rem;font-size:12.5px;color:#8b95a3;word-break:break-all;">${url}</p>`
+      );
+    }
+    return `<p style="margin:.55rem 0;">${block.lines.map(inline).join('<br />')}</p>`;
+  }).join('');
+
+  const letterhead = practiceName
+    ? `<div style="font-size:13px;font-weight:600;color:#5c6875;letter-spacing:.06em;text-transform:uppercase;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid #e6e9ee;">${escapeHtml(practiceName)}</div>`
+    : '';
+
+  return (
+    `<div style="background:#f7f8fa;padding:24px 12px;">` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto;` +
+    `background:#ffffff;border:1px solid #e6e9ee;border-radius:12px;">` +
+    `<tr><td style="padding:28px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;` +
+    `font-size:15px;line-height:1.6;color:#131c2b;">${letterhead}${rendered}</td></tr></table></div>`
+  );
+}
+
+/**
  * The message, as it goes on the wire.
  *
  * The body is base64 rather than raw UTF-8 for the same reason the subject is encoded: it needs no
  * extension from the server, and every line is then 7-bit — which has the quiet side effect that no
  * line can begin with a dot, so this cannot accidentally end the message early.
  */
-export function buildMessage({ from, to, subject, body, messageId }) {
-  return [
+export function buildMessage({ from, to, subject, body, html = null, messageId }) {
+  const head = [
     `From: ${from}`,
     `To: ${to}`,
     `Subject: ${encodeHeader(subject)}`,
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: ${messageId}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    // Tells a well-behaved autoresponder not to answer this, which is the difference between a
-    // reminder and a mail loop.
+  ];
+
+  if (!html) {
+    return [
+      ...head,
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      // Tells a well-behaved autoresponder not to answer this, which is the difference between a
+      // reminder and a mail loop.
+      'Auto-Submitted: auto-generated',
+      '',
+      base64Body(body),
+      '',
+    ].join('\r\n');
+  }
+
+  // `multipart/alternative`: one message in two dressings. **The order is an instruction** — a client
+  // shows the last part it understands — so plain comes first and the styled copy second. The plain
+  // part is byte-for-byte the text the practice was shown and edited; the HTML is a rendering of those
+  // same words (see `mailHtml`) and adds none of its own.
+  const boundary = `----tickmark-${randomBytes(12).toString('hex')}`;
+  return [
+    ...head,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     'Auto-Submitted: auto-generated',
     '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
     base64Body(body),
+    '',
+    `--${boundary}`,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    base64Body(html),
+    '',
+    `--${boundary}--`,
     '',
   ].join('\r\n');
 }
@@ -375,7 +475,7 @@ function upgrade(session, config, timeoutMs) {
  * than a successful send and a much better one than a message that vanished into a queue nobody
  * watches.
  */
-export async function sendMail(config, { to, subject, body, from = config.from, timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS }) {
+export async function sendMail(config, { to, subject, body, html = null, from = config.from, timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS }) {
   const recipient = addressOf(to);
   if (!/^[^@\s]+@[^@\s]+$/.test(recipient)) {
     throw new MailError('configuration', `that is not an email address: ${to}`);
@@ -419,7 +519,7 @@ export async function sendMail(config, { to, subject, body, from = config.from, 
     // The Message-ID carries the sender's domain, which is the machine that accepts responsibility
     // for the message if a bounce comes back.
     const messageId = `<${randomUUID()}@${addressOf(from).split('@')[1] ?? 'tickmark.local'}>`;
-    session.send(`${dotStuff(buildMessage({ from, to, subject, body, messageId }))}\r\n.`);
+    session.send(`${dotStuff(buildMessage({ from, to, subject, body, html, messageId }))}\r\n.`);
     await expect(session, 250, 'the message body');
 
     session.send('QUIT');

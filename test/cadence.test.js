@@ -21,7 +21,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startRelay } from './smtp-relay.js';
-import { setUpKey, signUp, withServer } from './helpers.js';
+import { setUpKey, signUp, withServer, plainBody } from './helpers.js';
 
 const PAST = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
 
@@ -61,7 +61,7 @@ function received(relay) {
     .map((line) => /<([^>]+)>/.exec(line)[1]);
 
   return relay.seen.messages.map((raw, index) => {
-    const [head, ...rest] = raw.split('\r\n\r\n');
+    const [head] = raw.split('\r\n\r\n');
     const headers = {};
     for (const line of head.split('\r\n')) {
       const at = line.indexOf(':');
@@ -70,7 +70,7 @@ function received(relay) {
     return {
       to: recipients[index] ?? null,
       subject: decodeHeader(headers.subject),
-      body: Buffer.from(rest.join('\r\n\r\n').replace(/\r\n/g, ''), 'base64').toString('utf8'),
+      body: plainBody(raw),
     };
   });
 }

@@ -89,6 +89,19 @@ export const PASSPHRASE = 'a passphrase long enough';
  * helper, because two normalisers would be two chances to drift from what the server stamps.
  */
 export const denonce = (markup) => markup.replace(/nonce="[A-Za-z0-9_-]+"/g, 'nonce="…"');
+
+/**
+ * What a message's body says, decoded — for both shapes `buildMessage` writes: the single-part text,
+ * and the `text/plain` half of a styled `multipart/alternative`. One helper because a decoder that
+ * only understands one shape is how "the styled mail broke the words" hides in a red test.
+ */
+export function plainBody(message) {
+  const text = String(message);
+  const payload = /Content-Type: multipart\/alternative/.test(text)
+    ? /Content-Type: text\/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n([\s\S]*?)\r\n--/.exec(text)?.[1]
+    : text.split('\r\n\r\n').slice(1).join('\r\n\r\n');
+  return Buffer.from((payload ?? '').replace(/=\r\n/g, '').replace(/\r\n/g, ''), 'base64').toString('utf8');
+}
 export const signUp = (client, email, password = PASSWORD) => client.post('/signup', { email, password });
 
 /**
