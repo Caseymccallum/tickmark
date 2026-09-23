@@ -21,7 +21,8 @@
     "bench:breakdown": "node tools/bench-breakdown.mjs",
     "bench:gzip": "node tools/bench-gzip.mjs",
     "find:unused": "node tools/find-unused.mjs",
-    "tables": "node tools/tables.mjs"
+    "tables": "node tools/tables.mjs",
+    "probe:repeats": "node tools/probe-repeats.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

@@ -336,16 +336,19 @@ export const fileCountFor = (db, practiceId) =>
     .prepare('SELECT COUNT(*) AS n FROM upload u JOIN request r ON r.id = u.request_id WHERE r.practice_id = ?')
     .get(practiceId).n;
 
-export function clientSummaries(db, practiceId) {
+export function clientSummaries(db, practiceId, progress = null) {
   // One query for every request's counts, then the client list, then a grouping in memory. It used to ask, per
   // client, for that client's open requests and then for each request's items — three levels of query inside a
   // loop, which at five hundred clients is several thousand queries to draw one page.
-  const progress = progressForPractice(db, practiceId);
+  //
+  // `progress` arrives already built when the caller has another use for it — the clients page asks for the same
+  // counts again to work out who is due an ask.
+  const counts = progress ?? progressForPractice(db, practiceId);
   const openByClient = new Map();
   for (const row of db
     .prepare('SELECT id, client_id FROM request WHERE practice_id = ? AND closed_at IS NULL')
     .all(practiceId)) {
-    openByClient.set(row.client_id, (openByClient.get(row.client_id) ?? 0) + (progress.get(row.id)?.outstanding ?? 0));
+    openByClient.set(row.client_id, (openByClient.get(row.client_id) ?? 0) + (counts.get(row.id)?.outstanding ?? 0));
   }
 
   return db
@@ -568,7 +571,7 @@ export function clientsForBulkSend(db, practiceId) {
  * stated in `docs/roadmap.md` rather than papered over with a "cycle length" setting that would be wrong for
  * whoever did not read it.
  */
-export function clientsDueForAsking(db, practiceId, { timezone = null, now = new Date() } = {}) {
+export function clientsDueForAsking(db, practiceId, { timezone = null, now = new Date(), progress = null, clients = null } = {}) {
   // The month *of the year* is what repeats — "September" — and the rule is that the year does not. Comparing
   // whole `YYYY-MM` strings while also requiring the years to differ is a comparison that can never be true, and
   // it is exactly the bug this function shipped with for one test run.
@@ -576,7 +579,9 @@ export function clientsDueForAsking(db, practiceId, { timezone = null, now = new
   const monthOfYear = month.slice(5);
   const year = Number(month.slice(0, 4));
 
-  return clientSummaries(db, practiceId).filter((client) => {
+  // `clients` arrives already built when the caller has the list in hand — the clients page does, and without this it
+  // asked for the whole client list twice: once to draw the table and once to work out who is due.
+  return (clients ?? clientSummaries(db, practiceId, progress)).filter((client) => {
     // Being asked already is the answer to "should they be asked".
     if (client.open_requests > 0) return false;
     if (!client.last_request_at) return false;
@@ -1226,6 +1231,24 @@ const NOTHING = progressOf({
  * The counts come from grouping `request_item` rows, so a request with no documents produces no row and would simply
  * be absent — and a caller doing `map.get(id).state` on the strength of a documented contract would be reading
  * `undefined` as a state. A test asserts the size, which is how this was found rather than shipped.
+ *
+ * **`into` is the interesting argument**, and it is where this function stops being a query and becomes an index.
+ * A page that needs counts for three different things — the table, the season notice, the first-run card — used to
+ * build this three times, because each of those called in through a different function that did not know about the
+ * others. Measured on the board: three identical passes over `request_item`, about 11 ms of a 31 ms render.
+ *
+ * So a caller that knows it needs more than one thing builds the map once and passes it down:
+ *
+ * ```js
+ * const progress = progressForPractice(db, practiceId);
+ * const rows = requestsFor(db, practiceId, { scope: 'open', progress });
+ * const due = clientsDueForAsking(db, practiceId, { timezone, progress });
+ * ```
+ *
+ * That is deliberate rather than a cache. A cache would need a lifetime and an invalidation rule, and this product's
+ * worst bugs have all been stale state — a count that disagreed with the list beside it, a state word that
+ * contradicted a number. An index that lives for the length of one function call cannot go stale, and the only
+ * question it raises is which caller builds it, which the code answers by being explicit about it.
  */
 export function progressForPractice(db, practiceId) {
   const map = new Map();
@@ -1666,17 +1689,20 @@ export function replaceWrappedKey(db, practiceId, practitionerId, keyId, wrapped
  * alternative is a query per row. A list that never empties stops being read — so closed requests are a
  * second view rather than a deletion.
  */
-export function requestsFor(db, practiceId, { scope = 'open' } = {}) {
+export function requestsFor(db, practiceId, { scope = 'open', progress = null } = {}) {
   const filter =
     scope === 'all' ? '' : scope === 'closed' ? 'AND r.closed_at IS NOT NULL' : 'AND r.closed_at IS NULL';
   // The counts for every request in the practice, in one query, before the list itself. Both used to be a query per
   // row — and, worse, a second implementation of the rule that could disagree with this one.
   //
+  // `progress` arrives already built when the caller has more than one use for it; otherwise it is built here, which
+  // is the right default for a page that only wants the table.
+  //
   // A correlated `(SELECT MAX(e.at) FROM event …)` used to ride along here to make `last_activity_at`. Nothing read
   // it — a grep for the name found the query and nothing else — so every board render was doing one index lookup per
   // request for a value no page displayed. Removed rather than kept "in case": a field nobody reads is a cost paid
   // on every render for a hypothetical.
-  const progress = progressForPractice(db, practiceId);
+  const counts = progress ?? progressForPractice(db, practiceId);
   return db
     .prepare(
       `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at,
@@ -1691,8 +1717,13 @@ export function requestsFor(db, practiceId, { scope = 'open' } = {}) {
       ...row,
       // The same counts the request page computes, from the same function — so the list and the page cannot disagree
       // about a client's state, which is the thing that would destroy trust in the whole board.
-      progress: progress.get(row.id) ?? NOTHING,
+      progress: counts.get(row.id) ?? NOTHING,
     }));
+}
+
+/** How many requests a practice has, all told. A count, for the one caller that wants a number rather than a page. */
+export function countRequests(db, practiceId) {
+  return db.prepare('SELECT COUNT(*) AS n FROM request WHERE practice_id = ?').get(practiceId).n;
 }
 
 export function closedCount(db, practiceId) {

@@ -171,6 +171,61 @@ and nothing else — no page displayed it — so every board render was doing on
 that went nowhere. Removed rather than kept in case: a field nobody reads is a cost paid on every render for a
 hypothetical.
 
+### A third pass: the same index, built three times
+
+The N+1 work made each *call* cheap. It did not stop the same call happening more than once, and a probe written to
+count statement executions found the board running **15 queries where 9 would do**:
+
+```
+the board (/requests) — 15 queries
+  3x  SELECT id FROM request WHERE practice_id = ?
+  3x  SELECT i.request_id AS request_id, COUNT(*) AS items, …   (the counts)
+  2x  SELECT id, name, created_at, cadence_days, timezone, …    (the practice's own row)
+```
+
+Three identical passes over `request_item`, and two reads of one row. The reason was structural rather than careless:
+three *unrelated* consumers each wanted the counts and none of them knew about the others — the table itself, the
+season notice, and the first-run card. Each called in through a different function that built the index for itself.
+
+**The fix is an idea borrowed from a sibling project** (`life-os/apps/cognivault`), where an `AnalysisContext` is
+constructed once from the raw entries and handed to every analysis function that needs it. Its `BuildContext` does
+the same for relationships: `milestonesByGoal`, `progressByGoal`, `habitsById`, all built in one O(n) pass and then
+read in O(1). The lesson is not "cache" — it is **build the index once, pass it to the things that read it.**
+
+So the three functions that need the counts now accept one that has already been built:
+
+```js
+const progress = progressForPractice(db, practiceId);
+const all = requestsFor(db, practiceId, { scope, progress });
+const due = clientsDueForAsking(db, practiceId, { timezone, progress, clients: everyone });
+```
+
+**That is deliberately not a cache.** A cache needs a lifetime and an invalidation rule, and every serious bug in this
+product has been stale state — a count that disagreed with the list beside it, a state word that contradicted a
+number. An index that lives for the length of one function call cannot go stale, and the only question it raises is
+which caller builds it, which the code now answers by being explicit.
+
+Two more things fell out of the same probe:
+
+- **`firstRunCard` wanted a count**, not a page: it called `requestsFor(…, { scope: 'all' })` to ask whether *any*
+  request existed, building every request's counts to answer a yes/no question. There is now `countRequests`.
+- **`viewRequest` called `itemsOf` twice for one request** — once for the table, once to decide whether to show the
+  "email this request" button.
+
+| | queries before | after | page time at 500 clients |
+| --- | --- | --- | --- |
+| Board | 15 | **10** | 31 → **19 ms** |
+| Clients | 10 | **6** | 30 → **23 ms** |
+
+And `tools/probe-repeats.mjs` — the counter, which hooks the statement cache — now reports **"every page asks each
+question exactly once"**. It is kept as a regression guard rather than thrown away, because the thing it catches is
+invisible to tests: every page still renders correctly with the index built three times, just slower.
+
+**What it does not fix, and why that is right.** The reminder draft reads `request_item` twice with two different
+shapes — `itemsOf` for every document, `outstandingOf` for the ones still wanted. Merging them would mean deriving
+"outstanding" from the full list by hand, which is the second-definition-of-a-word bug this project has now fixed
+three times. Two queries, one rule, and the rule stays in exactly one place.
+
 ### Then the bytes, which is where the rest of it was
 
 88% of a Tickmark page is the stylesheet, and the stylesheet is inlined on purpose so that a page needs no second

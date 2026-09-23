@@ -29,6 +29,32 @@ the queries are not; **one process on one core is**, because `node:sqlite` is sy
 called once. Throughput is roughly 30-150 requests a second per process, which is a hundred practices' worth — and
 the fix at that point is a `cluster` branch in `server.js`, not a different architecture.
 
+**Then the same index, built three times.** The N+1 work made each *call* cheap; it did not stop the same call
+happening twice. A counter on the statement cache found the board running **15 queries where 9 would do** — three
+identical passes over `request_item` and two reads of the practice's own row, because the table, the season notice
+and the first-run card each wanted the counts and none knew about the others.
+
+The fix is an idea taken from a sibling project, where an `AnalysisContext` is built once from the raw entries and
+handed to every function that needs it. The lesson is not "cache" — it is **build the index once and pass it to the
+readers**, which is why the three functions now accept one that has already been built:
+
+```js
+const progress = progressForPractice(db, practiceId);
+const all = requestsFor(db, practiceId, { scope, progress });
+const due = clientsDueForAsking(db, practiceId, { timezone, progress, clients: everyone });
+```
+
+**Deliberately not a cache**: a cache needs a lifetime and an invalidation rule, and every serious bug in this
+product has been stale state. An index that lives for one function call cannot go stale.
+
+| | queries | page time at 500 clients |
+| --- | --- | --- |
+| Board | 15 → **10** | 31 → **19 ms** |
+| Clients | 10 → **6** | 30 → **23 ms** |
+
+`npm run probe:repeats` is kept as a regression guard and now reports *"every page asks each question exactly once"*.
+It catches something no test can: every page renders correctly with the index built three times, just slower.
+
 ## Unreleased, expected in 0.1.0 — the audit, and the bug it kept finding
 
 **One word with two meanings, for the third time, and this one was a number on the board.**

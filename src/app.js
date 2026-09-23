@@ -102,6 +102,7 @@ import {
   allPracticeKeys,
   createInvite,
   createRequest,
+  countRequests,
   findOrCreateClient,
   history,
   inTransaction,
@@ -113,6 +114,7 @@ import {
   markArrivalsChecked,
   membersOf,
   outstandingForPractice,
+  progressForPractice,
   outstandingOf,
   lastNoticeAt,
   practiceFor,
@@ -1588,7 +1590,9 @@ const REQUEST_ORDERS = {
  * 4. **It is the only thing on the board that is not about a client**, and it says when it will leave.
  */
 function firstRunCard({ db, practiceId, practitioner, mailer }) {
-  const requests = requestsFor(db, practiceId, { scope: 'all' }).length;
+  // A count, not a list: this card asks whether any request exists at all, and building every request's counts to
+  // answer that was one of three identical passes over the items table on every board render.
+  const requests = countRequests(db, practiceId);
   const team = membersOf(db, practiceId).filter((member) => !member.removedAt).length;
 
   const steps = [
@@ -1652,12 +1656,17 @@ function listRequests({ db, response, practitioner, url, practiceId, mailer }) {
   const wanted = url.searchParams.get('state');
   const query = (url.searchParams.get('q') ?? '').trim();
   const sort = url.searchParams.get('sort') ?? 'state';
-  const all = requestsFor(db, practiceId, { scope: showingClosed ? 'closed' : 'open' });
+  // One read of the practice's own row, and one build of the request counts, for a handler that needs both in two
+  // places each. Before this, the row was read twice and the counts were built three times — the table, the season
+  // notice and the first-run card each asked independently, and none of them knew about the others.
+  const practice = practiceFor(db, practiceId);
+  const progress = progressForPractice(db, practiceId);
+  const all = requestsFor(db, practiceId, { scope: showingClosed ? 'closed' : 'open', progress });
   const closed = closedCount(db, practiceId);
   // Overdue is a question about the practice's calendar, not Greenwich's: a due date of the 31st is late on
   // the 31st where they are, and answering it in UTC makes that answer wrong for part of every day — in the
   // direction that says "overdue" a day early in Auckland and a day late in Honolulu.
-  const today = todayIn(practiceFor(db, practiceId).timezone);
+  const today = todayIn(practice.timezone);
 
   /**
    * The season notice: who is due an ask, said on the page a practice actually opens.
@@ -1673,7 +1682,7 @@ function listRequests({ db, response, practitioner, url, practiceId, mailer }) {
   const seasonNotice =
     showingClosed || wanted || query
       ? null
-      : clientsDueForAsking(db, practiceId, { timezone: practiceFor(db, practiceId).timezone });
+      : clientsDueForAsking(db, practiceId, { timezone: practice.timezone, progress });
 
   const counts = {};
   for (const row of all) counts[row.progress.state] = (counts[row.progress.state] ?? 0) + 1;
@@ -2259,7 +2268,7 @@ function viewRequest({ db, request, response, practitioner, params, practiceId }
           <p class="sub">For ${found.client_name}${found.due_at ? html` · needed by ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}</p>
         </div>
         <div class="do">
-          ${found.closed_at || itemsOf(db, found.id).filter((item) => !item.withdrawn).length === 0
+          ${found.closed_at || allItems.filter((item) => !item.withdrawn).length === 0
             ? ''
             : html`<form method="post" action="/requests/${found.id}/send" class="inline">
                 <button type="submit" class="primary">Email this request</button>
@@ -3408,12 +3417,15 @@ function readableSize(bytes) {
 function listClients({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
   const query = (url.searchParams.get('q') ?? '').trim();
-  const everyone = clientSummaries(db, practiceId);
+  // The counts are built once and handed to both callers below. `clientsDueForAsking` works by filtering the client
+  // list, so without this it asked for the very same counts a second time — the same pattern the board had.
+  const progress = progressForPractice(db, practiceId);
+  const everyone = clientSummaries(db, practiceId, progress);
   const needle = query.toLowerCase();
   const timezone = practiceFor(db, practiceId).timezone;
   // Who is due is computed for the *whole* practice, not for what is on screen: the tile counts the work, and a
   // count that changed when somebody typed in the search box would be a count nobody could act on.
-  const due = clientsDueForAsking(db, practiceId, { timezone });
+  const due = clientsDueForAsking(db, practiceId, { timezone, progress, clients: everyone });
   const dueIds = new Set(due.map((row) => row.id));
   const onlyDue = url.searchParams.get('due') === '1';
 
