@@ -1,9 +1,9 @@
 # Splitting `app.js`: the recipe, and what is left
 
-`src/app.js` was one file of 7,173 lines. It is 1,462 today, and this records how the rest comes out — because the
+`src/app.js` was one file of 7,173 lines. It is 1,084 today, and this records how the rest comes out — because the
 recipe is now known, and the only thing that made it hard the first time was not knowing it.
 
-The reasoning for splitting at all is in `docs/audit.md` §3, and the story of the eleven modules that have already left
+The reasoning for splitting at all is in `docs/audit.md` §3, and the story of the twelve modules that have already left
 — including the four mistakes, and what caught them — is in `CHANGELOG.md` under *The split*. This file is the practical
 half: what to do, in what order, and what is left to do it to.
 
@@ -124,30 +124,28 @@ all reported as used while the word only appeared in prose — so when a name's 
 
 ## What is left, measured
 
-`app.js` is 1,462 lines as this is written and two sections remain, each contiguous, so each is one move. Three of the
-five have been done: `src/request-actions.js` (737 lines), `src/clients-views.js` (528) and `src/templates-views.js`
-(394). **The line numbers below are measured and will have moved by the time you read this, which is precisely why step
-1 exists.**
+`app.js` is 1,084 lines as this is written and one section remains: the sign-in pages, from the banner to the end of the
+file, so it is still one move. Four of the five have been done: `src/request-actions.js` (737 lines),
+`src/clients-views.js` (528), `src/templates-views.js` (394) and `src/bulk-ask-views.js` (403). **The line numbers below
+are measured and will have moved by the time you read this, which is precisely why step 1 exists.**
 
 | New module | Lines | What moves |
 | --- | --- | --- |
-| `signin-views.js` | 465–1094 (~630) | home, the credential forms, sign-up, sign-in, the second factor, sign-out. **Leave `createApp`, `contextFor` and `asset` alone** — that is the dispatcher and the route table, which is what `app.js` should end up as |
-| `bulk-ask-views.js` | 1096–1462 (~367) | the *Asking everyone at once* section: the preview page, the run, the per-client opening, the report |
+| `signin-views.js` | 455–1084 (~630) | home, the credential forms, sign-up, sign-in, the second factor, sign-out. **Leave `createApp`, `contextFor` and `asset` alone** — that is the dispatcher and the route table, which is what `app.js` should end up as |
 
-After those two, `app.js` is the imports, the dispatcher, the route table — a few hundred lines a reader can hold in
+After that one, `app.js` is the imports, the dispatcher, the route table — a few hundred lines a reader can hold in
 their head, which is where this started out, and the point of arriving back at it is that the *product* is the same and
 somebody can now find the part of it they need.
 
-The three moves done since this was written settle something worth knowing about the rest: `request-actions.js` needed
+The four moves done since this was written settle something worth knowing about the rest: `request-actions.js` needed
 **nothing** from `app.js`, `clients-views.js` needed nothing but the `FILES_PER_PAGE` ceiling that the documents page
-was already the only reader of, and `templates-views.js` needed nothing at all — `parseItems` was in `http.js`, as
-predicted. Every helper a seam had forced out over the earlier moves was already where these wanted it, which is the
-sign the seams are in the right places — and it means the two left should each be a clean move as well.
+was already the only reader of, `templates-views.js` needed nothing at all — `parseItems` was in `http.js`, as
+predicted — and `bulk-ask-views.js` needed nothing but `CHASE_BUDGET_MS`, which `chase-views.js` was already exporting.
+Every helper a seam had forced out over the earlier moves was already where these wanted it, which is the sign the seams
+are in the right places.
 
-Two notes for whoever does it:
+One note for whoever does it:
 
-- **The bulk ask shares `CHASE_BUDGET_MS`** with the chase, which `chase-views.js` exports today. When that section
-  moves, the import follows the code and the constant can stay where it is.
 - **The sign-in section is the last one, and it sits against the dispatcher.** `createApp`, `contextFor` and `asset`
   must stay in `app.js` — they are what it should be when the split is done — so the section taken is `home` through
   `signOut`, and nothing above the *The pages* banner.
@@ -157,15 +155,15 @@ Two notes for whoever does it:
 Read this file first, then the entries under *The split* in `CHANGELOG.md` — they carry the reasoning, and the three
 mistakes with what caught each one. `docs/audit.md` §3 has why the file was split at all.
 
-**Where it stands.** `app.js` is 1,462 lines and 74 KB, down from 7,173 and 357 KB: four fifths of it gone, the product
-unchanged, 392 tests green and every check passing. Eleven modules have left it — `notices` (405), `client-portal`
+**Where it stands.** `app.js` is 1,084 lines and 55 KB, down from 7,173 and 357 KB: 85% of it gone, the product
+unchanged, 392 tests green and every check passing. Twelve modules have left it — `notices` (405), `client-portal`
 (607), `keys-views` (526), `board-views` (1,096), `members-views` (720), `chase-views` (626), `account-views` (261),
-`request-actions` (737), `blobs` (30), `clients-views` (528) and `templates-views` (394) — and fifteen helpers now live
-in `views`, `http`, `clock`, `store`, `auth` and `notices`. The last three moves needed no helper rehomed at all, which
-is the sign the seams are in the right places.
+`request-actions` (737), `blobs` (30), `clients-views` (528), `templates-views` (394) and `bulk-ask-views` (403) — and
+fifteen helpers now live in `views`, `http`, `clock`, `store`, `auth` and `notices`. The last four moves needed no
+helper rehomed at all, which is the sign the seams are in the right places.
 
-**Do the two remaining sections one at a time, and commit each.** Eleven commits have taken the file from 7,173 lines to
-1,462; thirteen are not worse than eleven, and a half-moved section cannot be verified.
+**Do the last section, and commit it.** Twelve commits have taken the file from 7,173 lines to 1,084; thirteen are not
+worse than twelve, and a half-moved section cannot be verified.
 
 **The one thing that has gone wrong four times is an import list disagreeing with the code.** Two were names the
 analysis could not report because they were never exported. The third was a name it *did* report and the transcription

@@ -15,9 +15,9 @@
  *    export, so the screen and the CSV cannot sort differently — a divergence nobody reports, they just stop
  *    trusting the file.
  *
- * What is *not* here, though it is adjacent and remains in `app.js`: the templates a request can be started from,
- * the client records it points at, the chase list, and the bulk ask. Those are the pieces of the audit's table that
- * are still unstarted.
+ * What is *not* here, though it is adjacent: the templates a request can be started from (`src/templates-views.js`),
+ * the client records it points at (`src/clients-views.js`), the chase list (`src/chase-views.js`) and the bulk ask
+ * (`src/bulk-ask-views.js`). Each has its own module now, and `app.js` is the route table that puts them together.
  */
 import { agoWords, todayIn } from './clock.js';
 import { now } from './db.js';

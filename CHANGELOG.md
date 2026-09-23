@@ -182,6 +182,26 @@ checks only confirmed what the previous four had left behind.
 
 392 tests, all green.
 
+### The bulk ask leaves the file, and a note that had gone stale is made true
+
+`src/bulk-ask-views.js`, 403 lines: the preview page that lists every client with whether they can be written to, the
+run itself, the per-client opening it sends through the same `openingDraft` the single-request page uses, and the report
+that says what happened. It is the twelfth module to leave `app.js`, which is **1,084 lines and 55 KB** against the
+7,173 and 357 KB the audit measured — **85% of both gone**.
+
+`CHASE_BUDGET_MS` came along as an import rather than a copy, exactly as `docs/splitting.md` said it should: the run is
+bounded in time, not in count, and the ceiling is the chase's own because what it is really about is the response still
+being writable. Nothing needed rehoming — the fourth move in a row — and sixteen imports left with the code, every one
+of them found by the scan, with no prose hiding a name this time. The analysis's false positives were in the other
+direction: `home` appeared as a *must import* and `join` as a `node:path` import, when the first was the word in a
+comment and the second a `.join(', ')` call.
+
+The stale note this move makes true is in `src/board-views.js`, which had said the templates, the client records, the
+chase list and the bulk ask "remain in `app.js`". All four are modules now, so it says so, and `app.js` is one section
+from being the route table it says it is.
+
+392 tests, all green.
+
 ### The browser's half, executed rather than served
 
 `web/tickmark-crypto.js` was always tested directly — Web Crypto is the same API in Node as in a page, so
