@@ -314,6 +314,7 @@ Worth being precise, because it is the product's main claim:
 | --- | --- |
 | `NAMING.md` | Why it is called Tickmark, and every name that was rejected with a reason |
 | `SECURITY.md` | How to report a vulnerability, what is already known and accepted, and what is in scope |
+| `docs/splitting.md` | How `app.js` was split into modules, the recipe for the rest of it, and what is left |
 | `docs/mvp.md` | The scope of the first version, the stack, the data model, and what is cut |
 | `docs/encryption.md` | What is encrypted, what is not, and why — the document the central claim rests on |
 | `docs/members.md` | The decision about several people in one practice: one key, wrapped once per person, and what it costs |
