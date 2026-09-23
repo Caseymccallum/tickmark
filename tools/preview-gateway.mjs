@@ -46,6 +46,16 @@ const pages = {
       detail: 'Finish setting up your subscription and your workspace opens straight away.',
     },
   }),
+  // The same wall for somebody who *is* signed in — the header change is the whole point of passing the account, and
+  // it is the state a locked-out practice actually sees in their own browser.
+  'wall-signed-in': billingWallPage({
+    tenant,
+    status: {
+      heading: 'Your subscription is not set up yet',
+      detail: 'Finish setting up your subscription and your workspace opens straight away.',
+    },
+    account,
+  }),
   'wall-past-due': billingWallPage({
     tenant: { ...tenant, status: 'past_due' },
     status: {

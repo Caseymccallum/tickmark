@@ -15,7 +15,7 @@
  *    second practice in its database — it sends the visitor to sign in, because the way into an
  *    existing firm is an invitation. Account creation is a platform act, at the platform's address.
  */
-import { clearSessionCookie, createSession, secureCookies, sessionCookie } from '../auth.js';
+import { clearSessionCookie, createSession, secureCookies, sessionCookie, twoFactorState } from '../auth.js';
 import { verifyPassword } from '../crypto.js';
 import { field, formFields, readBody } from '../http.js';
 import { redirect, sendPage } from '../views.js';
@@ -84,12 +84,45 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
     return match ? tenantForSlug(registry, match[1]) : null;
   }
 
-  /** Mint a core session inside the tenant's file and hand back the cookie to set. */
+  /**
+   * What the dashboard says after a redirect that had something to explain.
+   *
+   * `second-factor` is the one that matters: the person's password was right, no workspace session was minted because
+   * their practice asks for a code, and the next step is *theirs* rather than the software's. Saying so is the
+   * difference between "the product is broken" and "there is one more step, and here it is".
+   */
+  function dashboardNotice(params) {
+    if (params.get('second-factor') === '1') {
+      return 'You are signed in here. Your practice asks for a code from your authenticator, so open your workspace and sign in there to enter it.';
+    }
+    if (params.get('paid') === '1') return 'Thank you — your workspace is open.';
+    return null;
+  }
+
+  /**
+   * Mint a core session inside the tenant's file and hand back the cookie to set.
+   *
+   * **`secondFactor` is the important return value, and its absence was a way around two-factor.** This used to mint a
+   * session for whoever held the account's password, full stop — so a practice that had armed TOTP could be entered
+   * without a code by signing in at the *platform* instead of at the practice's own sign-in page. Two-factor exists to
+   * stop somebody who knows the password, and offering a second door that does not ask defeats it entirely: the
+   * attacker simply uses the front door.
+   *
+   * So when the practice's member has a second factor armed, **no session is minted here**. The platform session
+   * still exists — it is what the dashboard and the billing pages need — and the person is told to open their
+   * workspace and sign in there, where the core asks for the code as it always has.
+   *
+   * The alternative was to teach the gateway the core's challenge flow, which means a second implementation of the
+   * one thing in this product that must not be got wrong. Not asking is smaller and cannot be wrong.
+   */
   function bridgeIntoTenant(tenant, email) {
     const found = practitionerForAccount(pool, tenant, email);
     if (!found) return null;
+    if (twoFactorState(found.db, found.practitioner.id).state === 'on') {
+      return { secondFactor: true, cookie: null };
+    }
     const session = createSession(found.db, found.practitioner.id);
-    return { cookie: sessionCookie(session.token, secure) };
+    return { cookie: sessionCookie(session.token, secure), secondFactor: false };
   }
 
   /** The Stripe customer for a tenant, or null — the dashboard and the portal both ask. */
@@ -181,7 +214,8 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
           tenant: session.tenant,
           tenantUrl: session.tenant ? tenantUrlFor(session.tenant) : '/signup',
           customerConfigured: Boolean(customerIdOf(session.tenant)),
-          notice: url.searchParams.get('paid') === '1' ? 'Thank you — your workspace is open.' : null,
+          notice: dashboardNotice(url.searchParams),
+          noticeTone: url.searchParams.get('second-factor') === '1' ? 'warning' : 'success',
         }),
       );
       return true;
@@ -315,8 +349,16 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
 
     // The bridge: a session inside the practice's file, in the core's own cookie, so every page the
     // core serves finds the person it expects to find.
+    //
+    // A member with a second factor gets no session here — see `bridgeIntoTenant`. They are sent to the dashboard with
+    // a sentence explaining why, because "signed in but the workspace does not know you" is exactly the failure this
+    // bridge exists to prevent, and leaving them to discover it by opening their workspace would be worse.
     const bridged = bridgeIntoTenant(tenant, account.email);
-    if (bridged) cookies.push(bridged.cookie);
+    if (bridged?.cookie) cookies.push(bridged.cookie);
+    if (bridged?.secondFactor) {
+      redirect(response, '/dashboard?second-factor=1', cookies);
+      return;
+    }
 
     // On a practice's own address a signed-in person goes straight into their workspace — unless
     // the subscription is closed, in which case the dashboard is where the billing button is.

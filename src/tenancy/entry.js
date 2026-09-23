@@ -17,7 +17,7 @@ import { mailerFromEnvironment } from '../mailer.js';
 
 import { createGateway } from './gateway.js';
 import { createPool } from './pool.js';
-import { countTenants, openRegistry, recordLink, tenantForPractice } from './registry.js';
+import { accountForRequest, countTenants, openRegistry, recordLink, tenantForPractice } from './registry.js';
 import { createResolver } from './resolve.js';
 import { stripeFromEnvironment } from './stripe.js';
 import { billingWallPage } from './views.js';
@@ -41,8 +41,13 @@ export function createSaasServer({
     registry,
     pool,
     onBlocked: (response, tenant, status) => {
+      // The resolver hands this callback the *response* rather than the request, so the signed-in account is read
+      // from `response.req` — which Node sets on every `ServerResponse`, and which is the same request object the
+      // handler would have been given. Without it the wall's header offered "Sign in" to somebody who was already
+      // signed in, and the page had no way out except the Back button.
+      const account = response.req ? accountForRequest(registry, response.req) : null;
       response.writeHead(402, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(billingWallPage({ tenant, status }).value);
+      response.end(billingWallPage({ tenant, status, account }).value);
     },
   });
 

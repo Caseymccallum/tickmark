@@ -27,8 +27,16 @@
  */
 import { badge, html, icon, page, tick } from '../views.js';
 
-/** A page with no practice header — the shape every gateway page shares. */
-const gatewayPage = (title, body, banner = null) => page({ title, body, banner });
+/**
+ * A page with no practice header — the shape every gateway page shares.
+ *
+ * `options.account` is the person signed in to the platform, and it decides the header. Passing it is what stops the
+ * dashboard offering "Sign in" to somebody already signed in, and what gives the billing wall a way back to the
+ * account and a way out. `signIn: false` on the pages that *are* the sign-in, because a link to where you already are
+ * is noise.
+ */
+const gatewayPage = (title, body, { banner = null, account = null, signIn = true } = {}) =>
+  page({ title, body, banner, account, signIn });
 
 /**
  * How a subscription state looks: a tone for the words, a mark for the eye, and the status as a phrase
@@ -127,6 +135,9 @@ export function loginPage({ values = {}, problem = null }) {
         <p class="aside">${icon('key')} Your passphrase is not asked for here. It opens the documents, in your
         browser, and the server never sees it.</p>
       </div>`,
+    // The header's "Sign in" is suppressed here, because this *is* the sign-in page: a link to where you already are
+    // is noise. On `/signup` it stays, where it is a genuine shortcut for somebody who came to the wrong page.
+    { signIn: false },
   );
 }
 
@@ -137,7 +148,14 @@ export function loginPage({ values = {}, problem = null }) {
  * is where a signed-in person is told which address that is — with a link, because making somebody
  * remember a hostname is how a working product feels broken.
  */
-export function dashboardPage({ account, tenant, tenantUrl, customerConfigured = false, notice = null }) {
+export function dashboardPage({
+  account,
+  tenant,
+  tenantUrl,
+  customerConfigured = false,
+  notice = null,
+  noticeTone = 'success',
+}) {
   return gatewayPage(
     'Your workspace',
     html`
@@ -150,7 +168,7 @@ export function dashboardPage({ account, tenant, tenantUrl, customerConfigured =
           </div>
         </div>
 
-        ${notice ? html`<p class="success">${icon('tick')} ${notice}</p>` : ''}
+        ${notice ? html`<p class="${noticeTone}">${icon(noticeTone === 'success' ? 'tick' : 'key')} ${notice}</p>` : ''}
         ${!tenant
           ? html`<div class="state">
                 ${icon('person', 22, 'off')}
@@ -182,6 +200,10 @@ export function dashboardPage({ account, tenant, tenantUrl, customerConfigured =
 
         <form method="post" action="/logout" class="inline"><button type="submit" class="ghost">Sign out</button></form>
       </div>`,
+    // The header, not the body, carries the account: "Your account" and a way out. Before this the dashboard's header
+    // offered "Sign in" to somebody who was already signed in, and the only way out was a button at the bottom of the
+    // page — which is the sort of thing a person notices as "this feels unfinished" without being able to say why.
+    { account },
   );
 }
 
@@ -245,7 +267,7 @@ function subscriptionBlock({ tenant, customerConfigured }) {
  * practice is locked out with and the words this page shows cannot drift apart. **The tone is derived from the same
  * lookup the dashboard uses**, which is why a failure looks the same wherever it is met.
  */
-export function billingWallPage({ tenant, status }) {
+export function billingWallPage({ tenant, status, account = null }) {
   const { tone, mark, word } = look(String(tenant.status));
   return gatewayPage(
     'Subscription',
@@ -282,12 +304,19 @@ export function billingWallPage({ tenant, status }) {
             mistake, contact whoever set up your workspace.</p>
           </div>
         </div>
+
+        ${/* A way onward that is not billing. The wall is reachable from a practice's own address, where the person
+              may be an accountant with no platform session at all — so this is a link rather than an assumption, and
+              the header still offers a sign-in for whoever has not got one. */ ''}
+        <p class="onward">${icon('arrow')} <a href="/dashboard">Your account</a>
+          <span class="note">— invoices, payment details and the address of your workspace.</span></p>
       </div>`,
+    { account },
   );
 }
 
 /** A one-off page for something that went wrong outside a form. */
-export const simplePage = (title, heading, detail) =>
+export const simplePage = (title, heading, detail, { account = null } = {}) =>
   gatewayPage(
     title,
     html`
@@ -297,6 +326,7 @@ export const simplePage = (title, heading, detail) =>
           <div><h1>${heading}</h1></div>
         </div>
         <div class="card"><p>${detail}</p></div>
-        <p class="onward">${icon('arrow')} <a href="/dashboard">Back to your workspace</a></p>
+        <p class="onward">${icon('arrow')} <a href="/dashboard">Back to your account</a></p>
       </div>`,
+    { account },
   );

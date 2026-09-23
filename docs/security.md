@@ -17,9 +17,9 @@ section says how a claim is *checked* as well as how it is implemented.
 | **A link opens one request** | The token's digest maps to one request; item addresses are checked against that request | The same file, from a client's side |
 | **A stolen database is not a set of working sessions** | Session, link, invite, challenge and recovery tokens are stored as SHA-256 digests | `test/stack.test.js` asserts a link token is never stored |
 | **Passwords are not crackable in bulk** | scrypt at `N=2^16` (64 MiB per guess), 16-byte salt, constant-time compare | `src/crypto.js`; the parameters are one exported constant |
-| **A stolen password is not enough** | TOTP second factor, per member | `test/two-factor.test.js`, against the RFC's own vectors |
+| **A stolen password is not enough** | TOTP second factor, per member | `test/two-factor.test.js`, against the RFC's own vectors; and `test/gateway.test.js` proves the platform sign-in cannot walk around it |
 
-## The four findings
+## The five findings
 
 ### 1. The second factor could be ground down — **fixed, and the most serious thing here**
 
@@ -78,6 +78,42 @@ would be worse than none: `unsafe-inline` in a CSP is a claim that a page is pro
 nonce has one natural home. The work is threading it into the four places that emit inline `<script>` or `<style>`,
 then a test asserting the nonce in the header matches one in the body and that no inline script lacks it. Worth
 doing before a hosted launch, where the pages sit on a public origin; less urgent self-hosted behind TLS.
+
+### 5. Platform sign-in walked around the second factor — **fixed**, and found by accident
+
+Found by asking a navigation question, of all things: while checking that every gateway page had a way onward, the
+question *"what happens if this person has a second factor?"* had no answer in the code at all.
+
+The gateway's platform sign-in verifies the registry password and then **bridges** — it mints a session *inside the
+practice's own database* and hands back the core's cookie, so the workspace pages find the person they expect. That
+bridge called `createSession` directly. It never asked whether the practice had a second factor armed.
+
+So: **a practice with TOTP enabled could be entered without a code by signing in at the platform rather than at the
+practice's own sign-in page.** Two-factor exists to stop somebody who already knows the password — that is its entire
+threat model — and a second door that does not ask defeats it completely, because the attacker simply uses the front
+door. Same shape as the unbounded-code finding in §1: the feature was implemented correctly and one path around it was
+missed.
+
+**The fix, and why it is this one.** When the practice's member has a second factor armed, **no session is minted by
+the bridge.** The platform session still exists — the dashboard and the billing pages need it — and the person is sent
+to the dashboard with a sentence saying what to do:
+
+> *You are signed in here. Your practice asks for a code from your authenticator, so open your workspace and sign in
+> there to enter it.*
+
+The alternative was to teach the gateway the core's challenge flow: a challenge row, a code page, verification, a
+recovery path. That is a **second implementation of the one thing in this product that must not be got wrong**, and
+this project has already paid three times for keeping two copies of one rule. Not asking is smaller, and cannot be
+wrong.
+
+`test/gateway.test.js` arms a second factor inside a hosted practice's own file and then signs in at the platform,
+asserting the redirect, the absence of a `tickmark_session` cookie, the presence of the SaaS session, and the sentence
+on the dashboard.
+
+**What this costs, stated rather than discovered.** A practice with a second factor now has two sign-ins rather than
+one: the platform login gets them to the dashboard and billing, and the practice's own sign-in gets them into their
+documents. That is more steps for the most security-conscious customers — and the alternative is a second factor that
+does not stop the attack it exists for.
 
 ## What was checked and found sound
 

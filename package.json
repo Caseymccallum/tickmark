@@ -24,7 +24,8 @@
     "tables": "node tools/tables.mjs",
     "probe:repeats": "node tools/probe-repeats.mjs",
     "check:style": "node tools/check-style.mjs",
-    "preview:gateway": "node tools/preview-gateway.mjs"
+    "preview:gateway": "node tools/preview-gateway.mjs",
+    "check:nav": "node tools/check-nav.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

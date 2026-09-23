@@ -139,13 +139,32 @@ export const tick = (text) => html`<li>${icon('tick')}<span>${text}</span></li>`
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101828'/%3E%3Cpath d='M9 16.5l4.6 4.5L23 10.8' fill='none' stroke='%2332d583' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
 
 /**
- * The page shell. `practitioner` is the signed-in practice, or null on a public page — the header is the one place
- * that decision is made, and `here` is which nav item to mark as the current one.
+ * The page shell. Three kinds of visitor get three different headers, and the header is the one place that decision
+ * is made:
+ *
+ * - **`practitioner`** — somebody inside a practice. The full nav.
+ * - **`account`** — somebody signed in to the *platform* but not yet inside a practice, which in hosted mode is every
+ *   page of the gateway: the dashboard, the billing wall, the error pages. They get their account and a way out.
+ * - **neither** — a stranger. A link to sign in, unless the page is the sign-in page itself (`signIn: false`), because
+ *   a link to where you already are is noise.
+ *
+ * The `account` case was missing until the portal was audited for navigation, and its absence was visible: the
+ * dashboard offered **"Sign in"** to somebody who was already signed in, and the billing wall — the page a locked-out
+ * practice sees — had **no way back to their account and no way to sign out at all**. A page you cannot leave except
+ * with the Back button is a page that feels broken.
  *
  * `banner` is a rendered fragment rather than a string, so a caller who wants a link in it can build one with `html`
  * and get escaping everywhere else.
  */
-export function page({ title, practitioner = null, body, banner = null, signIn = true, here = null }) {
+export function page({
+  title,
+  practitioner = null,
+  account = null,
+  body,
+  banner = null,
+  signIn = true,
+  here = null,
+}) {
   const navLink = (href, label) =>
     html`<a href="${href}"${here === href ? raw(' aria-current="page"') : ''}>${label}</a>`;
   return html`<!doctype html>
@@ -160,7 +179,7 @@ export function page({ title, practitioner = null, body, banner = null, signIn =
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="${practitioner ? '/requests' : '/'}">${mark()}<span>Tickmark</span></a>
+    <a class="brand" href="${practitioner ? '/requests' : account ? '/dashboard' : '/'}">${mark()}<span>Tickmark</span></a>
     <nav>
       ${practitioner
         ? html`${navLink('/requests', 'Requests')}
@@ -172,9 +191,13 @@ export function page({ title, practitioner = null, body, banner = null, signIn =
             ${navLink('/members', 'Members')}
             <a class="who" href="/account/two-factor" title="${practitioner.email} — your account">${practitioner.email}</a>
             <form method="post" action="/signout"><button type="submit" class="ghost">Sign out</button></form>`
-        : signIn
-          ? html`<a href="/signin">Sign in</a>`
-          : ''}
+        : account
+          ? html`${navLink('/dashboard', 'Your account')}
+              <span class="who" title="${account.email}">${account.email}</span>
+              <form method="post" action="/logout"><button type="submit" class="ghost">Sign out</button></form>`
+          : signIn
+            ? html`<a href="/signin">Sign in</a>`
+            : ''}
     </nav>
   </header>
   <main class="wrap">

@@ -82,10 +82,11 @@ const tenantRow = (registry, slug = 'acme-accounting') =>
   registry.prepare('SELECT id, slug, name, plan, status FROM tenant WHERE slug = ?').get(slug);
 
 /** One request with a Host header of our choosing — `fetch` will not send one. */
-function askWithHost(base, path, host, { method = 'GET', form = null } = {}) {
+function askWithHost(base, path, host, { method = 'GET', form = null, cookie = null } = {}) {
   return new Promise((resolve, reject) => {
     const body = form ? new URLSearchParams(form).toString() : null;
     const headers = { host };
+    if (cookie) headers.cookie = cookie;
     if (body !== null) {
       headers['content-type'] = 'application/x-www-form-urlencoded';
       headers['content-length'] = Buffer.byteLength(body);
@@ -389,6 +390,59 @@ test('the platform root sends you to signup or to your dashboard, and a practice
     assert.match(practiceRoot.body, /The list of documents a client owes you/);
   });
 });
+test('a practice with a second factor cannot be entered through the platform', async () => {
+  await withSaas(async ({ base, registry, pool }) => {
+    const client = agent(base);
+    await signup(client);
+    const row = tenantRow(registry);
+    setTenantBilling(registry, row.id, { status: 'active' });
+    registry.prepare('INSERT INTO tenant_host (host, tenant_id) VALUES (?, ?)').run('acme.example', row.id);
+
+    // Arm the second factor inside the practice's own file, the way the practice would: a pending secret, then a
+    // confirmation with a code the authenticator would have produced.
+    const { setPendingSecret, confirmTwoFactor, twoFactorState } = await import('../src/auth.js');
+    const { codeAt, counterAt, generateSecret, generateRecoveryCodes } = await import('../src/totp.js');
+    const tenantDb = pool.get(row.id);
+    const member = tenantDb.prepare('SELECT id FROM practitioner').get();
+    const secret = generateSecret();
+    setPendingSecret(tenantDb, member.id, secret);
+    confirmTwoFactor(tenantDb, member.id, generateRecoveryCodes());
+    assert.equal(twoFactorState(tenantDb, member.id).state, 'on', 'the practice really has a second factor armed');
+
+    // Now sign in at the *platform*. This is the attack: the password is right, and before this was fixed the gateway
+    // minted a workspace session anyway — so two-factor could be walked around by using the front door.
+    const platformHost = new URL(base).host;
+    const signedIn = await askWithHost(base, '/login', platformHost, {
+      method: 'POST',
+      form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+
+    assert.equal(signedIn.status, 303);
+    assert.equal(
+      signedIn.location,
+      '/dashboard?second-factor=1',
+      'they are sent to the dashboard rather than into the workspace',
+    );
+    assert.ok(
+      !signedIn.cookies.some((cookie) => cookie.startsWith('tickmark_session=')),
+      'and NO workspace session is minted, which is the whole point',
+    );
+    assert.ok(
+      signedIn.cookies.some((cookie) => cookie.startsWith('tickmark_saas_session=')),
+      'the platform session still exists — the dashboard and billing need it',
+    );
+
+    // And the dashboard — at the address the redirect pointed to — explains the one remaining step, rather than
+    // leaving them to open their workspace and discover it.
+    const dashboard = await askWithHost(base, signedIn.location, platformHost, {
+      cookie: signedIn.cookies.map((value) => value.split(';')[0]).join('; '),
+    });
+    assert.equal(dashboard.status, 200, 'the dashboard opens');
+    assert.match(dashboard.body, /asks for a code/, 'and it says why, and what to do');
+    assert.match(dashboard.body, /class="warning"/, 'in the tone of a thing to do rather than a thing done');
+  });
+});
+
 
 test('the core sign-in path and the gateway sign-in are the same door', async () => {
   await withSaas(async ({ agent, base, registry }) => {
