@@ -55,6 +55,17 @@ export function html(strings, ...values) {
   }
   return raw(out);
 }
+/**
+ * Data for the browser to read, inside a script element.
+ *
+ * The one sequence that can end a script element early is escaped, which is the whole of the
+ * rule for putting JSON in HTML. Everything else is left alone so that the JSON is still valid
+ * JSON — and a JSON parser does not care whether `<` arrived as an escape.
+ */
+export const jsonTag = (id, value) =>
+  html`<script type="application/json" id="${id}">${raw(JSON.stringify(value).replace(/</g, '\\u003c'))}</script>`;
+
+
 
 /**
  * The mark, drawn inline rather than fetched: one fewer request, no asset route, and the identity cannot 404. It is
@@ -396,4 +407,42 @@ export function sendCsv(response, filename, rows, cookies = []) {
   if (cookies.length > 0) headers['set-cookie'] = cookies;
   response.writeHead(200, headers);
   response.end(body);
+}
+
+/**
+ * A JSON answer, for the routes that a script talks to rather than a person: the client's two uploads, the health
+ * check CI polls, the counts on the keys page, and the invitation endpoints.
+ *
+ * Compressed and Content-Security-Policied like every other response, because the headers ride on every response
+ * type — `acceptableBody` does the encoding negotiation here exactly as `sendPage` does it, and a JSON response that
+ * skipped it would be the one un-compressed answer on the site.
+ */
+export function sendJson(response, status, value) {
+  const type = 'application/json';
+  const { body, encoding } = acceptableBody(response, Buffer.from(JSON.stringify(value), 'utf8'), type);
+  response.writeHead(status, withEncoding({ ...SECURITY_HEADERS, 'content-type': type, 'content-length': body.length }, encoding));
+  response.end(body);
+}
+
+/**
+ * The page a refusal gets.
+ *
+ * **Errors are pages, not stack traces** — the habit `src/app.js` states at the top of itself: an unexpected failure
+ * is logged for the operator and answered with a sentence, because a stack trace in a browser is information for an
+ * attacker and nothing for a user. Every handler that refuses something answers through here, which is what keeps
+ * that true by construction rather than by remembering.
+ */
+export function fail(response, status, message, practitioner = null, extra = null) {
+  sendPage(
+    response,
+    status,
+    page({
+      title: status === 404 ? 'Not found' : 'That did not work',
+      practitioner,
+      body: html`<h1>${status === 404 ? 'Not found' : 'That did not work'}</h1>
+        <p>${message}</p>
+        ${extra}
+        <p><a href="/">Back to the start</a></p>`,
+    }),
+  );
 }

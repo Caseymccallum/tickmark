@@ -12,18 +12,38 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
-### The first step of the split, taken
+### The split, two steps in
 
 `src/app.js` was **357 KB** — the one thing `docs/audit.md` called a real maintainability problem rather than a
-measured trade-off, with a four-step split proposed and nothing done about it. **Step one is done.** The letters now
-live in `src/notices.js`: `arrivalDraft`, `openingDraft`, `reminderDraft`, `notifyPracticeOfChange` (the only message
-the product sends by itself) and the `signOff` they share. `app.js` is 320 lines shorter, and the part of it with no
-routes in it is now a file with no routes in it.
+measured trade-off, with a four-step split proposed and nothing done about it. **Two steps are done.** At 6,224 lines
+the file is 949 shorter than when the audit measured it, and what is left of it is the signed-in surface, the assets
+and the route table.
 
-It was the audit's own chosen first step, for the audit's own reason: no route coupling, and the suite already owned
-it. The claim held — the new module lands at **100% of its lines and functions** covered, and three test files now
-import the drafts from where they live rather than through the application. The other three steps are named in the
-audit and unstarted.
+**Step one** was the audit's own first choice, for the audit's own reason: no route coupling, and the suite already
+owned it. The letters moved to `src/notices.js` — `arrivalDraft`, `openingDraft`, `reminderDraft`,
+`notifyPracticeOfChange` (the only message the product sends by itself) and the `signOff` they share — and the claim
+held: the new module lands at **100% of its lines and functions** covered. Three test files now import the drafts from
+where they live rather than through the application.
+
+**Step two** was the harder one the audit named: `src/client-portal.js`, the page behind a link and the five things a
+client can do on it. Moving it forced four things out of `app.js`, because code on both sides of the new seam uses
+them and a helper left behind becomes a circular import:
+
+- **`jsonTag`, `sendJson` and `fail`** went to `src/views.js`, where the rest of the answering already lives. `fail`
+  is now the one place every refusal in the product is written, which is what makes *errors are pages, not stack
+  traces* true by construction instead of by remembering.
+- **`originOf`** went to `src/http.js` — the one thing only a request can answer, in the module that already exists
+  for what a request carries.
+- **`readHead`** went to a new `src/blobs.js`: the single place this server reads a stored document, 84 bytes at a
+  time, needed by the client's upload path and by the practice's replace route for the same reason.
+- **`CLIENT_SAYS`** — the two sentences a client can send instead of going quiet — moved with the page that renders
+  them. Six store imports (`MAX_CLIENT_MESSAGE`, `tokenLookup`, `itemInRequest`, `recordUpload`, `setClientSays`,
+  `recordClientMessage`) left `app.js` with the code that was their only user.
+
+**One bug the move caused, and it is the interesting part.** `CLIENT_SAYS` is a module-level constant that was never
+exported, so it appeared in no import list — and an analysis of *exports* therefore did not find it. The client page
+answered 500 until it moved. Every static check said the seam was clean; the thing that caught it was 392 tests
+driving a link, which is the difference this repository keeps writing down between reading a claim and checking it.
 
 ### The browser's half, executed rather than served
 

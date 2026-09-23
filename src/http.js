@@ -1,6 +1,10 @@
 /**
  * Reading what a browser sent — with a limit, because a request body is attacker
  * controlled and an unbounded read is a way to exhaust the operator's memory.
+ *
+ * And the one thing only a request can answer: **where this install is**, as a client would reach it
+ * (`originOf`). Every absolute link the product builds — in a page, in an email, in the notification a client's own
+ * upload triggers — comes from there.
  */
 
 export class RequestError extends Error {
@@ -191,4 +195,25 @@ export const field = (fields, name, fallback = null) => {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
   return trimmed.length === 0 ? fallback : trimmed;
+};
+
+/**
+ * Where this server is, as a client would reach it.
+ *
+ * The link a practice pastes into an email has to be absolute, and the only place that knows the
+ * address is the request that produced the page. `x-forwarded-proto` is honoured because the
+ * documented deployment puts a reverse proxy in front of this, which terminates TLS and would
+ * otherwise yield `http://` links in emails.
+ */
+//
+// A configured `TICKMARK_PUBLIC_URL` wins over both headers, and that is the important half of this
+// function. The `Host` header is *attacker-chosen* on a directly-exposed server, and the links built
+// here travel inside emails — including the notification a **client's own action** triggers. Without
+// the configured address, anybody holding a client link could stamp `Host: evil.example` on an upload
+// and poison the link the practice receives. The header fallback remains because a local trial has no
+// canonical address to configure, and inventing one would break the first run.
+export const originOf = (request) => {
+  const configured = String(process.env.TICKMARK_PUBLIC_URL ?? '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+  return `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
 };
