@@ -214,7 +214,10 @@ test('the server answers /healthz, serves the page, and refuses everything else'
   try {
     const health = await fetch(`${base}/healthz`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { ok: true, practices: 0 });
+    const body = await health.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.practices, 0);
+    assert.match(body.version, /^\d+\.\d+\.\d+$/, 'the version travels with the health check');
 
     const home = await fetch(`${base}/`, { redirect: 'manual' });
     assert.equal(home.status, 200);

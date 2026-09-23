@@ -33,6 +33,7 @@ if (process.env.MULTI_TENANT === '1') {
   }
 } else {
   const { openDatabase } = await import('./db.js');
+  const { VERSION } = await import('./version.js');
   const { createApp } = await import('./app.js');
   const { mailerFromEnvironment } = await import('./mailer.js');
 
@@ -63,10 +64,26 @@ if (process.env.MULTI_TENANT === '1') {
   const server = createApp(db, { blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer });
 
   server.listen(port, () => {
-    console.log(`tickmark listening on http://localhost:${port}`);
+    console.log(`tickmark ${VERSION} listening on http://localhost:${port}`);
     console.log(`database: ${dataFile}`);
     console.log(`uploads:  ${blobDir}`);
     console.log(`mail:     ${mailer ? mailer.describe() : 'not configured — reminders are drafted, not sent'}`);
+    // What the migrations did, if anything. An upgrade that changed the schema should say so where the operator
+    // is already looking, because the alternative is finding out from a page that behaves oddly.
+    const changed = [
+      db.migratedKeys && `${db.migratedKeys} keys moved`,
+      db.migratedColumns && `${db.migratedColumns} columns added`,
+      db.migratedTenancy && `${db.migratedTenancy} rows adopted into practices`,
+      db.migratedSession && `${db.migratedSession} obsolete columns removed`,
+      db.migratedWrappings && `${db.migratedWrappings} key copies recorded`,
+      db.migratedInvites && `${db.migratedInvites} invitations reshaped`,
+      db.migratedUploads && `${db.migratedUploads} files reattached to their requests`,
+    ].filter(Boolean);
+    console.log(
+      changed.length > 0
+        ? `schema:   upgraded — ${changed.join(', ')}. Nothing was deleted; see docs/operations.md.`
+        : 'schema:   up to date, no migration needed',
+    );
   });
 
   for (const signal of ['SIGINT', 'SIGTERM']) {

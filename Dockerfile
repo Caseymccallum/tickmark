@@ -18,7 +18,9 @@ COPY src ./src
 COPY web ./web
 
 # Data on a volume, so that stopping the container does not delete a practice's
-# records and so that a backup is a file copy. Owned by the unprivileged user the
+# records. Note that a *copy* of that volume is no longer a backup on its own: the database is in
+# write-ahead logging, which keeps recent commits in a sidecar file. `node tools/backup.mjs` is the
+# documented way — see docs/operations.md. Owned by the unprivileged user the
 # process runs as; a bind mount may need the same `chown` done on the host.
 ENV TICKMARK_DATA=/data/tickmark.db
 RUN mkdir -p /data && chown node:node /data

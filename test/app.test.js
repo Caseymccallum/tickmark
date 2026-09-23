@@ -236,10 +236,16 @@ test('a practice can sign in again after signing out', async () => {
   });
 });
 
-test('the health check still reports the number of practices', async () => {
+test('the health check reports the number of practices, and which version is answering', async () => {
   await withServer(async ({ agent, base }) => {
     await signUp(agent(), 'sam@practice.example');
     const response = await fetch(`${base}/healthz`);
-    assert.deepEqual(await response.json(), { ok: true, practices: 1 });
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.practices, 1, 'the count is what a health check is for');
+    // The version is here because /healthz is the one address an operator can reach without signing in, and
+    // "which build is running" is the first question asked when something is wrong. Asserted as a shape rather
+    // than a value, so a release does not fail its own test suite.
+    assert.match(body.version, /^\d+\.\d+\.\d+$/, 'and the version is answerable without signing in');
   });
 });

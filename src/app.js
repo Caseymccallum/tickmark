@@ -71,6 +71,7 @@ import { newId, now } from './db.js';
 // plaintext one. It cannot use the rest of that module: the key needed to open an envelope
 // is wrapped under a passphrase this process has never seen.
 import { ENVELOPE_VERSION, KDF_MAX_ITERATIONS, readEnvelope } from '../web/tickmark-crypto.js';
+import { VERSION } from './version.js';
 import { MailError, sendMail } from './mailer.js';
 import { COMMON_ZONES, dateIn, knownZone, monthIn, todayIn } from './clock.js';
 import { createAttemptLimiter } from './ratelimit.js';
@@ -482,7 +483,10 @@ export function createApp(db, {
     if (url.pathname === '/healthz') {
       try {
         const practices = healthCheck ? healthCheck() : db.prepare('SELECT COUNT(*) AS n FROM practitioner').get().n;
-        return sendJson(response, 200, { ok: true, practices });
+        // The version is on the health check because that is the one address an operator can reach without
+        // signing in, and "which build is running" is the first question anybody asks when something is wrong.
+        // It costs one string and it turns a guess into an answer.
+        return sendJson(response, 200, { ok: true, version: VERSION, practices });
       } catch (error) {
         return sendJson(response, 503, { ok: false, error: error.message });
       }

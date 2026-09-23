@@ -105,6 +105,47 @@ moves the row to the new path, so **a backup taken mid-pass can capture a row po
 to be unlinked**. `--verify` catches it — that is precisely the check it performs — but the way to avoid it is
 to take backups outside the pass.
 
+## Upgrading
+
+**There is nothing to install and nothing to compile.** No dependencies is not a slogan here — it means an upgrade
+cannot break on a transitive package, and it means the steps are short enough to read.
+
+```
+node tools/backup.mjs --data data --to /wherever/backups/before-upgrade   # and --verify it
+git pull                       # or unpack the new release over the old one
+node src/server.js
+```
+
+Then **read the lines the server prints.** It says its version and what the schema did:
+
+```
+tickmark 0.1.0 listening on http://localhost:3000
+schema:   up to date, no migration needed
+```
+
+or
+
+```
+schema:   upgraded — 2 columns added, 1 files reattached to their requests. Nothing was deleted.
+```
+
+Migrations run at startup, are idempotent, and are written to be checked rather than trusted: the ones that
+rebuild a table verify their own row counts and **refuse to run** rather than finish with a row missing, because a
+database that will not open is recoverable and a file nobody can find is not. That is also why the report is
+printed rather than logged quietly.
+
+**Which version is running is answerable without signing in:**
+
+```
+curl localhost:3000/healthz
+{"ok":true,"version":"0.1.0","practices":1}
+```
+
+**Downgrading is not supported.** Migrations only go forwards, and a database that has been through a rebuild is
+not readable by the release before it. If an upgrade goes wrong, restore the backup from step one — which is why
+that step is first.
+
+## Multi-tenant installs
 
 With `MULTI_TENANT=1`, `data/` holds a registry database and a directory per practice:
 
