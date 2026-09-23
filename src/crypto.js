@@ -94,11 +94,3 @@ export const newToken = () => randomBytes(32).toString('base64url');
 
 /** What gets stored for a token. The token itself is never persisted. */
 export const hashToken = (token) => createHash('sha256').update(token).digest('hex');
-
-/** Constant-time string comparison, for anything secret. */
-export function sameString(a, b) {
-  const left = Buffer.from(String(a));
-  const right = Buffer.from(String(b));
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}

@@ -38,9 +38,6 @@ const STEP_SECONDS = 30;
 /** How long a single-use sign-in attempt stays open. See `login_challenge`. */
 export const CHALLENGE_MINUTES = 10;
 
-export const CODE_DIGITS = DIGITS;
-export const STEP = STEP_SECONDS;
-
 export function base32Encode(bytes) {
   let bits = 0;
   let value = 0;

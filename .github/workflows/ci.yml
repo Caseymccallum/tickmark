@@ -58,9 +58,9 @@ jobs:
         run: npm run snapshot
       - name: the rendered pages are structurally sound
         run: npm run check:pages
-      # Informational on purpose: `find:unused` reports exports nothing references, and a few of
-      # those are deliberate API surface. It prints; it does not gate.
-      - name: unused exports (informational)
+      # A gate now that the list is empty: an export nothing references stops the build until it is
+      # either used or admitted in `tools/find-unused.mjs` with its reason.
+      - name: no exports that nothing references
         run: npm run find:unused
 
   container:

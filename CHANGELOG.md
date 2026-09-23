@@ -7,7 +7,22 @@ Versions follow the ordinary convention: the first number changes when the schem
 when features arrive, the third for fixes. **Downgrading is not supported** — migrations only go forwards — so
 the entry that matters most is the one that says the schema changed.
 
-## Unreleased, expected in 0.1.0 — the hardening pass
+## 0.2.0 — 23 September 2026
+
+The first tagged release. By the convention above it is the *second* number that moves: features
+arrived and the schema changed (`invite` gained `revoked_at`). Everything since the untagged first
+cut, newest first:
+
+### The restore drill, and the door that closes behind
+
+The restore `docs/operations.md` describes is now **drilled on every run**: `test/backup.test.js`
+takes a backup while the server is running, deletes the original, performs the documented steps, and
+decrypts a document out of the result — step 5 automated, the proof a checksum cannot give.
+`--verify` is proved to have teeth (a copy missing its documents is refused), and backups are proved
+never to be overwritten. And `find:unused` is a **gate** rather than a comment: 203 exports, none
+unreferenced, and the four dead ones that sat there for a release are gone.
+
+### The hardening pass
 
 **A fresh full-codebase audit, and every finding in it addressed.** `docs/security.md` has the full list; the
 shape of it is here:
@@ -43,7 +58,7 @@ shape of it is here:
 **The schema changed**: `invite` gained `revoked_at` (added in place, and present in the rebuild path — see
 `docs/operations.md`).
 
-## Unreleased, expected in 0.1.0 — the premium pass
+### Three more wastes
 
 **Three more wastes, found by asking where the milliseconds were.** The board was 38 ms and the breakdown tool put
 the queries at 9.5 ms and the row markup at 0.06 ms — so ~28 ms was unaccounted for:
@@ -93,7 +108,7 @@ product has been stale state. An index that lives for one function call cannot g
 `npm run probe:repeats` is kept as a regression guard and now reports *"every page asks each question exactly once"*.
 It catches something no test can: every page renders correctly with the index built three times, just slower.
 
-## Unreleased, expected in 0.1.0 — the premium pass
+### The premium pass
 
 **The SaaS front door got a premium pass, and an icon set to do it with.**
 
@@ -129,7 +144,7 @@ rule that never closes is reported rather than silently swallowing everything af
 `npm run preview:gateway` renders all thirteen states to `tmp-gateway/` — including the two a locked-out practice
 sees, which otherwise need a webhook to have fired. 357 tests pass. No schema change.
 
-## Unreleased, expected in 0.1.0 — navigation, and a hole in the second factor
+### Navigation, and a hole in the second factor
 
 Asking *"is anything needed not reachable?"* — and finding something much worse than a missing link.
 
@@ -188,7 +203,7 @@ rule that never closes is reported rather than silently swallowing everything af
 `npm run preview:gateway` renders all thirteen states to `tmp-gateway/` — including the two a locked-out practice
 sees, which otherwise need a webhook to have fired. 357 tests pass. No schema change.
 
-## Unreleased, expected in 0.1.0 — one word with two meanings, and the counts that came with it
+### One word with two meanings, and the counts that came with it
 
 **One word with two meanings, for the third time, and this one was a number on the board.**
 
@@ -215,7 +230,7 @@ At a thousand clients every page in a morning's loop renders in under 60 ms, and
 schema change** — this release is a rewrite of how the counts are computed, and `test/progress-agreement.test.js`
 (8 tests) checks that every way of asking agrees rather than checking numbers against a list.
 
-## Unreleased, expected in 0.1.0 — the audit
+### The audit
 
 Features, performance and security, end to end. Nothing below is published yet; it is in the tree and will go out
 with the first version.

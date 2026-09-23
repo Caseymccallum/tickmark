@@ -1671,10 +1671,6 @@ export function allPracticeKeys(db, practiceId, practitionerId) {
     }));
 }
 
-export function currentPracticeKey(db, practiceId, practitionerId) {
-  return practiceKeys(db, practiceId, practitionerId)[0] ?? null;
-}
-
 /**
  * Add a key. Rotation is this and nothing else — no key is removed, because removing one would
  * orphan every file encrypted to it.
