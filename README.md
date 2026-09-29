@@ -192,6 +192,7 @@ Guides, and the reasoning behind the decisions:
 - [security.md](docs/security.md) and [audit.md](docs/audit.md) — what the product promises about security
   and performance, how each claim is checked, and what is knowingly not done
 - [mail.md](docs/mail.md) — configuring a relay, and testing it
+- [sms.md](docs/sms.md) — texting a reminder: the gateway, the one-line message, and what it never carries
 - [saas.md](docs/saas.md) — the hosted layer, and what is not proven about it
 - [operations.md](docs/operations.md) — running it for a practice: backup and restore, and storage
 - [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
@@ -211,6 +212,7 @@ Guides, and the reasoning behind the decisions:
 | `docs/design.md` | The look: what it is, the rules behind it, and how to review a page |
 | `docs/saas.md` | The multi-tenant hosted layer, and which parts are built vs unproven |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
+| `docs/sms.md` | Texting a reminder: the gateway, the one-line message, and what it never carries |
 | `docs/operations.md` | Running it for a practice: backup, restore, and the storage ceilings |
 | `docs/security.md` | The security posture: what is promised, and how each promise is kept |
 | `docs/audit.md` | A full audit: feature gaps, performance, and the plan for the code |
