@@ -83,6 +83,24 @@ async function freshAccessToken(db, config, connection) {
 }
 
 /**
+ * The practice's Xero client list, as importable rows — the fetch half of an import, shared by the
+ * preview, the "Sync now" button and the quiet background refresh, so all three read Xero in exactly one
+ * way. Prefers Practice Manager (rows carry an email) and falls back to the organisations list. Returns
+ * null when Xero is not set up here or the practice has not connected — never an empty guess.
+ */
+export async function xeroClientRows(db, practiceId) {
+  const config = xeroFromEnvironment();
+  const connection = config ? connectionFor(db, practiceId, 'xero') : null;
+  if (!config || !connection) return null;
+  const accessToken = await freshAccessToken(db, config, connection);
+  const connections = await fetchConnections({ accessToken });
+  const pmTenant = connections.find((row) => row.tenantType === 'PRACTICEMANAGER');
+  return pmTenant
+    ? practiceManagerClientsToRows(await fetchPracticeManagerClients({ accessToken, tenantId: pmTenant.tenantId }))
+    : await connectionsToRowsWithProfiles({ accessToken, connections });
+}
+
+/**
  * The integration page: whether Xero is connected, and the two things to do about it.
  *
  * Honest about which of three states it is in — not configured (no client id/secret in the
@@ -166,7 +184,7 @@ export function xeroPage({ db, response, practitioner, practiceId, url }) {
   return sendPage(response, 200, page({
     title: 'Xero',
     practitioner,
-    here: '/clients',
+    here: '/integrations',
     body: html`
       <div class="page-head"><div class="titles">
         <h1>Xero</h1>
@@ -323,15 +341,7 @@ export async function xeroImport({ db, request, response, practitioner, practice
     }
   } else {
     try {
-      const accessToken = await freshAccessToken(db, config, connection);
-      // Prefer Practice Manager when the practice has a PM tenant: its Clients carry an email as well as
-      // a name, so those rows arrive ready to email. `connections` (the organisations) is the fallback —
-      // names only — for a practice on plain Xero. Both pour into one pipeline.
-      const connections = await fetchConnections({ accessToken });
-      const pmTenant = connections.find((row) => row.tenantType === 'PRACTICEMANAGER');
-      rows = pmTenant
-        ? practiceManagerClientsToRows(await fetchPracticeManagerClients({ accessToken, tenantId: pmTenant.tenantId }))
-        : await connectionsToRowsWithProfiles({ accessToken, connections });
+      rows = await xeroClientRows(db, practiceId);
     } catch (error) {
       if (error instanceof XeroError) {
         return fail(response, 502, `Xero would not give up the client list: ${error.message}`, practitioner);

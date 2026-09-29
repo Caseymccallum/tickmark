@@ -719,6 +719,15 @@ export function connectionFor(db, practiceId, provider) {
   return db.prepare('SELECT * FROM connection WHERE practice_id = ? AND provider = ?').get(practiceId, provider) ?? null;
 }
 
+/**
+ * Stamp when a provider's client list was last brought across — the "how fresh is this book?" answer
+ * the integrations page shows. Kept on the connection rather than inferred from the event log, because
+ * a practice asking "when did I last pull my clients?" wants a sentence, not a query.
+ */
+export function markSynced(db, practiceId, provider, at = now()) {
+  db.prepare('UPDATE connection SET last_synced_at = ? WHERE practice_id = ? AND provider = ?').run(at, practiceId, provider);
+}
+
 /** Unlink one provider. Whatever those tokens could reach, this install stops being able to. */
 export function deleteConnection(db, practiceId, provider) {
   db.prepare('DELETE FROM connection WHERE practice_id = ? AND provider = ?').run(practiceId, provider);

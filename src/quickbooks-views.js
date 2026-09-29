@@ -79,6 +79,19 @@ async function freshAccessToken(db, config, connection) {
 }
 
 /**
+ * The practice's QuickBooks client list, as importable rows — the fetch half of an import, shared by the
+ * preview, the "Sync now" button and the quiet background refresh. Returns null when QuickBooks is not
+ * set up here or the practice has not connected.
+ */
+export async function quickBooksClientRows(db, practiceId) {
+  const config = quickBooksFromEnvironment();
+  const connection = config ? connectionFor(db, practiceId, PROVIDER) : null;
+  if (!config || !connection) return null;
+  const accessToken = await freshAccessToken(db, config, connection);
+  return clientsToRows(await fetchQuickBooksClients({ accessToken, realmId: connection.external_id }));
+}
+
+/**
  * The integration page: whether QuickBooks is connected, and the two things to do about it. Honest
  * about its three states — not configured, not connected, connected — for the same reason the Xero
  * page is: "the button does nothing" and "you have not set it up yet" look identical and are not.
@@ -155,7 +168,7 @@ export function quickBooksPage({ db, response, practitioner, practiceId, url }) 
   return sendPage(response, 200, page({
     title: 'QuickBooks',
     practitioner,
-    here: '/clients',
+    here: '/integrations',
     body: html`
       <div class="page-head"><div class="titles">
         <h1>QuickBooks</h1>
@@ -258,8 +271,7 @@ export async function quickBooksImport({ db, request, response, practitioner, pr
     }
   } else {
     try {
-      const accessToken = await freshAccessToken(db, config, connection);
-      rows = clientsToRows(await fetchQuickBooksClients({ accessToken, realmId: connection.external_id }));
+      rows = await quickBooksClientRows(db, practiceId);
     } catch (error) {
       if (error instanceof QuickBooksError) {
         return fail(response, 502, `QuickBooks would not give up the client list: ${error.message}`, practitioner);

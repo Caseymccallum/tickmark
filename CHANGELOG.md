@@ -12,6 +12,28 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### The client book, kept fresh — on demand and while you work, never on a timer
+
+Bringing clients across used to mean pressing Import and hoping nobody had added a client since. It now keeps
+itself current without becoming a thing that reads in the night. A practice presses **Sync now** on the
+Integrations page — one click, and it says what happened ("brought across just now, 3 new or updated, 40
+read") — and the page always shows **how fresh the book is** ("last brought across: 2 hours ago"). Between
+presses the book refreshes **quietly while the practice is actually working** (the client list and the
+board), **at most about once an hour**, and **never on a background timer** — so "nothing is read without a
+person here" stays true and this zero-dependency app needs no scheduler. It reads the **client list alone** —
+names and addresses, never a document, never a transaction — and bringing clients across still **never
+creates the same client twice**. The optional "books behind" signal is deliberately **not** part of this: it
+stays an explicit, opt-in press. The posture, and the one accepted trade (the provider tokens are stored
+readable), are written out in `docs/security.md`.
+
+### Integrations, where you can find them
+
+Connecting Xero or QuickBooks was reachable only through the "Import a CSV instead" button on the import page
+— a door with no sign on it. There is now an **Integrations** entry in the navigation leading to one home that
+lists both providers, says which is connected and **how fresh it is**, and offers Connect / Manage / **Sync
+now**. Each provider keeps its own page for the connect, import and "books behind" controls; this is the
+signpost and the status board, so each flow has one home rather than two that can drift apart.
+
 ### Know whose books are behind — opt-in, and it never touches a document
 
 One optional feature reads past the client list, so it says exactly what it does and does not. A practice may

@@ -488,6 +488,9 @@ CREATE TABLE IF NOT EXISTS connection (
   -- encrypted and unreadable to this server whatever this is set to; this flag never weakens that. The
   -- posture is written out in docs/security.md. 1 is on, anything else is off.
   books_signal  INTEGER,
+  -- When the client list was last brought across from the provider — the "how fresh is this book?"
+  -- answer the integrations page shows. Null until the first sync.
+  last_synced_at TEXT,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -615,6 +618,7 @@ function migrate(db) {
     ['practice', 'contact_email', 'TEXT'],
     ['practice', 'mail_from', 'TEXT'],
     ['connection', 'books_signal', 'INTEGER'],
+    ['connection', 'last_synced_at', 'TEXT'],
     ['practice', 'contact_phone', 'TEXT'],
     ['practitioner', 'role', 'TEXT'],
     ['practitioner', 'totp_secret', 'TEXT'],

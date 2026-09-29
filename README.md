@@ -70,8 +70,8 @@ storing files it cannot open. Only someone with your practice's key and the pass
 even the people running the server cannot read your clients' documents.
 
 That is not a marketing line; it is what the product is built around, and it is tested. No system is perfect,
-so we are straight about it: [what is encrypted and what is not](docs/encryption.md) — including the handful
-of things it deliberately does *not* protect — is written down in full.
+so we are straight about it: [what is encrypted and what is not](docs/encryption.md) is written down in
+full, including the seven things it does not protect.
 
 ## Two ways to run it
 
@@ -195,6 +195,8 @@ Guides, and the reasoning behind the decisions:
 - [saas.md](docs/saas.md) — the hosted layer, and what is not proven about it
 - [operations.md](docs/operations.md) — running it for a practice: backup and restore, and storage
 - [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
+- [go-succeed-prep.md](docs/go-succeed-prep.md) — the business-prep pack for a Go Succeed NI application
+- [splitting.md](docs/splitting.md) — how the code is split into modules, and the recipe for the rest
 - [demand-posts.md](docs/demand-posts.md) — where to ask, and what the room rules actually say
 
 | File | What it is |

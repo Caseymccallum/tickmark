@@ -42,6 +42,7 @@ import {
   requestsForClient,
   updateClient,
 } from './store.js';
+import { maybeSyncOnActivity } from './integrations-sync.js';
 import { TONES, badge, empty, fail, html, page, redirect, REQUEST_STATE_WORDS, requireSignIn, section, sendCsv, sendPage, stateTone, tile } from './views.js';
 
 /**
@@ -198,6 +199,10 @@ function readableSize(bytes) {
  */
 export function listClients({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
+  // Keep the client book quietly fresh while the practice works (throttled, in the background). The client
+  // list and the board are where a stale book would be felt; src/integrations-sync.js holds the rules — it
+  // reads the client list alone, never a document or a transaction, and never twice in an hour.
+  maybeSyncOnActivity(db, practiceId, practitioner.id);
   const query = (url.searchParams.get('q') ?? '').trim();
   // The counts are built once and handed to both callers below. `clientsDueForAsking` works by filtering the client
   // list, so without this it asked for the very same counts a second time — the same pattern the board had.

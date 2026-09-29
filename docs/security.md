@@ -19,6 +19,23 @@ section says how a claim is *checked* as well as how it is implemented.
 | **Passwords are not crackable in bulk** | scrypt at `N=2^16` (64 MiB per guess), 16-byte salt, constant-time compare | `src/crypto.js`; the parameters are one exported constant |
 | **A stolen password is not enough** | TOTP second factor, per member | `test/two-factor.test.js`, against the RFC's own vectors; and `test/gateway.test.js` proves the platform sign-in cannot walk around it |
 
+## What the Xero / QuickBooks connection reads, day to day
+
+Bringing the client book across reads the **client list** — names and email addresses, and where the
+source states one, a filing profile. That is metadata Tickmark already keeps readable (it is what it
+emails and draws the board from); it is not the zero-knowledge promise, which is about the **documents**.
+Never a document, never a transaction.
+
+It is read **on demand** — when the practice presses Sync now — and **quietly while they work** (at most
+about once an hour, never on a timer), so a book is never left silently stale without a chance to refresh.
+Every read goes through one path (`src/integrations-sync.js`), and bringing clients across never creates
+the same client twice.
+
+**One accepted trade to know about:** the OAuth tokens that reach the provider are stored *readable*,
+unlike everything else here — the server must present them to fetch the list, so it cannot seal them to a
+key only the client holds. A quiet refresh uses those tokens while a person is present, which widens *when*
+they are used, not *what* they can reach. Read scopes only; nothing is ever written back.
+
 ## The optional "books behind" signal, and why it changes none of this
 
 Everything above is the promise. One optional feature reaches *past* the client list, so it is worth

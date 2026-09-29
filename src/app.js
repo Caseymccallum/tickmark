@@ -63,6 +63,7 @@ import { addFileForClient, addItemsPage, changeItemPage, closeRequestPage, draft
 import { clientsCsv, filesCsv, filesPage, importClientsForm, importClientsRun, listClients, saveClient, viewClient } from './clients-views.js';
 import { xeroBooksCheck, xeroBooksSignal, xeroCallback, xeroConnect, xeroDisconnect, xeroImport, xeroPage } from './xero-views.js';
 import { quickBooksBooksSignal, quickBooksCallback, quickBooksConnect, quickBooksDisconnect, quickBooksImport, quickBooksPage } from './quickbooks-views.js';
+import { integrationsPage, integrationsSync } from './integrations-views.js';
 // The templates and their lists, plus the page that closes several requests at once - the eleventh module to leave
 // this file. See src/templates-views.js for the two things in it that are load-bearing.
 import { addTemplateItemsPage, closeSeveral, closeSeveralPage, createTemplatePage, deleteTemplatePage, removeTemplateItemPage, saveAsTemplate, saveTemplate, templatePage, templatesPage } from './templates-views.js';
@@ -191,6 +192,9 @@ export const ROUTES = [
   ['POST', '/clients/import', importClientsRun],
   // Importing the client book from Xero: the OAuth dance (connect → callback) and the import that
   // pours into the very same pipeline as a CSV. Grouped here because it is one integration.
+  // The integrations home — the signpost to each provider's own page, reachable from the nav.
+  ['GET', '/integrations', integrationsPage],
+  ['POST', '/integrations/sync', integrationsSync],
   ['GET', '/integrations/xero', xeroPage],
   ['GET', '/integrations/xero/connect', xeroConnect],
   ['GET', '/integrations/xero/callback', xeroCallback],

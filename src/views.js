@@ -216,6 +216,7 @@ export function page({
             ${navLink('/files', 'Documents')}
             ${navLink('/chase', 'Chase')}
             ${navLink('/templates', 'Templates')}
+            ${navLink('/integrations', 'Integrations')}
             ${navLink('/keys', 'Keys')}
             ${navLink('/members', 'Members')}
             <a class="who" href="/account/two-factor" title="${practitioner.email} — your account">${practitioner.email}</a>

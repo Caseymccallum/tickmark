@@ -43,6 +43,9 @@ Phase 2   Make it usable in the field
           2ab a strict CSP          COMPLETE — one nonce per response, and no unsafe-inline anywhere
           2ac the letter and the drill COMPLETE — reminders leave as styled mail; the documented restore
                                   decrypts a document out of the backup on every run; v0.2.0 tagged
+          2ad the accounting connection COMPLETE — Xero/QuickBooks import, filing profiles, the opt-in
+                                   books signal, and a client book kept fresh (Sync now + a quiet refresh)
+
 Phase 3   Find out if anyone wants it  RUNNING — interviews and a competitor's revenue have answered half;
                                   the other half is real practices, not more posts
 Phase 4   Grow the surface             NOT PLANNED
@@ -1369,6 +1372,32 @@ the dispatcher's handler context and silently did nothing. Two instances of one 
 comment left in `listRequests` says so.
 
 Seven new tests. 337 in all. 42 snapshot pages, including a board captured from a genuinely new practice.
+
+
+### Keeping the client book fresh, without reading in the night
+
+The Xero and QuickBooks connection reads the **client list** — names and addresses — and, on a separate
+opt-in path, a summary of a client's accounting activity. The question this settled was *when* the client
+list is read: only when a person presses Import, or kept current on its own.
+
+**On demand and while you work, never on a timer.** A "Sync now" press brings the book across and says what
+happened, and the Integrations page always shows **how fresh it is**. Between presses the book refreshes in
+the background **only while a practitioner is actually using Tickmark** (the client list and the board), and
+**at most about once an hour**. The reasoning, and why not a nightly job:
+
+- **It reads only the client list.** Names and addresses Tickmark already keeps readable — not a document
+  (those stay end-to-end encrypted), not a transaction. The optional "books behind" signal is a separate,
+  deliberate press, and is deliberately left out of the quiet refresh.
+- **"Nothing is read without a person here" stays true.** A cron pulling at 3am would read a practice's
+  client list with nobody around — a worse privacy posture *and* a scheduler this zero-dependency app does
+  not have. Refreshing only during an active session is both fresher and more defensible.
+- **A page load is never a synchronous call to a provider.** The refresh is fire-and-forget and throttled
+  (`src/integrations-sync.js`); a book already fresh is left alone, so nobody's morning board is a licence
+  to hammer Xero.
+
+The one accepted trade is named in `docs/security.md`: the OAuth tokens that reach the provider are stored
+*readable* (the server must present them to fetch the list), and a quiet refresh uses them while a person is
+present — which widens *when* they are used, not *what* they can reach.
 
 
 ## Phase 3 — Find out if anyone wants it

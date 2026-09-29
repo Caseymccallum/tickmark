@@ -52,6 +52,7 @@ import {
   updateClient,
   uploadsOf,
 } from './store.js';
+import { maybeSyncOnActivity } from './integrations-sync.js';
 import {
   REQUEST_STATE_WORDS,
   TONES,
@@ -196,6 +197,9 @@ function firstRunCard({ db, practiceId, practitioner, mailer }) {
 
 export function listRequests({ db, response, practitioner, url, practiceId, mailer }) {
   if (!requireSignIn({ practitioner, response })) return;
+  // The board is where a practice starts its morning, so it too keeps the client book quietly fresh —
+  // throttled and in the background, never a synchronous call to a provider. See src/integrations-sync.js.
+  maybeSyncOnActivity(db, practiceId, practitioner.id);
   const showingClosed = url.searchParams.get('closed') === '1';
   const wanted = url.searchParams.get('state');
   const query = (url.searchParams.get('q') ?? '').trim();
