@@ -126,13 +126,13 @@ export function accountEmailForm({ response, practitioner, url }) {
     title: 'Change your email',
     practitioner,
     here: '/members',
-    banner: changed ? html`<p class="success"><strong>Saved.</strong> Sign in with the new address from now on.</p>` : null,
+    banner: changed ? html`<p class="success"><strong>Saved.</strong> Sign in with the new email address from now on.</p>` : null,
     body: html`
       <div class="page-head">
         <div class="titles">
           <p class="crumbs"><a href="/account/two-factor">Your account</a></p>
           <h1>Change your email</h1>
-          <p class="sub">This is the address you sign in with, and where the practice's notifications
+          <p class="sub">This is the email address you sign in with, and where the practice's notifications
           about your requests are sent. Everyone here sees it on the members page.</p>
         </div>
       </div>

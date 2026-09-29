@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { practitionerFor } from './auth.js';
 import { RequestError, acceptableBody, withEncoding } from './http.js';
 import { SECURITY_HEADERS, fail, requireSignIn, sendJson } from './views.js';
+import { log as logEvent } from './log.js';
 
 import { VERSION } from './version.js';
 import { createAttemptLimiter } from './ratelimit.js';
@@ -42,10 +43,10 @@ import { refusalFor, roleMeets } from './roles.js';
 import { clientMessage, clientPage, clientSays, receiveExtra, receiveUpload } from './client-portal.js';
 // The practice's key: making one, seeing them, moving files onto a new one, changing a passphrase. The third step of
 // the split — `docs/audit.md` §3 — and the only part of the product that handles key material at all.
-import { changePassphrase, keysPage, moveWithoutScript, pendingFor, reencryptFile, retireKey, saveKeys, setupForm } from './keys-views.js';
+import { changePassphrase, keysPage, moveWithoutScript, pendingFor, reencryptFile, recoverPassphrase, retireKey, saveKeys, saveRecoverySheet, setupForm } from './keys-views.js';
 // The board and the request page: the part of this file a practice looks at all day. Step four of the split in
 // docs/audit.md — see src/board-views.js for what is in it and what deliberately is not.
-import { createRequestPage, listRequests, newRequestForm, requestsCsv, viewRequest } from './board-views.js';
+import { createRequestPage, historyCsv, listRequests, newRequestForm, requestsCsv, viewRequest } from './board-views.js';
 // Who is in the practice, how somebody joins it, and what the practice is called - the fifth module, which the
 // audit's four-step plan did not name. See src/members-views.js.
 import { acceptInvite, changeRolePage, createInvitePage, invitePage, membersPage, removeMemberAction, removeMemberPage, renamePracticePage, revokeInviteAction, setNotifyPage } from './members-views.js';
@@ -56,10 +57,12 @@ import { accountEmailForm, accountPasswordForm, accountSessionsPage, changeOwnEm
 import { CHASE_BUDGET_MS, chasePage, checkAllArrivalsPage, logContactPage, sendAllReminders, setCadencePage, testEmailForm, testEmailSend } from './chase-views.js';
 // One request's own actions: its link, its letters and the documents on it - the seventh module to leave this file.
 // See src/request-actions.js for the three things in it that are load-bearing.
-import { addItemsPage, changeItemPage, closeRequestPage, draftOpening, draftReminder, editRequestForm, issueLink, reopenRequestPage, revokeLink, saveRequest, sendOpening, sendReminder, serveEnvelope } from './request-actions.js';
+import { addFileForClient, addItemsPage, changeItemPage, closeRequestPage, draftOpening, draftReminder, editRequestForm, issueLink, reopenRequestPage, reRaiseRequestPage, revokeLink, saveRequest, sendOpening, sendReminder, serveEnvelope } from './request-actions.js';
 // The client records, and every document in one list - the tenth module to leave this file. See src/clients-views.js
 // for the promise its documents search keeps, and the page that carries last year's checklist into this one.
-import { clientsCsv, filesCsv, filesPage, listClients, saveClient, viewClient } from './clients-views.js';
+import { clientsCsv, filesCsv, filesPage, importClientsForm, importClientsRun, listClients, saveClient, viewClient } from './clients-views.js';
+import { xeroBooksCheck, xeroBooksSignal, xeroCallback, xeroConnect, xeroDisconnect, xeroImport, xeroPage } from './xero-views.js';
+import { quickBooksBooksSignal, quickBooksCallback, quickBooksConnect, quickBooksDisconnect, quickBooksImport, quickBooksPage } from './quickbooks-views.js';
 // The templates and their lists, plus the page that closes several requests at once - the eleventh module to leave
 // this file. See src/templates-views.js for the two things in it that are load-bearing.
 import { addTemplateItemsPage, closeSeveral, closeSeveralPage, createTemplatePage, deleteTemplatePage, removeTemplateItemPage, saveAsTemplate, saveTemplate, templatePage, templatesPage } from './templates-views.js';
@@ -68,7 +71,7 @@ import { addTemplateItemsPage, closeSeveral, closeSeveralPage, createTemplatePag
 import { askEveryone, askEveryonePage } from './bulk-ask-views.js';
 // The front door: home, signing up, signing in, the second factor and signing out - the thirteenth and last module to
 // leave this file. See src/signin-views.js for the three things in it that are deliberate.
-import { home, signIn, signInCode, signInCodePage, signInForm, signOut, signUp, signUpForm, twoFactorConfirm, twoFactorNewCodes, twoFactorOff, twoFactorPage, twoFactorStart } from './signin-views.js';
+import { forgot, forgotForm, home, resend, reset, resetForm, signIn, signInCode, signInCodePage, signInForm, signOut, signUp, signUpForm, twoFactorConfirm, twoFactorNewCodes, twoFactorOff, twoFactorPage, twoFactorStart, verifyAccount, verifyPage } from './signin-views.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -100,7 +103,9 @@ const ASSETS = new Map([
   ['upload.js', 'application/javascript; charset=utf-8'],
   ['setup.js', 'application/javascript; charset=utf-8'],
   ['download.js', 'application/javascript; charset=utf-8'],
+  ['zip.js', 'application/javascript; charset=utf-8'],
   ['keys.js', 'application/javascript; charset=utf-8'],
+  ['recovery.js', 'application/javascript; charset=utf-8'],
   ['members.js', 'application/javascript; charset=utf-8'],
   ['invite.js', 'application/javascript; charset=utf-8'],
   ['reencrypt.js', 'application/javascript; charset=utf-8'],
@@ -115,6 +120,17 @@ export const ROUTES = [
   // The second half of a sign-in, only reachable when the password was already right — see `signIn`.
   ['GET', '/signin/code', signInCodePage],
   ['POST', '/signin/code', signInCode],
+  // Finishing a sign-up, and getting back into an account. Both are public — no session, no role —
+  // because both are reached by somebody who is not signed in yet: one is a stranger becoming a
+  // practice, the other is a locked-out member. Each is guarded by the single-use token in its path,
+  // which is the only thing that makes either safe to leave open.
+  ['GET', '/forgot', forgotForm],
+  ['POST', '/forgot', forgot],
+  ['POST', '/resend', resend],
+  ['GET', /^\/reset\/([^/]+)$/, resetForm],
+  ['POST', /^\/reset\/([^/]+)$/, reset],
+  ['GET', /^\/verify\/([^/]+)$/, verifyPage],
+  ['POST', /^\/verify\/([^/]+)$/, verifyAccount],
   // A person's own second factor. Any member, any role: this is about their account, not the practice's
   // records, so it is not gated the way the members page is.
   ['GET', '/account/two-factor', twoFactorPage],
@@ -137,6 +153,9 @@ export const ROUTES = [
   ['POST', '/setup', saveKeys, 'owner'],
   ['GET', '/keys', keysPage, 'owner'],
   ['POST', /^\/keys\/([^/]+)\/passphrase$/, changePassphrase, 'owner'],
+  // The recovery sheet: making one (a copy sealed under a printed secret) and recovering from one.
+  ['POST', /^\/keys\/([^/]+)\/recovery-sheet$/, saveRecoverySheet, 'owner'],
+  ['POST', /^\/keys\/([^/]+)\/recover$/, recoverPassphrase, 'owner'],
   ['GET', '/members', membersPage, 'owner'],
   ['POST', '/members/invite', createInvitePage, 'owner'],
   // Taking an invitation back before it was used — the escape hatch a leaked link needs. An
@@ -156,6 +175,9 @@ export const ROUTES = [
   // The same two lists as files. Accountants reconcile a season in a spreadsheet, so a list that cannot
   // be got out of the tool is a list they retype.
   ['GET', '/requests.csv', requestsCsv],
+  // The whole history, as a spreadsheet. Beside the two above on purpose: a request's record is one
+  // export among several, and this is the one that answers "did we ever get it?" from a file.
+  ['GET', '/history.csv', historyCsv],
   ['GET', '/clients.csv', clientsCsv],
   // Clients: a record of its own, and the page every request starts from when the client is known.
   ['GET', '/clients', listClients],
@@ -163,6 +185,27 @@ export const ROUTES = [
   // answers "where is that file" — different questions, with different useful orders.
   ['GET', '/files', filesPage, 'accountant'],
   ['GET', '/files.csv', filesCsv, 'accountant'],
+  // Bringing the client book across — the front door of switching. A string route, before the client
+  // pattern just below: `/^\/clients\/([^/]+)$/` would otherwise read "import" as a client id.
+  ['GET', '/clients/import', importClientsForm],
+  ['POST', '/clients/import', importClientsRun],
+  // Importing the client book from Xero: the OAuth dance (connect → callback) and the import that
+  // pours into the very same pipeline as a CSV. Grouped here because it is one integration.
+  ['GET', '/integrations/xero', xeroPage],
+  ['GET', '/integrations/xero/connect', xeroConnect],
+  ['GET', '/integrations/xero/callback', xeroCallback],
+  ['POST', '/integrations/xero/import', xeroImport],
+  ['POST', '/integrations/xero/disconnect', xeroDisconnect],
+  // The opt-in for the "books behind" signal — off by default, turned on behind a warning.
+  ['POST', '/integrations/xero/books-signal', xeroBooksSignal],
+  ['POST', '/integrations/xero/books-check', xeroBooksCheck],
+  // The same shape for QuickBooks: the OAuth dance and the import into the one pipeline.
+  ['GET', '/integrations/quickbooks', quickBooksPage],
+  ['GET', '/integrations/quickbooks/connect', quickBooksConnect],
+  ['GET', '/integrations/quickbooks/callback', quickBooksCallback],
+  ['POST', '/integrations/quickbooks/import', quickBooksImport],
+  ['POST', '/integrations/quickbooks/disconnect', quickBooksDisconnect],
+  ['POST', '/integrations/quickbooks/books-signal', quickBooksBooksSignal],
   ['GET', /^\/clients\/([^/]+)$/, viewClient],
   ['POST', /^\/clients\/([^/]+)$/, saveClient],
   ['GET', '/requests/new', newRequestForm],
@@ -190,12 +233,18 @@ export const ROUTES = [
   ['POST', /^\/requests\/([^/]+)\/send$/, draftOpening],
   ['POST', /^\/requests\/([^/]+)\/send-request$/, sendOpening],
   ['GET', /^\/requests\/([^/]+)\/files\/([^/]+)$/, serveEnvelope, 'accountant'],
+  // Adding a document for a client who could not send it themselves — the practice's side of the
+  // same upload, encrypted in the practice's browser exactly as the client's is.
+  ['POST', /^\/requests\/([^/]+)\/files$/, addFileForClient, 'accountant'],
   ['POST', /^\/requests\/([^/]+)\/link$/, issueLink],
   ['POST', /^\/requests\/([^/]+)\/check-all$/, checkAllArrivalsPage, 'accountant'],
   ['POST', /^\/requests\/([^/]+)\/contact$/, logContactPage],
   ['POST', /^\/requests\/([^/]+)\/remind$/, draftReminder],
   ['POST', /^\/requests\/([^/]+)\/send-reminder$/, sendReminder],
   ['POST', /^\/requests\/([^/]+)\/close$/, closeRequestPage],
+  // The same list, next year: "do this again" as one action. Beside close on purpose — closing one
+  // year and raising the next are two halves of the same annual habit.
+  ['POST', /^\/requests\/([^/]+)\/again$/, reRaiseRequestPage],
   ['POST', /^\/requests\/([^/]+)\/reopen$/, reopenRequestPage],
   ['POST', /^\/requests\/([^/]+)\/items$/, addItemsPage],
   ['POST', /^\/requests\/([^/]+)\/items\/([^/]+)\/([a-z-]+)$/, changeItemPage],
@@ -331,9 +380,26 @@ export function createApp(db, {
   // What /healthz counts. The process's own database in single-tenant mode; injected by the SaaS
   // entry, whose process database is the registry and holds no `practitioner` table at all.
   healthCheck = null,
+  // The one seam for operational events (a request, a failure). Injected so a test, or a deployment
+  // that keeps its access log at the proxy, can pass `NULL_LOG` and stay quiet — same shape as `mailer`.
+  log = logEvent,
 } = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
+
+    // The access log, on the response's own `finish` so it reports the status that was actually sent,
+    // whatever path answered — and skipped for the health check, whose every poll would otherwise be a
+    // line that says nothing. A reverse proxy logs requests too; this is the app's own view of them in
+    // one parseable line, for a host that wants to alert on failures without grepping prose.
+    if (url.pathname !== '/healthz') {
+      const started = Date.now();
+      response.on('finish', () => log('info', 'request', {
+        method: request.method,
+        path: url.pathname,
+        status: response.statusCode,
+        ms: Date.now() - started,
+      }));
+    }
 
     // A health check that touches the database, because a process that is up and cannot
     // read its own schema is not healthy. Deliberately before tenant resolution: the health of
@@ -433,8 +499,9 @@ export function createApp(db, {
       if (error instanceof RequestError) {
         return fail(response, error.status, error.message, practitionerFor(scoped.db, request));
       }
-      // The operator gets the detail; the browser gets a sentence.
-      console.error(`tickmark: ${request.method} ${url.pathname} failed:`, error);
+      // The operator gets the detail; the browser gets a sentence. And the failure is one structured
+      // line too, so a hosted install can alert on `request.failed` without reading prose.
+      log('error', 'request.failed', { method: request.method, path: url.pathname, error: error.message, stack: error.stack });
       return fail(response, 500, 'Something went wrong on the server. The operator can find the detail in its log.');
     }
   });

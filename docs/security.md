@@ -19,6 +19,33 @@ section says how a claim is *checked* as well as how it is implemented.
 | **Passwords are not crackable in bulk** | scrypt at `N=2^16` (64 MiB per guess), 16-byte salt, constant-time compare | `src/crypto.js`; the parameters are one exported constant |
 | **A stolen password is not enough** | TOTP second factor, per member | `test/two-factor.test.js`, against the RFC's own vectors; and `test/gateway.test.js` proves the platform sign-in cannot walk around it |
 
+## The optional "books behind" signal, and why it changes none of this
+
+Everything above is the promise. One optional feature reaches *past* the client list, so it is worth
+saying exactly what it does and does not touch — because the difference is the whole product.
+
+**What it is.** With a connection to Xero or QuickBooks, a practice may turn on a signal that reads a
+**summary** of a client's accounting activity — how many bank lines are unreconciled, and when the last
+one was — to flag the books that need attention before a deadline.
+
+**What it is not.** It is not access to your clients' **documents**, and it changes nothing about them.
+Those are encrypted in the client's browser to your key and are unreadable to this server — before, after,
+and whatever this setting says. The signal reads *accounting activity in your own accounting software*,
+through your own **read-only** credential: a different thing from the documents, on a different path.
+
+**How the promise is kept even here:**
+
+- **Opt-in, and off by default.** Nothing is read until the practice turns it on, and it is turned on
+  behind a warning that says all of this. A practice that leaves it off keeps exactly the plain promise.
+- **Data minimisation at the door.** The fetch reduces the transactions to a count and a date and
+  **discards the rows**: Tickmark keeps "12 unreconciled, last on 3 March", never a client's bank lines.
+  There is no code path by which a transaction is stored.
+- **Read-only.** Nothing is written to the accounting software.
+- **Reversible.** Turning it off stops the reads; all that was ever kept is a count and a date.
+
+This is a deliberate, disclosed widening of what the *server* reads about a client's **finances**, and a
+deliberate, firm refusal to widen what it reads about their **documents**. That line is the product.
+
 ## The five findings
 
 ### 1. The second factor could be ground down — **fixed, and the most serious thing here**
@@ -192,10 +219,15 @@ Recorded so the next audit does not have to redo it:
 
 | Gap | Why it is not fixed | How bad |
 | --- | --- | --- |
-| **Email-verified sign-up does not exist** | A returning user needs to be told they have an account, and the alternative — emailing a link — needs a mailer the product may not have | Low. A stranger can learn that a given address uses Tickmark. On a self-hosted install there is nobody to enumerate |
 | **`/healthz` is unauthenticated** and names the version and one count | It is the one address an operator can reach when *sign-in is the thing that is broken*, and a health check that requires the broken thing is a health check that lies. The count carries no names | Low |
 | **An operator can turn two-factor off** by editing the database | They run the server and can read everything about an account anyway. Said on the page rather than left to be found | By design. What they cannot do is read documents |
 | **No signed releases or reproducible-build attestation** | The Dockerfile copies source and there is nothing to build | Low today; worth having before distributing binaries |
 
-The last of these worth doing before a hosted launch is **email-verified sign-up** — which fixes the enumeration leak and gives the hosted product a way to reach a
-practice that has lost its password.
+**Email-verified sign-up is no longer on this list — it is built**, and with it the enumeration leak it closes.
+Sign-up now answers "check your email" for *every* address and makes the account only when the link in that
+inbox is opened, so nobody can use the form to learn who has a practice here; the password is hashed before the
+lookup, so the reply does not leak it in time either. And the same mailbox sets a password again when one is
+lost — a single-use link that ends every session when spent — which is the hosted product's way to reach a
+practice that cannot sign in. Both links can be sent again if the mail does not arrive. The reset link is never
+shown on a page, even with no mail server, because a reset handed to whoever asked would be a reset for
+everybody; that install points at `tools/reset-password.mjs` instead. See `test/account-recovery.test.js`.

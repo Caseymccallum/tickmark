@@ -161,7 +161,8 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
         ${/* The row names the document; these two still need a name of their own, because a file input with no label
               is announced as "choose file" and nothing else — and the cell that says which document it belongs to is
               read in a different order from the field itself. */ ''}
-        <input type="file" name="file" required aria-label="Upload a file for: ${item.label}">
+        <input type="file" name="file" multiple accept="image/*,application/pdf" required
+          aria-label="Upload one or more files for: ${item.label}">
         <input type="text" name="note" placeholder="anything we should know? (optional)" maxlength="500"
           aria-label="A note about this document (optional)">
         <div class="row">
@@ -210,7 +211,8 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
           <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
           <tbody>${rows}</tbody>
         </table></div>
-        <p class="note">If you cannot send one of these, say so with the buttons beside it — the practice
+        <p class="note">You can send more than one file at a time — photographs taken on your phone work as
+        well as PDFs. If you cannot send one of these, say so with the buttons beside it — the practice
         would rather know than keep asking. Neither button takes it off the list; that is their call.</p>
         ${items.length === 0
           ? html`<p>Nothing is being asked of you at the moment. Add the practice's address to your
@@ -229,7 +231,8 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
         you think they need — this is the safe way to send it. It is encrypted the same way as everything
         else, and they will see it attached to this request.</p>
         <form class="upload" method="post" action="/r/${params[0]}/extra">
-          <input type="file" name="file" required aria-label="Choose a document to send">
+          <input type="file" name="file" multiple accept="image/*,application/pdf" required
+            aria-label="Choose one or more documents to send">
           <input type="text" name="note" placeholder="what is it? (optional)" maxlength="500"
             aria-label="What is it? (optional)">
           <div class="row">
@@ -351,7 +354,7 @@ export async function clientSays({ db, request, response, params, mailer, client
  * Returns null when it has already answered the request with a failure, which is this file's idiom — `fail`
  * writes the response, so a caller only has to return.
  */
-async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, requestId, requestItemId = null }) {
+export async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, requestId, requestItemId = null }) {
   const type = String(request.headers['content-type'] ?? '');
   if (!type.startsWith('application/octet-stream')) {
     return fail(response, 415, 'This page sends files as raw bytes, which needs JavaScript to be enabled.');

@@ -195,6 +195,64 @@ export function spoolBody(request, limit, path) {
   });
 }
 
+/**
+ * Read a `multipart/form-data` body — what a form with a file in it sends — into its fields and its files.
+ *
+ * Hand-written, like the SMTP client and the ZIP reader, because a dependency here would be a dependency
+ * that reads a request body: the most attacker-controlled input there is. It splits on the boundary and
+ * understands only `form-data` parts carrying a `name`; anything else is passed over rather than guessed at.
+ */
+export function parseMultipart(body, boundary) {
+  const fields = {};
+  const files = [];
+  if (typeof boundary !== 'string' || boundary.length === 0) return { fields, files };
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'latin1');
+  const dash = Buffer.from(`--${boundary}`, 'latin1');
+
+  for (let at = bytes.indexOf(dash); at >= 0; ) {
+    let start = at + dash.length;
+    // `--` right after a boundary is the closing mark, and the last part is done.
+    if (bytes[start] === 0x2d && bytes[start + 1] === 0x2d) break;
+    if (bytes[start] === 0x0d && bytes[start + 1] === 0x0a) start += 2; // the CRLF that follows a boundary
+    const headEnd = bytes.indexOf('\r\n\r\n', start, 'latin1');
+    if (headEnd < 0) break;
+    const headers = bytes.subarray(start, headEnd).toString('latin1');
+    const contentStart = headEnd + 4;
+    const next = bytes.indexOf(dash, contentStart);
+    if (next < 0) break;
+    let contentEnd = next;
+    if (bytes[contentEnd - 2] === 0x0d && bytes[contentEnd - 1] === 0x0a) contentEnd -= 2; // the CRLF before it
+    const content = bytes.subarray(contentStart, contentEnd);
+
+    const disposition = /content-disposition: *form-data;([^\r\n]*)/i.exec(headers)?.[1] ?? '';
+    const name = /name="([^"]*)"/i.exec(disposition)?.[1] ?? null;
+    const filename = /filename="([^"]*)"/i.exec(disposition)?.[1] ?? null;
+    const contentType = /content-type: *([^\r\n]+)/i.exec(headers)?.[1]?.trim() ?? null;
+    if (name) {
+      if (filename !== null) files.push({ name, filename, contentType, data: Buffer.from(content) });
+      else fields[name] = content.toString('utf8');
+    }
+    at = next;
+  }
+  return { fields, files };
+}
+
+/**
+ * Read a form whether it is `multipart/form-data` (a file along) or ordinary `application/x-www-form-urlencoded`.
+ *
+ * One call for both shapes, so a handler that takes an optional attachment does not grow its own dispatch —
+ * and so a form with no file behaves exactly as it did before it grew the input. `limit` is the body ceiling,
+ * and should be set to the attachment ceiling where a file may be attached.
+ */
+export async function readForm(request, limit = 64 * 1024) {
+  const type = String(request.headers['content-type'] ?? '');
+  if (/^multipart\/form-data/i.test(type)) {
+    const boundary = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(type)?.slice(1).find(Boolean) ?? null;
+    return parseMultipart(await readBody(request, limit), boundary);
+  }
+  return { fields: formFields(await readBody(request, limit)), files: [] };
+}
+
 /** A field from a form, trimmed, or `fallback` if it was absent or blank. */
 export const field = (fields, name, fallback = null) => {
   const value = fields[name];
@@ -226,6 +284,95 @@ export function parseItems(text) {
     if (items.length >= MAX_ITEMS) break;
   }
   return items;
+}
+
+/**
+ * A CSV file, parsed into rows of cells — the inverse of the `csvCell` writer the exports use, so a
+ * practice can round-trip `tickmark-clients.csv`: export the directory, fix names in a spreadsheet,
+ * import it back. Quoted fields are handled the way a spreadsheet writes them — embedded commas,
+ * embedded newlines, and a doubled quote as an escaped quote — because "Smith, Jones & Co" is a real
+ * client name and the import must not split it in two.
+ *
+ * Blank lines are dropped rather than becoming blank clients, and a UTF-8 BOM (which Excel insists
+ * on) is stripped so the first column is not read as "\ufeffClient".
+ */
+export function parseCsv(text) {
+  const clean = String(text ?? '').replace(/^\ufeff/, '');
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  let atCellStart = true;
+  for (let i = 0; i < clean.length; i += 1) {
+    const ch = clean[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (clean[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else quoted = false;
+      } else if (ch !== '\r') cell += ch; // a CRLF inside a quoted cell reads as one line break
+      continue;
+    }
+    if (ch === '"' && atCellStart) {
+      quoted = true;
+      atCellStart = false;
+      continue;
+    }
+    if (ch === ',') {
+      row.push(cell);
+      cell = '';
+      atCellStart = true;
+      continue;
+    }
+    if (ch === '\r') continue;
+    if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      atCellStart = true;
+      continue;
+    }
+    cell += ch;
+    atCellStart = false;
+  }
+  if (cell !== '' || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((row_) => row_.some((cellValue) => String(cellValue).trim() !== ''));
+}
+
+/**
+ * A CSV of clients, turned into `{ name, email }` rows.
+ *
+ * The columns are found by name rather than by position, because the file is more likely to have come
+ * from somewhere else — a practice-management export, a spreadsheet, another chasing tool — than from
+ * Tickmark's own `tickmark-clients.csv`. "Smith, Jones & Co" is a name, and it is called "Client",
+ * "Name", "Customer", "Contact" or "Company" in the wild. The address column is called "Address" in
+ * our own export (where it holds an email) and "Email" in most others, so both are read.
+ *
+ * A file with no recognisable header is read positionally — first column the name, second the
+ * address — which is what a two-column sheet pasted out of anything will be. Rows with no name are
+ * returned rather than dropped, so the import can report them instead of losing them silently.
+ */
+const CLIENT_NAME_COLUMNS = ['client', 'name', 'client name', 'customer', 'customer name', 'contact', 'contact name', 'company', 'display name'];
+const CLIENT_EMAIL_COLUMNS = ['address', 'email', 'e-mail', 'email address', 'e-mail address', 'contact email', 'client email'];
+
+export function clientRowsFromCsv(text) {
+  const grid = parseCsv(text);
+  if (grid.length === 0) return [];
+  const header = grid[0].map((cell) => String(cell).trim().toLowerCase());
+  const nameAt = header.findIndex((cell) => CLIENT_NAME_COLUMNS.includes(cell));
+  const emailAt = header.findIndex((cell) => CLIENT_EMAIL_COLUMNS.includes(cell));
+  const hasHeader = nameAt !== -1 || emailAt !== -1;
+  const nameColumn = nameAt !== -1 ? nameAt : 0;
+  const emailColumn = emailAt !== -1 ? emailAt : 1;
+  return grid.slice(hasHeader ? 1 : 0).map((row) => ({
+    name: String(row[nameColumn] ?? '').trim(),
+    email: String(row[emailColumn] ?? '').trim(),
+  }));
 }
 
 /**

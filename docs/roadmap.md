@@ -48,10 +48,16 @@ Phase 3   Find out if anyone wants it  RUNNING — interviews and a competitor's
 Phase 4   Grow the surface             NOT PLANNED
 ```
 
-**Everything in version one and every phase of Phase 2 is now built.** What is left is not a feature
-list: it is 2k, which has never been driven against a real Stripe account, and Phase 3's open half —
-who does not buy the incumbent, and whether the privacy wedge matters to a buyer — which now needs real
-practices on the receiving end rather than more posts.
+**Everything in version one and every phase of Phase 2 is now built.** The most recent additions are the two a
+hosted launch cannot do without. **Getting into an account**: a sign-up that proves the address — two steps, and
+it never answers "is that address taken?" — a password set again from the mailbox when one is lost, and a "send
+it again" for both. **A failed card that is a grace period rather than a lockout**: `past_due` keeps the
+documents open for `TICKMARK_PAST_DUE_GRACE_DAYS` while Stripe chases the card, and `cancelled` still closes at
+once. `CHANGELOG.md` records both.
+
+What is left is not a feature list: it is 2k, which has never been driven against a real Stripe account, and
+Phase 3's open half — who does not buy the incumbent, and whether the privacy wedge matters to a buyer — which
+now needs real practices on the receiving end rather than more posts.
 
 ## Phase 0 — Verify the demand
 

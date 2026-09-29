@@ -32,16 +32,22 @@ is what is *not* there, ordered by what I would do first, with the reason each i
 | **Multiple entities per client, in one place** | The strongest signal in the whole market research — the same respondent named it twice, about two different products | A design decision rather than a sprint: a link is issued for one request, so a page spanning several means deciding what a link may reveal. Noted in `roadmap.md` |
 | **Item-level due dates** | Stage the checklist — ID by March, statements by June | Everything shares the request's date, and a request with four stages is a different product shape. No practitioner has asked for it |
 
+> **Two of these have since been built** — a password reset by email (with the sign-up enumeration leak it
+> closes) and the Content-Security-Policy — so the rows above are that day's list and not today's. Where this
+> document is a record, `docs/security.md` and `CHANGELOG.md` are the living ones and say what is true now.
+
 ### What is genuinely absent rather than refused
 
-Two things a practice would look for and not find, and they are worth naming plainly:
+Two things a practice would look for and not find — **and both are now built**, so this is what was missing when
+the audit was written rather than what is missing today:
 
-1. **No way to send a document *to* a client other than the reminder text.** A practice cannot attach a
-   template, a spreadsheet or a signed letter through Tickmark. The link mail goes out; nothing else can.
-2. **Nothing exports the *history*.** Requests, clients and documents all export as CSV. The event log — arguably
-   the most valuable record the product keeps — cannot be got out.
+1. **A way to send a document *to* a client.** A practice can now attach a template, a spreadsheet or a signed
+   letter to the ask or the reminder. It rides the email and is kept nowhere — never written to the database or
+   to disk — so the promise that the server cannot read what passes through it holds in both directions.
+2. **An export of the *history*.** Requests, clients and documents all exported as CSV; now so does the event
+   log — `history.csv`, the whole record of what was sent, what arrived and when, in one file.
 
-Neither is hard. Neither is in the research. Both are the kind of thing a practice asks for in month two.
+Both are in `CHANGELOG.md` with the reasoning.
 
 ## 2. Performance
 

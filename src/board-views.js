@@ -26,12 +26,16 @@ import { holdsKey } from './roles.js';
 import {
   MAX_TEMPLATE_NAME,
   clientFor,
+  filingProfileOf,
+  describeFilingProfile,
   clientSummaries,
   clientsDueForAsking,
   closedCount,
   countRequests,
   createRequest,
   findOrCreateClient,
+  findOrCreateEntity,
+  eventsForPractice,
   history,
   itemsOf,
   membersOf,
@@ -42,6 +46,7 @@ import {
   requestFor,
   requestProgress,
   requestsFor,
+  suggestRequest,
   templateFor,
   tokensFor,
   updateClient,
@@ -287,7 +292,7 @@ export function listRequests({ db, response, practitioner, url, practiceId, mail
               ? 'Nothing is in that state'
               : 'No requests yet',
         query
-          ? html`The search looks at the client, the request and the address. <a href="${href({ q: '' })}">Clear it</a> to see everything again.`
+          ? html`The search looks at the client, the request and the email address. <a href="${href({ q: '' })}">Clear it</a> to see everything again.`
           : showingClosed
             ? 'When a year is finished with, close the request: the record, the files and the client’s link all stay exactly as they are.'
             : wanted
@@ -378,7 +383,7 @@ export function listRequests({ db, response, practitioner, url, practiceId, mail
               ? ''
               : html` · <a href="${href({ sort: sort === 'due' ? '' : 'due' })}">${sort === 'due' ? 'by whose turn it is' : 'by due date'}</a>
                   · <a href="${href({ sort: sort === 'client' ? '' : 'client' })}">${sort === 'client' ? 'by whose turn it is' : 'by client'}</a>`}
-            · <a class="clear" href="/requests.csv${href({}).replace('/requests', '')}">Download as CSV</a>${showingClosed
+            · <a class="clear" href="/requests.csv${href({}).replace('/requests', '')}">Download as CSV</a> · <a class="clear" href="/history.csv">the whole history</a>${showingClosed
               ? ''
               : html` · at the end of a season, <a href="/requests/close">close several at once</a>`}</p>`
         : html`<p class="note">${showingClosed
@@ -445,7 +450,7 @@ function requestForm({ error = null, values = {}, clients = [], forClient = null
               ${clients.map((client) => html`<option value="${client.name}">${client.email ?? ''}</option>`)}
             </datalist>
             <p class="form-hint">One of the ${clients.length} this practice already has, or a new one.
-            A name that matches an existing client is theirs — with their address on it.</p>`
+            A name that matches an existing client is theirs — with their email address on it.</p>`
           : ''}
       </div>
       <div class="field">
@@ -457,6 +462,15 @@ function requestForm({ error = null, values = {}, clients = [], forClient = null
       <div class="field">
         <label for="title">What is this for?</label>
         <input id="title" name="title" required value="${values.title ?? ''}" placeholder="2025 return">
+      </div>
+      <div class="field">
+        <label for="entity">Which matter? <span class="note">(optional — a limited company, a partnership, a
+        personal return)</span></label>
+        <input id="entity" name="entity" value="${values.entity ?? ''}" placeholder="Jane's Consulting Ltd"
+          autocomplete="off">
+        <p class="form-hint">Groups this under one of the client's matters, so a client with a company and a
+        partnership keeps their work apart. A name that matches an existing matter is theirs; a new one is
+        made.</p>
       </div>
       <div class="field">
         <label for="due">Due <span class="note">(optional)</span></label>
@@ -503,6 +517,10 @@ export function newRequestForm({ db, response, practitioner, practiceId, url }) 
   const forClient = forId ? clientFor(db, practiceId, forId) : null;
   const likeLast = url?.searchParams?.get('like') === 'last';
   const previous = forClient && likeLast ? previousChecklistFor(db, practiceId, forClient.id) : null;
+  // What their own books say this request is for: a title naming the period, a due date around the
+  // year-end, a checklist for their entity type. Used when nothing more specific is filling the form.
+  const profile = forClient ? filingProfileOf(db, forClient.id) : null;
+  const suggested = forClient ? suggestRequest(profile) : null;
 
   const templateId = url?.searchParams?.get('template');
   const template = templateId ? templateFor(db, practiceId, templateId) : null;
@@ -534,8 +552,11 @@ export function newRequestForm({ db, response, practitioner, practiceId, url }) 
         ? {
             client: forClient.name,
             client_email: forClient.email ?? '',
-            title: previous?.title ?? '',
-            items: (previous?.items ?? []).join('\n'),
+            // Last year's list wins when the practice asked for it; otherwise their filing profile
+            // suggests a starting point. Either way it is a form to edit, and nothing is saved yet.
+            title: previous?.title ?? suggested?.title ?? '',
+            due: previous ? '' : (suggested?.dueAt ?? ''),
+            items: (previous?.items ?? suggested?.items ?? []).join('\n'),
           }
         : {};
 
@@ -557,7 +578,10 @@ export function newRequestForm({ db, response, practitioner, practiceId, url }) 
             is already chosen, so nothing here can file it against the wrong one.${previous && previous.items.length > 0
               ? html` Their last request's checklist is filled in below; change whatever is different
                   this year.`
-              : ''}</p>`
+              : suggested
+                ? html` Filled in from their filing profile (${describeFilingProfile(profile)}) — change
+                    anything that is different.`
+                : ''}</p>`
         : null,
     body: requestForm({ values, clients, forClient: forClient?.id ?? null }),
   }));
@@ -572,6 +596,7 @@ export async function createRequestPage({ db, request, response, practitioner, p
   const title = field(fields, 'title');
   const due = field(fields, 'due');
   const clientNote = field(fields, 'client_note')?.trim() || null;
+  const entityName = (field(fields, 'entity') ?? '').trim();
   const rawItems = typeof fields.items === 'string' ? fields.items : '';
   const items = parseItems(rawItems);
   const values = {
@@ -638,10 +663,17 @@ export async function createRequestPage({ db, request, response, practitioner, p
     });
   }
 
+  // The matter this request is for — found or made under the client, so "the partnership" lands on the
+  // right thing whether or not it existed before. Blank means ungrouped, which is fine.
+  const entityId = entityName
+    ? findOrCreateEntity(db, { practiceId, clientId, name: entityName })
+    : null;
+
   const requestId = createRequest(db, {
     practiceId,
     createdBy: practitioner.id,
     clientId,
+    entityId,
     title,
     dueAt: due,
     items,
@@ -650,7 +682,7 @@ export async function createRequestPage({ db, request, response, practitioner, p
   return redirect(response, `/requests/${requestId}`);
 }
 
-export function viewRequest({ db, request, response, practitioner, params, practiceId }) {
+export function viewRequest({ db, request, response, practitioner, params, practiceId, maxUploadBytes }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -663,6 +695,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
   const emailed = new URL(request.url, 'http://localhost').searchParams.get('emailed');
   const justContacted = new URL(request.url, 'http://localhost').searchParams.get('contacted') === '1';
   const checkedCount = new URL(request.url, 'http://localhost').searchParams.get('checked');
+  const justAdded = new URL(request.url, 'http://localhost').searchParams.get('added') === '1';
 
   const allItems = itemsOf(db, found.id);
   const live = allItems.filter((item) => !item.withdrawn);
@@ -685,6 +718,37 @@ export function viewRequest({ db, request, response, practitioner, params, pract
   const received = live.filter((item) => filesOf(item).length > 0).length;
   const outstanding = live.filter((item) => filesOf(item).length === 0);
   const attention = live.filter((item) => item.needsAttention);
+
+  // Every file on this request, named the way it will land in one downloaded archive: a folder per
+  // checklist line, and a folder for what arrived without being asked. Naming happens here — once,
+  // where the page is — so the script that packs the archive deals only in bytes. A name that repeats
+  // gets a number rather than overwriting, because two clients both send "scan.pdf", and an archive
+  // that silently kept one would be a lost document.
+  const safe = (text) => (text ?? '').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+  const archiveFiles = [];
+  const taken = new Set();
+  const addFile = (folder, file) => {
+    const stem = `${safe(folder) || 'Document'}/${safe(file.filename) || 'file'}`;
+    let name = stem;
+    let n = 2;
+    while (taken.has(name.toLowerCase())) {
+      const dot = stem.lastIndexOf('.');
+      const dotInName = dot > stem.lastIndexOf('/') ? dot : -1;
+      const head = dotInName > 0 ? stem.slice(0, dotInName) : stem;
+      const tail = dotInName > 0 ? stem.slice(dotInName) : '';
+      name = `${head} (${n})${tail}`;
+      n += 1;
+    }
+    taken.add(name.toLowerCase());
+    archiveFiles.push({ name, url: `/requests/${found.id}/files/${file.id}` });
+  };
+  for (const item of live) for (const file of filesOf(item)) addFile(item.label, file);
+  for (const file of extras) addFile('Also sent', file);
+  // The count is of *files*, not of checklist lines: a request with two files on one line is two things
+  // to open, and the download control should say so. It also carries the case where every file was sent
+  // without being asked — `received` counts lines, so it would be zero there and hide the whole tool.
+  const fileCount = archiveFiles.length;
+  const archiveName = `${safe(found.title) || 'documents'}.zip`;
   // Computed from the same function the list uses, so the page and the board cannot disagree.
   const progress = requestProgress(db, found.id);
   const events = history(db, found.id);
@@ -820,6 +884,8 @@ export function viewRequest({ db, request, response, practitioner, params, pract
           <a class="btn" href="/requests/new?from=${found.id}">Duplicate</a>
         </div>
       </div>
+      ${justAdded ? html`<p class="success"><strong>Added to this request.</strong> The document is saved
+        with the rest, encrypted to the practice's key like everything else.</p>` : ''}
       ${emailedNotice}
       ${checkedCount && /^\d+$/.test(checkedCount)
         ? html`<p class="success"><strong>${checkedCount} document${checkedCount === '1' ? '' : 's'} checked.</strong>
@@ -894,13 +960,20 @@ export function viewRequest({ db, request, response, practitioner, params, pract
             later will not change this.</p>
           </details>`
         : ''}
-      ${keys.length > 0 && received > 0
+      ${keys.length > 0 && fileCount > 0
         ? html`<div class="unlock">
             <label for="passphrase">Your passphrase, to open what has arrived</label>
             <input id="passphrase" type="password" autocomplete="current-password">
             <button type="button" id="unlock">Unlock</button>
+            ${fileCount > 1
+              ? html`<button type="button" id="download-all" disabled>Download everything
+                  (${fileCount} files)</button>`
+              : ''}
+            <span id="download-all-status" class="status note"></span>
             <p id="unlock-status" class="note">It is used in this browser and sent nowhere. Unlocking
-            keeps the keys in this tab so that saving several files does not mean typing it again.</p>
+            keeps the keys in this tab so that saving several files does not mean typing it again.
+            “Download everything” opens each file here and packs it into one archive — the plaintext
+            never leaves this tab.</p>
           </div>`
         : ''}
       <div class="scroll"><table class="items">
@@ -1014,7 +1087,12 @@ export function viewRequest({ db, request, response, practitioner, params, pract
                   <td><span class="cell-t">${upload.filename}</span>
                     ${upload.client_note ? html`<span class="cell-s">${upload.client_note}</span>` : ''}</td>
                   <td class="note">${upload.uploaded_at}</td>
-                  <td><a class="btn sm" href="/requests/${found.id}/files/${upload.id}">Download</a></td>
+                  <td><div class="file">
+                    <button type="button" class="save" disabled
+                            data-url="/requests/${found.id}/files/${upload.id}"
+                            data-name="${upload.filename}">Save</button>
+                    <span class="status note"></span>
+                  </div></td>
                 </tr>`)}
               </tbody>
             </table></div>
@@ -1026,6 +1104,29 @@ export function viewRequest({ db, request, response, practitioner, params, pract
           ${events.map((event) => html`<li><code>${event.kind}</code> <span class="note">${event.at}${event.detail ? ` — ${event.detail}` : ''}</span></li>`)}
         </ul>
       </section>
+      ${keys.length > 0
+        ? html`<section class="card">
+            <h2>Add a document for this client</h2>
+            <p class="note">For the client who cannot use the link — they phoned, posted a letter, or have
+            no email. The file is encrypted here to the practice's own key before it is saved, exactly as
+            the client's own uploads are, so the server never reads it. It lands on this request beside
+            everything else.</p>
+            <form class="upload" method="post" action="/requests/${found.id}/files">
+              <input type="file" name="file" multiple accept="image/*,application/pdf" required
+                aria-label="Choose one or more documents to add">
+              <select name="item" aria-label="Which document this answers">
+                <option value="">Not one of these — just add it</option>
+                ${live.map((item) => html`<option value="${item.id}">${item.label}</option>`)}
+              </select>
+              <input type="text" name="note" placeholder="a note about it (optional)" maxlength="500"
+                aria-label="A note about this document (optional)">
+              <div class="row">
+                <button type="submit">Add it to this request</button>
+                <span class="status"></span>
+              </div>
+            </form>
+          </section>`
+        : ''}
       <section class="card">
         <h2>The file itself</h2>
         ${found.closed_at
@@ -1033,11 +1134,15 @@ export function viewRequest({ db, request, response, practitioner, params, pract
                 nothing has been deleted.</p>
               <div class="actions">
                 <form method="post" action="/requests/${found.id}/reopen"><button type="submit">Reopen it</button></form>
-              </div>`
+                <form method="post" action="/requests/${found.id}/again"><button type="submit">Do this again</button></form>
+              </div>
+              <p class="form-hint">“Do this again” raises the same list for next year — the same client, the
+              same matter, the same checklist — with the title's year rolled on. Nothing here is touched.</p>`
           : html`<p class="note">Closing is a status, not a deletion: the record, the files and the
                 client's link all stay exactly as they are.</p>
               <div class="actions">
                 <form method="post" action="/requests/${found.id}/close"><button type="submit">Close this request</button></form>
+                <form method="post" action="/requests/${found.id}/again"><button type="submit">Do this again</button></form>
               </div>`}
       </section>
       ${received > 0 && !holdsKey(practitioner.role)
@@ -1047,8 +1152,12 @@ export function viewRequest({ db, request, response, practitioner, params, pract
             setting somebody chose. An owner can make you a copy; it needs a passphrase from you, and it
             takes a moment on the members page.</p>`
         : ''}
+      ${keys.length > 0 ? jsonTag('practice-key', { keyId: keys[0].id, publicKey: keys[0].publicKey }) : ''}
+      ${keys.length > 0 ? jsonTag('upload-limit', { maxBytes: maxUploadBytes }) : ''}
+      ${keys.length > 0 ? raw('<script type="module" src="/assets/upload.js"></script>') : ''}
       ${keys.length > 0 ? jsonTag('key-records', { keys: keys.map((key) => ({ id: key.id, wrapped: key.wrappedPrivateKey })) }) : ''}
-      ${received > 0 && holdsKey(practitioner.role) ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
+      ${fileCount > 0 ? jsonTag('file-list', { archive: archiveName, files: archiveFiles }) : ''}
+      ${fileCount > 0 && holdsKey(practitioner.role) ? raw('<script type="module" src="/assets/download.js"></script>') : ''}`,
   }));
 }
 
@@ -1094,7 +1203,29 @@ export function requestsCsv({ db, response, practitioner, practiceId, url }) {
     ]);
 
   return sendCsv(response, showingClosed ? 'tickmark-closed-requests.csv' : 'tickmark-requests.csv', [
-    ['Client', 'Address', 'Request', 'State', 'Documents', 'Received', 'Outstanding', 'To check', 'Due', 'Asked', 'Closed'],
+    ['Client', 'Email address', 'Request', 'State', 'Documents', 'Received', 'Outstanding', 'To check', 'Due', 'Asked', 'Closed'],
     ...rows,
+  ]);
+}
+
+/**
+ * The whole history as a spreadsheet — what was sent, what arrived, and when, across every request.
+ *
+ * It is the one record the other exports do not carry and the request pages only show one request at a
+ * time, so getting it out is the difference between answering "did we ever get the bank statements?" from
+ * a file and from memory. `What` is the event's own name — the same code the request page shows in
+ * `<code>` — so the file and the screen say the same thing rather than two phrasings of it.
+ */
+export function historyCsv({ db, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  return sendCsv(response, 'tickmark-history.csv', [
+    ['When', 'Client', 'Request', 'What', 'Detail'],
+    ...eventsForPractice(db, practiceId).map((event) => [
+      event.at,
+      event.client,
+      event.title,
+      event.kind,
+      event.detail ?? '',
+    ]),
   ]);
 }

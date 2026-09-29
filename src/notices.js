@@ -233,6 +233,84 @@ export async function notifyPracticeOfChange({ db, requestRow, mailer, origin })
  */
 export const signOff = (practiceName) => (practiceName ? ['Thanks,', '', practiceName] : ['Thanks,']);
 
+// --- the two letters that finish or recover an account -----------------------
+//
+// These go to a person, not to a client, and they are from Tickmark rather than from a practice — there
+// is no practice yet on a sign-up, and a reset is the platform's business. Plain text like the other
+// practice-facing notices, and pure functions of their facts so the wording has one home and can be
+// tested without a mail server. The link is the whole message: it is the proof, the action, and the
+// only thing that makes it worth sending.
+
+/** Finish creating a practice, to an address that has not been used yet. */
+export function verifyDraft({ link }) {
+  return {
+    subject: 'Finish creating your Tickmark practice',
+    body: [
+      'Hello,',
+      '',
+      'Somebody asked to create a Tickmark practice with this email address. If that',
+      'was you, open the link below to finish — it proves the address is yours and',
+      'creates the practice:',
+      '',
+      link,
+      '',
+      'The link works once and expires in a day. If it was not you, ignore this',
+      'message and nothing happens.',
+      '',
+      'Thanks,',
+      'Tickmark',
+    ].join('\n'),
+  };
+}
+
+/**
+ * Somebody tried to sign up with an address that already has a practice.
+ *
+ * Sent to the address rather than shown to whoever filled in the form, which is the whole of how
+ * sign-up stops being a way to find out who has an account: the person told "you already have one" is
+ * the person who can read the mailbox, and the person at the keyboard is told nothing either way.
+ */
+export function alreadyHaveAccountDraft({ link }) {
+  return {
+    subject: 'You already have a Tickmark practice',
+    body: [
+      'Hello,',
+      '',
+      'Somebody asked to create a Tickmark practice with this email address, but there',
+      'is already one here. If that was you, sign in instead:',
+      '',
+      link,
+      '',
+      'If you have forgotten the password, you can set a new one from the sign-in page.',
+      'If it was not you, ignore this message — nothing has changed.',
+      '',
+      'Thanks,',
+      'Tickmark',
+    ].join('\n'),
+  };
+}
+
+/** Set a new password, to an address that already has a practice. */
+export function resetDraft({ link }) {
+  return {
+    subject: 'Set a new password for Tickmark',
+    body: [
+      'Hello,',
+      '',
+      'Somebody asked to set a new password for the Tickmark practice at this email',
+      'address. If that was you, open the link below:',
+      '',
+      link,
+      '',
+      'The link works once and expires in an hour. Setting a new password signs out',
+      'every other session. If it was not you, ignore this message and nothing changes.',
+      '',
+      'Thanks,',
+      'Tickmark',
+    ].join('\n'),
+  };
+}
+
 /**
  * The message a practice sends when it first asks for something.
  *

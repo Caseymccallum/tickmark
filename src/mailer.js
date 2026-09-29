@@ -123,6 +123,22 @@ const addressOf = (value) => {
 };
 
 /**
+ * The address a message leaves from: the practice's own name in front of a client who recognises it, and
+ * — where the practice has set one — the practice's own address, so the message is theirs rather than the
+ * platform's.
+ *
+ * A per-practice address is also what makes SPF, DKIM and DMARC line up: the domain in the From has to be
+ * the domain the relay is allowed to send for, and that is the practice's own, not ours. It falls back to
+ * the install-wide `TICKMARK_MAIL_FROM` where the practice has not set one — the self-hosted case, where
+ * the practice owns the install and the one address is already theirs. See docs/mail.md.
+ */
+export function fromFor(practice, config) {
+  const name = String(practice?.name ?? '').trim();
+  const address = String(practice?.mail_from ?? '').trim() || addressOf(config.from);
+  return name ? `${name} <${address}>` : address;
+}
+
+/**
  * An RFC 2047 encoded-word, if the text is not plain ASCII.
  *
  * A subject line in any language has to survive the trip, and a raw UTF-8 subject needs the 8BITMIME
@@ -211,7 +227,34 @@ export function mailHtml(text, practiceName = null) {
  * extension from the server, and every line is then 7-bit — which has the quiet side effect that no
  * line can begin with a dot, so this cannot accidentally end the message early.
  */
-export function buildMessage({ from, to, subject, body, html = null, messageId }) {
+/**
+ * The two dressings of a message's words — plain text and HTML — as `multipart/alternative` parts.
+ *
+ * Split out so `buildMessage` can use them at the top of a message (no file along) or inside the first
+ * part of a `multipart/mixed` (a file along) without writing them twice and letting them drift. **The
+ * order is an instruction** — a client shows the last part it understands — so plain comes first and the
+ * styled copy second. The plain part is byte-for-byte the text the practice was shown and edited; the HTML
+ * is a rendering of those same words (see `mailHtml`) and adds none of its own.
+ */
+function alternativeParts(body, html, alt) {
+  return [
+    `--${alt}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    base64Body(body),
+    '',
+    `--${alt}`,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    base64Body(html),
+    '',
+    `--${alt}--`,
+  ];
+}
+
+export function buildMessage({ from, to, subject, body, html = null, messageId, attachment = null }) {
   const head = [
     `From: ${from}`,
     `To: ${to}`,
@@ -220,46 +263,56 @@ export function buildMessage({ from, to, subject, body, html = null, messageId }
     `Message-ID: ${messageId}`,
     'MIME-Version: 1.0',
   ];
+  // Tells a well-behaved autoresponder not to answer this, which is the difference between a reminder and
+  // a mail loop. On the message, not on a part.
+  const autoSubmitted = 'Auto-Submitted: auto-generated';
+
+  if (attachment) {
+    // A file rides along as `multipart/mixed`: the words first (a client shows the last part it
+    // understands, so the text stays ahead of the file), then the attachment. The file is base64 for the
+    // same reason the body is — 7-bit safe, and no line can begin with a dot.
+    const mixed = `----tickmark-${randomBytes(12).toString('hex')}`;
+    const alt = `----tickmark-${randomBytes(12).toString('hex')}`;
+    const wordsHeaders = html
+      ? [`Content-Type: multipart/alternative; boundary="${alt}"`]
+      : ['Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64'];
+    const wordsBody = html ? alternativeParts(body, html, alt) : [base64Body(body)];
+    return [
+      ...head,
+      `Content-Type: multipart/mixed; boundary="${mixed}"`,
+      autoSubmitted,
+      '',
+      `--${mixed}`,
+      ...wordsHeaders,
+      '',
+      ...wordsBody,
+      '',
+      `--${mixed}`,
+      `Content-Type: ${attachment.contentType ?? 'application/octet-stream'}`,
+      'Content-Transfer-Encoding: base64',
+      `Content-Disposition: attachment; filename="${String(attachment.filename ?? 'file').replace(/["\\]/g, '')}"`,
+      '',
+      base64Body(attachment.data),
+      '',
+      `--${mixed}--`,
+      '',
+    ].join('\r\n');
+  }
 
   if (!html) {
     return [
       ...head,
       'Content-Type: text/plain; charset=UTF-8',
       'Content-Transfer-Encoding: base64',
-      // Tells a well-behaved autoresponder not to answer this, which is the difference between a
-      // reminder and a mail loop.
-      'Auto-Submitted: auto-generated',
+      autoSubmitted,
       '',
       base64Body(body),
       '',
     ].join('\r\n');
   }
 
-  // `multipart/alternative`: one message in two dressings. **The order is an instruction** — a client
-  // shows the last part it understands — so plain comes first and the styled copy second. The plain
-  // part is byte-for-byte the text the practice was shown and edited; the HTML is a rendering of those
-  // same words (see `mailHtml`) and adds none of its own.
-  const boundary = `----tickmark-${randomBytes(12).toString('hex')}`;
-  return [
-    ...head,
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    'Auto-Submitted: auto-generated',
-    '',
-    `--${boundary}`,
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    base64Body(body),
-    '',
-    `--${boundary}`,
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    base64Body(html),
-    '',
-    `--${boundary}--`,
-    '',
-  ].join('\r\n');
+  const alt = `----tickmark-${randomBytes(12).toString('hex')}`;
+  return [...head, `Content-Type: multipart/alternative; boundary="${alt}"`, autoSubmitted, '', ...alternativeParts(body, html, alt), ''].join('\r\n');
 }
 
 /** SMTP's own escaping rule: a line beginning with a dot gets another one. */
@@ -475,10 +528,19 @@ function upgrade(session, config, timeoutMs) {
  * than a successful send and a much better one than a message that vanished into a queue nobody
  * watches.
  */
-export async function sendMail(config, { to, subject, body, html = null, from = config.from, timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS }) {
+export async function sendMail(config, { to, subject, body, html = null, from = config.from, timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS, attachment = null }) {
   const recipient = addressOf(to);
   if (!/^[^@\s]+@[^@\s]+$/.test(recipient)) {
     throw new MailError('configuration', `that is not an email address: ${to}`);
+  }
+
+  // A deployment may take a message itself rather than hand it to the relay — the hosted layer routes
+  // account mail through its own provider this way, and `test/helpers.js` holds back the two-step
+  // account letters so they never land on a relay a test is counting. Returning `false` says "I have
+  // this one": the send is skipped and the caller counts it as handled. Optional, and inert in an
+  // ordinary install, which has no such hook and sends everything.
+  if (config.onOutgoing?.({ to, subject, body, html }) === false) {
+    return { messageId: null, recipient, suppressed: true };
   }
 
   const socket = await openSocket(config, timeoutMs);
@@ -519,7 +581,7 @@ export async function sendMail(config, { to, subject, body, html = null, from = 
     // The Message-ID carries the sender's domain, which is the machine that accepts responsibility
     // for the message if a bounce comes back.
     const messageId = `<${randomUUID()}@${addressOf(from).split('@')[1] ?? 'tickmark.local'}>`;
-    session.send(`${dotStuff(buildMessage({ from, to, subject, body, html, messageId }))}\r\n.`);
+    session.send(`${dotStuff(buildMessage({ from, to, subject, body, html, messageId, attachment }))}\r\n.`);
     await expect(session, 250, 'the message body');
 
     session.send('QUIT');

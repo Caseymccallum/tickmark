@@ -21,10 +21,11 @@ import { createReadStream } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { hashToken, newToken } from './crypto.js';
 import { now } from './db.js';
-import { field, formFields, originOf, parseItems, readBody } from './http.js';
-import { MailError, mailHtml, sendMail } from './mailer.js';
+import { field, formFields, originOf, parseItems, readBody, readForm } from './http.js';
+import { MailError, mailHtml, fromFor, sendMail } from './mailer.js';
 import { messageFor, openingDraft } from './notices.js';
 import { holdsKey, refusalFor } from './roles.js';
+import { acceptEnvelope } from './client-portal.js';
 import {
   addItems,
   clearItemAttention,
@@ -33,12 +34,14 @@ import {
   closeRequest,
   findOrCreateClient,
   history,
+  itemIn,
   issueToken,
   itemsOf,
   outstandingOf,
   practiceFor,
   recordEvent,
   reopenRequest,
+  reRaiseRequest,
   requestFor,
   revokeToken,
   setItemAttention,
@@ -61,6 +64,51 @@ import { SECURITY_HEADERS, empty, fail, html, page, redirect, requireSignIn, sen
  * practice is not found, and a request belonging to another practice cannot be reached to begin
  * with.
  */
+/**
+ * Add a document to a client's request, on their behalf.
+ *
+ * The client who will not use a link — the one who phoned, posted a letter, or has no email at all —
+ * is still a client whose documents must live here. This is the route that takes them, and it is
+ * exactly the client's own upload from the practice's side: the file is encrypted **in the practice's
+ * browser** to the practice's own key, so the server stores an envelope and sees no more than it does
+ * for any other document. "The server cannot read your files" holds for the files a practice adds too.
+ *
+ * A line in the record says who added it, because "the client sent this" and "we scanned this in for
+ * them" are different facts a firm may one day need to tell apart.
+ */
+export async function addFileForClient({
+  db, request, response, params, practiceId, practitioner,
+  blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles,
+}) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  // Which checklist line it answers, if any. A file that answers nothing is still welcome: it is a
+  // document that needed to reach the practice, not an answer to a question.
+  const named = request.headers['x-item-id'] ?? null;
+  let requestItemId = null;
+  if (named) {
+    const item = itemIn(db, practiceId, found.id, named);
+    if (!item) return fail(response, 400, 'That upload named a document this request does not have.', practitioner);
+    requestItemId = item.id;
+  }
+
+  const stored = await acceptEnvelope({
+    db, request, response, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles,
+    requestId: found.id,
+    requestItemId,
+  });
+  if (!stored) return; // acceptEnvelope already said why, and stored nothing.
+
+  recordEvent(db, {
+    requestId: found.id,
+    kind: 'file.added',
+    detail: `${decodeURIComponent(request.headers['x-file-name'] ?? 'a document')} — added by the practice on the client's behalf`,
+  });
+  return redirect(response, `/requests/${found.id}?added=1`);
+}
+
 export async function serveEnvelope({ db, response, practitioner, params, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
@@ -409,7 +457,7 @@ export async function draftOpening({ db, request, response, practitioner, params
  * the text and reports the relay's own words, because a send that loses what somebody typed is worse than a
  * send that fails.
  */
-export async function sendOpening({ db, request, response, practitioner, params, mailer, practiceId }) {
+export async function sendOpening({ db, request, response, practitioner, params, mailer, practiceId, maxUploadBytes }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -420,7 +468,7 @@ export async function sendOpening({ db, request, response, practitioner, params,
     return fail(response, 400, `There is no email address for ${found.client_name}, so there is nowhere to send it.`, practitioner);
   }
 
-  const fields = formFields(await readBody(request));
+  const { fields, files } = await readForm(request, maxUploadBytes);
   const subject = field(fields, 'subject') ?? openingDraft({
     clientName: found.client_name,
     title: found.title,
@@ -430,18 +478,24 @@ export async function sendOpening({ db, request, response, practitioner, params,
     link: '',
   }).subject;
   const body = typeof fields.message === 'string' ? fields.message : '';
+  // A file may ride the ask exactly as on a reminder: attached, sent, and kept nowhere.
+  const file = files[0] ?? null;
+  const attachment = file ? { filename: file.filename, contentType: file.contentType, data: file.data } : null;
 
   try {
+    const practice = practiceFor(db, practiceId);
     const messageId = await sendMail(mailer, {
+      from: fromFor(practice, mailer),
       to: found.client_email,
       subject,
       body,
-      html: mailHtml(body, practiceFor(db, practiceId)?.name ?? null),
+      html: mailHtml(body, practice?.name ?? null),
+      attachment,
     });
     recordEvent(db, {
       requestId: found.id,
       kind: 'request.sent',
-      detail: `${found.client_email} — ${messageId}`,
+      detail: `${found.client_email} — ${messageId}${attachment ? ` — with ${attachment.filename} attached` : ''}`,
     });
     return redirect(response, `/requests/${found.id}?emailed=${encodeURIComponent(messageId)}`);
   } catch (error) {
@@ -523,7 +577,7 @@ function reminderPage({
         </div>
       </div>
       ${whyNot}
-      <form method="post" action="${sendTo}" class="card">
+      <form method="post" action="${sendTo}" class="card" enctype="multipart/form-data">
         <div class="field">
           <label for="subject">Subject</label>
           <textarea id="subject" name="subject" rows="2">${draft.subject}</textarea>
@@ -531,6 +585,10 @@ function reminderPage({
         <div class="field">
           <label for="message">Message <span class="note">what you see is what gets sent — as plain text, and as a styled copy of these same words</span></label>
           <textarea id="message" name="message" rows="18" data-select-on-click>${draft.body}</textarea>
+        </div>
+        <div class="field">
+          <label for="file">Attach a file <span class="note">optional — a template, a letter, a spreadsheet. It goes out with this message and is not kept anywhere.</span></label>
+          <input id="file" name="file" type="file">
         </div>
         ${canSend
           ? html`<button type="submit">Send it to ${found.client_email}</button>`
@@ -551,7 +609,7 @@ function reminderPage({
  *    saying what went wrong, because a send that loses what someone typed is worse than a send that
  *    fails — and both are recorded, so "did we actually send it?" can be answered by reading.
  */
-export async function sendReminder({ db, request, response, practitioner, params, mailer, practiceId }) {
+export async function sendReminder({ db, request, response, practitioner, params, mailer, practiceId, maxUploadBytes }) {
   if (!requireSignIn({ practitioner, response })) return;
   const found = requestFor(db, practiceId, params[0]);
   if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
@@ -562,10 +620,15 @@ export async function sendReminder({ db, request, response, practitioner, params
     return fail(response, 400, `There is no email address for ${found.client_name}, so there is nowhere to send it.`, practitioner);
   }
 
-  const fields = formFields(await readBody(request));
+  const { fields, files } = await readForm(request, maxUploadBytes);
   const subject = field(fields, 'subject');
   const body = typeof fields.message === 'string' ? fields.message : '';
   const days = Math.min(Math.max(Number(field(fields, 'days', '30')) || 30, 1), 365);
+  // A file may ride the message — a template, a letter, a spreadsheet. It is attached and then gone: it is
+  // never written to the database or to disk, so there is nothing at rest for anyone (including this
+  // server) to read. That is what keeps "the server cannot read your files" true in both directions.
+  const file = files[0] ?? null;
+  const attachment = file ? { filename: file.filename, contentType: file.contentType, data: file.data } : null;
   const outstanding = outstandingOf(db, found.id);
 
   const refuse = (error) => sendPage(
@@ -592,6 +655,7 @@ export async function sendReminder({ db, request, response, practitioner, params
       subject,
       body,
       html: mailHtml(body, practiceFor(db, practiceId)?.name ?? null),
+      attachment,
     });
 
     // A reminder with no link in it is a message the client cannot act on — they have nowhere to send
@@ -602,7 +666,7 @@ export async function sendReminder({ db, request, response, practitioner, params
     recordEvent(db, {
       requestId: found.id,
       kind: 'reminder.sent',
-      detail: `to ${found.client_email} (${messageId})${hasLink ? '' : ' — with no link in it'}`,
+      detail: `to ${found.client_email} (${messageId})${hasLink ? '' : ' — with no link in it'}${attachment ? ` — with ${attachment.filename} attached` : ''}`,
     });
     return redirect(response, `/requests/${found.id}?sent=${encodeURIComponent(messageId)}${hasLink ? '' : '&nolink=1'}`);
   } catch (error) {
@@ -734,4 +798,33 @@ export async function changeItemPage({ db, request, response, practitioner, para
     );
   }
   return redirect(response, `/requests/${found.id}`);
+}
+
+/**
+ * Roll a request's year on: "2025 return" becomes "2026 return". Any four-digit year in the title moves
+ * to at least next year or the current one, whichever is later — so a title carried into a new year
+ * names the year the practice is now working on, and one raised mid-year simply counts up.
+ */
+function rollYear(title, now = new Date()) {
+  const current = now.getFullYear();
+  return title.replace(/\b(20\d{2})\b/g, (match, year) => String(Math.max(Number(year) + 1, current)));
+}
+
+/**
+ * Raise the same request again — the same list, next year — and land on it. This is the operation the
+ * research said was missing: not a feature, but "do this again" as one action rather than retyping a
+ * checklist every January.
+ */
+export async function reRaiseRequestPage({ db, response, practitioner, params, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const found = requestFor(db, practiceId, params[0]);
+  if (!found) return fail(response, 404, 'There is no request at that address.', practitioner);
+
+  const requestId = reRaiseRequest(db, {
+    practiceId,
+    createdBy: practitioner.id,
+    requestId: found.id,
+    title: rollYear(found.title),
+  });
+  return redirect(response, `/requests/${requestId}?raised=1`);
 }

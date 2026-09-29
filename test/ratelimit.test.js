@@ -64,7 +64,7 @@ test('eleven wrong passwords stop the endpoint answering, and the right one afte
       const blocked = await client.post('/signin', { email: 'sam@practice.example', password: 'not the password' });
       assert.equal(blocked.status, 429, 'the fourth is not');
       const page = await blocked.text();
-      assert.match(page, /Too many failed attempts for that address/, 'it says what is happening');
+      assert.match(page, /Too many failed attempts for that email address/, 'it says what is happening');
       assert.match(page, /Try again in 1 minute/, 'and how long for');
       assert.ok(!/do not match an account/.test(page), 'without pretending the password was the problem');
 

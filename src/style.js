@@ -457,6 +457,8 @@ const TABLES = `
   a.cell-s:hover { color: var(--link); text-decoration: none; }
   td .row { margin-top: .3rem; }
   td form.upload { margin: 0; }
+  /* A file being dragged over a send form. A dashed ring is the only feedback a drop target needs. */
+  form.upload.dropping { outline: 2px dashed var(--ink); outline-offset: 3px; border-radius: var(--r-sm); }
   td > form:last-child { margin-bottom: 0; }
   table.compact td { padding: .5rem .75rem; }
 

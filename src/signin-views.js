@@ -29,6 +29,7 @@ import {
   clearTwoFactor,
   confirmTwoFactor,
   createSession,
+  endAllSessions,
   endChallenge,
   endSession,
   parseCookies,
@@ -42,9 +43,22 @@ import {
   unusedRecoveryCodes,
   validateCredentials,
 } from './auth.js';
-import { hashPassword, verifyPassword } from './crypto.js';
-import { field, formFields, readBody } from './http.js';
-import { createPractitioner, createPractice, inTransaction, practiceFor, practitionerByEmail } from './store.js';
+import { hashPassword, hashToken, newToken, verifyPassword } from './crypto.js';
+import { now } from './db.js';
+import { field, formFields, originOf, readBody } from './http.js';
+import { sendMail } from './mailer.js';
+import { alreadyHaveAccountDraft, resetDraft, verifyDraft } from './notices.js';
+import {
+  claimPasswordReset,
+  claimSignup,
+  createPasswordReset,
+  createSignupToken,
+  passwordResetByToken,
+  pendingSignupFor,
+  practiceFor,
+  practitionerByEmail,
+  signupByToken,
+} from './store.js';
 import { codeStepFor, generateRecoveryCodes, generateSecret, inGroups, otpauthUri } from './totp.js';
 import { TONES, badge, fail, html, page, redirect, requireSignIn, sendPage, tile } from './views.js';
 
@@ -87,7 +101,7 @@ export function home({ response, practitioner }) {
   );
 }
 
-function credentialsForm({ action, title, submit, error = null, email = '', hint = false }) {
+function credentialsForm({ action, title, submit, error = null, email = '', hint = false, footer = null }) {
   return html`
     <div class="center">
       <div class="card">
@@ -106,6 +120,7 @@ function credentialsForm({ action, title, submit, error = null, email = '', hint
             : ''}
           <button type="submit" class="primary">${submit}</button>
         </form>
+        ${footer ?? ''}
       </div>
     </div>`;
 }
@@ -128,7 +143,7 @@ async function spendTheSameTimeAsARealCheck(password) {
   await verifyPassword(password, dummyHash);
 }
 
-export async function signUp({ db, request, response, signUpLimiter }) {
+export async function signUp({ db, request, response, mailer, signUpLimiter }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
   const password = typeof fields.password === 'string' ? fields.password : '';
@@ -166,39 +181,372 @@ export async function signUp({ db, request, response, signUpLimiter }) {
     }));
   }
 
-  if (practitionerByEmail(db, email)) {
-    return sendPage(response, 400, page({
-      title: 'Create a practice',
-      body: credentialsForm({
-        action: '/signup',
-        title: 'Create a practice',
-        submit: 'Create it',
-        error: 'A practice already exists for that email address. Sign in instead.',
-        email,
-        hint: true,
-      }),
-    }));
-  }
-
+  // **The password is hashed before the address is looked up or anything is made, and the order is the
+  // point.** A lookup that answers "taken" in a millisecond and "free" after a scrypt hash is a timing
+  // oracle for the same question the page refuses to answer. Both paths spend the hash first, so both
+  // take the same time — and the hash is the thing `finishByEmail` then waits on.
   const passwordHash = await hashPassword(password);
-  // A practice and its first member, created together. A practitioner belonging to no firm would be a
-  // row nothing else can reach, so the two happen in one transaction or not at all.
-  //
-  // The name is a placeholder. Nothing in a sign-up form says what the firm is called — it asks for an
-  // email and a password — and inventing a name from the address would be worse than a neutral label
-  // the owner can change. Stage C of `docs/members.md` is where a practice gets named.
-  const practitionerId = inTransaction(db, () => {
-    const practiceId = createPractice(db, { name: 'My practice' });
-    return createPractitioner(db, { practiceId, email, passwordHash });
-  });
-  const { token } = createSession(db, practitionerId);
-  return redirect(response, '/requests', [sessionCookie(token)]);
+  return finishByEmail({ db, request, response, mailer, email, kind: 'verify', passwordHash, resend: { email, for: 'verify' } });
 }
 
-export function signInForm({ response }) {
+/** How long a sign-up link waits to be opened, and how long a reset link does. */
+const SIGNUP_TOKEN_MINUTES = 24 * 60;
+const RESET_TOKEN_MINUTES = 60;
+
+/**
+ * The one answer sign-up and password-reset give, for every address that is not obviously mistyped.
+ *
+ * `link` is shown only when there is no mail server to carry it — the trial fallback the product uses
+ * for reminders too ("drafted, not sent"). With a mailer, the link is in the mailbox and nowhere else,
+ * which is the whole of what makes this page safe to show for an address that may already have a
+ * practice behind it. The two callers pass their own two sentences, because "nothing is created until
+ * you do" is true of a sign-up and meaningless at the end of a reset.
+ */
+function checkYourEmail({ response, link, intro, note, resend = null, resent = false }) {
+  return sendPage(response, 200, page({
+    title: 'Check your email',
+    body: html`<div class="center">
+      <div class="card narrow">
+        <h1>Check your email</h1>
+        ${resent ? html`<p class="success">Sent again.</p>` : ''}
+        <p>${intro}</p>
+        ${link
+          ? html`<p class="warning"><strong>No mail server is configured</strong>, so the link could not
+              be sent. In a real install it is in that inbox and nowhere else; for this trial, here it
+              is:</p>
+              <p><a class="btn" href="${link}">Open the link</a></p>`
+          : ''}
+        <p class="note">${note}</p>
+        ${resend
+          ? html`<form method="post" action="/resend" class="inline">
+              <input type="hidden" name="email" value="${resend.email}">
+              <input type="hidden" name="for" value="${resend.for}">
+              <button type="submit" class="sm">Send it again</button>
+            </form>`
+          : ''}
+      </div>
+    </div>`,
+  }));
+}
+
+// --- issuing one of those links, and the one page that answers both -------------
+//
+// `finishByEmail` is the seam `signUp`, `forgot` and the resend action all go through, so the three
+// cannot drift: one place mints the link, one place sends the letter, one place renders the answer.
+// The only thing that varies is which of the two is being finished — and, for a re-sent sign-up, where
+// the waiting password comes from (a form the first time, a pending row after that).
+
+/** The two sentences each kind of link is answered with. */
+function linkOutro(kind, email) {
+  return kind === 'reset'
+    ? {
+        intro: html`If a practice uses <strong>${email}</strong>, a link to set a new password is on its
+          way to it now.`,
+        note: html`The link works once and expires in an hour. Nothing has been changed just now.`,
+      }
+    : {
+        intro: html`We have sent a link to <strong>${email}</strong>. Open it to finish creating the
+          practice — nothing is created until you do.`,
+        note: html`The link works once and expires in a day. Nothing has been created just now, and if
+          this was not you, nothing will be.`,
+      };
+}
+
+/**
+ * Mint a sign-up link for an address and send the letter it needs — chosen by what is true, but seen
+ * only by whoever can read the address. Everyone at a keyboard is answered the same way.
+ *
+ * The token is minted for a *taken* address too, and deliberately: the reply to whoever is at the
+ * keyboard, and the page shown when there is no mail server, must be identical whether the address is
+ * new or not. If it is taken, the link is spent for nothing later and says so to whoever opened it —
+ * which is only ever the mailbox's owner.
+ */
+function sendSignupLink(db, request, mailer, email, passwordHash) {
+  const taken = Boolean(practitionerByEmail(db, email));
+  const token = newToken();
+  createSignupToken(db, {
+    email,
+    passwordHash,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + SIGNUP_TOKEN_MINUTES * 60000).toISOString(),
+  });
+  const link = `${originOf(request)}/verify/${token}`;
+  const message = taken
+    ? alreadyHaveAccountDraft({ link: `${originOf(request)}/signin` })
+    : verifyDraft({ link });
+  if (mailer) {
+    // A send that fails must not become a 500 that says "that address is taken": the answer is the
+    // same whatever the relay did, and the person can ask for another link.
+    sendMail(mailer, { to: email, subject: message.subject, body: message.body }).catch(() => {});
+  }
+  return { link };
+}
+
+/** Mint a reset link for an address and send it — only if there is a practice here to reset. */
+function sendResetLink(db, request, mailer, email) {
+  const record = email && email.length <= 254 ? practitionerByEmail(db, email) : null;
+  if (!mailer || !record) return;
+  const token = newToken();
+  createPasswordReset(db, {
+    practitionerId: record.id,
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + RESET_TOKEN_MINUTES * 60000).toISOString(),
+  });
+  const message = resetDraft({ link: `${originOf(request)}/reset/${token}` });
+  sendMail(mailer, { to: email, subject: message.subject, body: message.body }).catch(() => {});
+}
+
+/**
+ * Issue the link, send the letter, and render the one answer — for a sign-up or a reset.
+ *
+ * `passwordHash` is the chosen password, and is the one thing a re-sent sign-up has to recover from a
+ * pending row (see `pendingSignupFor`): the raw link is never stored, so a new one is minted carrying
+ * the same waiting password. `resend`/`resent` keep the "Send it again" button on the page that follows.
+ */
+function finishByEmail({ db, request, response, mailer, email, kind, passwordHash = null, resend = null, resent = false }) {
+  const { intro, note } = linkOutro(kind, email);
+  const show = (link) => checkYourEmail({ response, link, intro, note, resend, resent });
+
+  if (kind === 'reset') {
+    // A reset link is never shown here — handing it to whoever asked would be a reset for everybody —
+    // so with no mail server the answer names the operator's tool instead of showing anything at all.
+    if (!mailer) return noMailResetPage(response);
+    sendResetLink(db, request, mailer, email);
+    return show(null);
+  }
+
+  const link = passwordHash ? sendSignupLink(db, request, mailer, email, passwordHash).link : null;
+  return show(mailer ? null : link);
+}
+
+/** The no-mail-server answer to a lost password: what an operator can do, and no link to anybody. */
+function noMailResetPage(response) {
+  return sendPage(response, 200, page({
+    title: 'Password reset needs a mail server',
+    body: html`<div class="center"><div class="card narrow">
+      <h1>No mail server here</h1>
+      <p>This installation has no mail server configured, so a reset link cannot be sent. Whoever runs
+      it can set a new password from the machine itself:</p>
+      <pre>node tools/reset-password.mjs</pre>
+      <p class="note">See the operations guide. <a href="/signin">Back to sign in</a></p>
+    </div></div>`,
+  }));
+}
+
+// ---------------------------------------------------------------------------------
+// Finishing a sign-up, and getting back in
+// ---------------------------------------------------------------------------------
+
+/** The one page for every link that cannot be used — spent, expired, or never ours. */
+function linkProblem({ response, state }) {
+  const words = {
+    used: ['That link was already used', 'This link already finished what it was for. Sign in instead.'],
+    'just-claimed': ['That link was just used', 'Somebody opened it a moment ago. Sign in instead.'],
+    expired: ['That link has expired', 'These links are short-lived on purpose. Ask for a new one.'],
+    'email-taken': ['You already have a practice', 'This email address already has a Tickmark practice. Sign in instead.'],
+    unknown: ['That link is not one of ours', 'It may have been broken across two lines by your mail client — copy it in full, or start again.'],
+  };
+  const [title, body] = words[state] ?? words.unknown;
+  return sendPage(response, 200, page({
+    title,
+    body: html`<div class="center">
+      <div class="card narrow">
+        <h1>${title}</h1>
+        <p>${body}</p>
+        <div class="row tight"><a class="btn" href="/signin">Sign in</a> <a class="btn" href="/signup">Start again</a></div>
+      </div>
+    </div>`,
+  }));
+}
+
+/**
+ * The link's landing page: what is about to happen, and one button to let it.
+ *
+ * A page before the act rather than a `GET` that creates a practice on its own — the same shape the
+ * invitation has, for the same reason: making an account is worth one deliberate click and no
+ * surprises. The address is shown so a person can see what they are confirming before they confirm it.
+ */
+export function verifyPage({ db, response, params }) {
+  const found = signupByToken(db, params[0]);
+  if (found.state !== 'open') return linkProblem({ response, state: found.state });
+  // Only the person who can read the address ever reaches this page, so saying "you already have one"
+  // here is not the leak that sign-up avoids — it is the same thing they would be told if they tried to
+  // sign in, told to the one person entitled to hear it.
+  if (practitionerByEmail(db, found.signup.email)) return linkProblem({ response, state: 'email-taken' });
+  return sendPage(response, 200, page({
+    title: 'Create your practice',
+    body: html`<div class="center">
+      <div class="card narrow">
+        <h1>Create your practice</h1>
+        <p>This makes a Tickmark practice for <strong>${found.signup.email}</strong> and signs you in.</p>
+        <form method="post" action="/verify/${params[0]}"><button type="submit">Create it</button></form>
+        <p class="note">If this was not you, close this page — nothing has been made.</p>
+      </div>
+    </div>`,
+  }));
+}
+
+/** The act the page above describes: make the practice, spend the link, sign the person in. */
+export function verifyAccount({ db, response, params }) {
+  const result = claimSignup(db, { token: params[0] });
+  if (result.state === 'created') {
+    const { token } = createSession(db, result.practitionerId);
+    return redirect(response, '/requests', [sessionCookie(token)]);
+  }
+  return linkProblem({ response, state: result.state });
+}
+
+/** The form that asks which address lost its password. */
+export function forgotForm({ response }) {
+  return sendPage(response, 200, page({
+    title: 'Forgot your password',
+    body: html`<div class="center">
+      <div class="card narrow">
+        <h1>Forgot your password</h1>
+        <p>Give the email address you sign in with. If a practice uses it here, we will send a link to set a
+        new password — the link is what proves the mailbox is yours.</p>
+        <form method="post" action="/forgot" class="stack">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" required autocomplete="username" autofocus>
+          <button type="submit">Send the link</button>
+        </form>
+        <p class="note"><a href="/signin">Back to sign in</a></p>
+      </div>
+    </div>`,
+  }));
+}
+
+/**
+ * Ask for a reset link, and say the same thing whatever the address turns out to be.
+ *
+ * The answer is identical for an address with a practice and one without, for the same reason sign-up's
+ * is: "check your email" is the only reply that does not tell the person at the keyboard who has an
+ * account. The difference lives in the mailbox, which is the one place it is safe to live. And the link
+ * is *never* shown here, even with no mail server — a reset link handed to whoever asked is a password
+ * reset for everybody, so the no-mail answer points at the operator's own tool instead.
+ */
+export async function forgot({ db, request, response, mailer, signInLimiter }) {
+  const fields = formFields(await readBody(request));
+  const email = field(fields, 'email')?.toLowerCase() ?? null;
+
+  // Cheap, but not free: a send is a way to bother somebody, and asking on repeat is a way to bother a
+  // whole address book. Two buckets — the address, and who is asking.
+  const buckets = [`forgot:${email ?? ''}`, `forgot-ip:${request.socket?.remoteAddress ?? ''}`];
+  const blockedFor = Math.max(0, ...buckets.map((key) => signInLimiter?.blockedFor(key) ?? 0));
+  if (blockedFor > 0) {
+    const minutes = Math.ceil(blockedFor / 60000);
+    return sendPage(response, 429, page({
+      title: 'Too many attempts',
+      body: html`<div class="center"><div class="card narrow"><h1>Too many attempts</h1>
+        <p>Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.</p></div></div>`,
+    }));
+  }
+  for (const key of buckets) signInLimiter?.failed(key);
+
+  // Whether or not there is a practice here, and whether or not the relay accepts it, the answer is the
+  // same: the person at the keyboard cannot tell which happened, which is the point.
+  return finishByEmail({ db, request, response, mailer, email, kind: 'reset', resend: { email, for: 'reset' } });
+}
+
+/**
+ * Send a link again, for whoever is waiting on one.
+ *
+ * A convenience and nothing more: it re-issues through the same `finishByEmail` the first ask did, so a
+ * re-sent link is the same link in every way that matters. For a sign-up the waiting password is read
+ * back out of the pending row (`pendingSignupFor`) — the raw link is never stored, so "again" mints a
+ * new one carrying the same password. Non-enumerating, like the ask it repeats: the answer does not
+ * depend on whether the address is here, and the button is on the page for everyone.
+ */
+export async function resend({ db, request, response, mailer, signInLimiter }) {
+  const fields = formFields(await readBody(request));
+  const email = field(fields, 'email')?.toLowerCase() ?? null;
+  const kind = field(fields, 'for') === 'reset' ? 'reset' : 'verify';
+
+  // A resend is the cheapest way to keep mail at somebody — cheap for the sender, not for them. Same
+  // two buckets as the ask it repeats: the address, and who is asking.
+  const buckets = [`resend:${email ?? ''}`, `resend-ip:${request.socket?.remoteAddress ?? ''}`];
+  const blockedFor = Math.max(0, ...buckets.map((key) => signInLimiter?.blockedFor(key) ?? 0));
+  if (blockedFor > 0) {
+    const minutes = Math.ceil(blockedFor / 60000);
+    return sendPage(response, 429, page({
+      title: 'Too many attempts',
+      body: html`<div class="center"><div class="card narrow"><h1>Too many attempts</h1>
+        <p>Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.</p></div></div>`,
+    }));
+  }
+  for (const key of buckets) signInLimiter?.failed(key);
+
+  const passwordHash = kind === 'verify' ? (pendingSignupFor(db, email)?.password_hash ?? null) : null;
+  return finishByEmail({ db, request, response, mailer, email, kind, passwordHash, resend: { email, for: kind }, resent: true });
+}
+
+/** The form where a new password is chosen, behind a link that proves the mailbox. */
+export function resetForm({ db, response, params, error = null }) {
+  const found = passwordResetByToken(db, params[0]);
+  if (found.state !== 'open') return linkProblem({ response, state: found.state });
+  return sendPage(response, 200, page({
+    title: 'Set a new password',
+    body: html`<div class="center">
+      <div class="card narrow">
+        <h1>Set a new password</h1>
+        <p>For <strong>${found.reset.email}</strong>. Setting it signs out every other session.</p>
+        ${error ? html`<p class="error">${error}</p>` : ''}
+        <form method="post" action="/reset/${params[0]}" class="stack">
+          <label for="password">A new password</label>
+          <input id="password" name="password" type="password" required autocomplete="new-password" autofocus>
+          <label for="again">Again</label>
+          <input id="again" name="again" type="password" required autocomplete="new-password">
+          <button type="submit">Set it</button>
+        </form>
+      </div>
+    </div>`,
+  }));
+}
+
+/** Spend the reset link, set the password, and end every session that was holding the old one. */
+export async function reset({ db, request, response, params, onCredentialChanged }) {
+  const token = params[0];
+  const fields = formFields(await readBody(request));
+  const fresh = typeof fields.password === 'string' ? fields.password : '';
+  const again = typeof fields.again === 'string' ? fields.again : '';
+
+  const found = passwordResetByToken(db, token);
+  if (found.state !== 'open') return linkProblem({ response, state: found.state });
+
+  const problem = fresh.length < MIN_PASSWORD
+    ? `A password of at least ${MIN_PASSWORD} characters is required.`
+    : fresh.length > 1024
+      ? 'That password is too long.'
+      : fresh !== again
+        ? 'Those two are not the same.'
+        : null;
+  if (problem) return resetForm({ db, response, params, error: problem });
+
+  const passwordHash = await hashPassword(fresh);
+  const result = claimPasswordReset(db, { token, passwordHash });
+  if (result.state !== 'reset') return linkProblem({ response, state: result.state });
+
+  // The point of a reset: whatever was holding the old password stops working. Every session goes,
+  // including any a thief is holding — a reset that left those alive would be a change that only helped
+  // the thief. (This is the one place `endAllSessions` belongs: a person changing their own password
+  // keeps the session they are in, but nobody is signed in here.)
+  endAllSessions(db, result.practitionerId);
+  onCredentialChanged?.({ email: result.email, passwordHash });
+
+  return redirect(response, '/signin?reset=1');
+}
+
+export function signInForm({ response, url }) {
+  const reset = url?.searchParams?.get('reset') === '1';
   sendPage(response, 200, page({
     title: 'Sign in',
-    body: credentialsForm({ action: '/signin', title: 'Sign in', submit: 'Sign in' }),
+    banner: reset ? html`<p class="success"><strong>Password changed.</strong> Sign in with the new one.</p>` : null,
+    body: credentialsForm({
+      action: '/signin',
+      title: 'Sign in',
+      submit: 'Sign in',
+      footer: html`<p class="note"><a href="/forgot">Forgot your password?</a></p>`,
+    }),
   }));
 }
 
@@ -307,7 +655,7 @@ export function twoFactorPage({ db, response, practitioner, url }) {
 
       <section class="card">
         <h2>Your sign-in</h2>
-        <p class="note">The password and the address you sign in with, and every session that is
+        <p class="note">The password and the email address you sign in with, and every session that is
         signed in as you right now. Changing the password signs out everything else — that is the
         point of changing it.</p>
         <div class="actions">
@@ -505,7 +853,7 @@ export async function signIn({ db, request, response, signInLimiter }) {
         action: '/signin',
         title: 'Too many attempts',
         submit: 'Sign in',
-        error: `Too many failed attempts for that address. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or use a different address to sign in.`,
+        error: `Too many failed attempts for that email address. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or use a different email address to sign in.`,
         email: email ?? '',
       }),
     }));

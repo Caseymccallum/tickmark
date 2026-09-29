@@ -494,7 +494,7 @@ details .answer p:last-child { margin-bottom: 0; }
     <a href="#price">Price</a>
     <a href="#faq">Questions</a>
   </nav>
-  <a class="btn primary cta" href="#start">Start free</a>
+  <a class="btn primary cta" href="/signup">Start free</a>
 </header>
 
 <a id="top"></a>
@@ -510,7 +510,7 @@ details .answer p:last-child { margin-bottom: 0; }
       so whatever is stored is something the server cannot read. Whether that server is yours or ours.
     </p>
     <div class="cta-row">
-      <a class="btn primary lg" href="#start">Start a 14-day trial</a>
+      <a class="btn primary lg" href="/signup">Start a 14-day trial</a>
       <a class="btn secondary lg" href="#yours">Run it yourself, free</a>
     </div>
     <p class="reassure">
@@ -966,7 +966,7 @@ details .answer p:last-child { margin-bottom: 0; }
           <li>Your own address, your own key, set up in ten minutes</li>
           <li>14-day trial, no card</li>
         </ul>
-        <a class="btn primary" href="#start">Start the trial</a>
+        <a class="btn primary" href="/signup">Start the trial</a>
         <p class="fine">
           One caveat, stated rather than discovered: a <strong>single file is capped at 25 MB</strong>. That is
           an operational limit, not a pricing one, and it can be raised if you have a reason.
@@ -1198,6 +1198,10 @@ docker compose up -d</pre>
 
         Right now this posts to a mailto:, which needs no account, no service and no money — and it answers
         "where does my address go" honestly, which is: to the person who wrote the page.
+
+        The "Start" buttons around this page point at /signup — the hosted sign-up. They are relative, so this
+        page still makes no third-party requests (which is a claim it makes elsewhere). If the app lives at
+        another host — app.example.com rather than this one — change those three hrefs to its full signup URL.
 
         When there is a list, replace the action= below with the form endpoint (Buttondown, Formspree and Tally
         all have a free tier) and delete the sentence underneath. Nothing else on this page has to change.

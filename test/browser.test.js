@@ -61,6 +61,30 @@ test('the client\u2019s page encrypts the file before anything is sent', async (
   assert.equal(text(await decryptEnvelope(key, envelope)), SECRET);
 });
 
+test('a client can send several files at once, each as its own envelope', async () => {
+  const { publicKey } = await generatePracticeKey(PASSPHRASE);
+  const one = new File([bytes('the first statement')], 'one.pdf', { type: 'application/pdf' });
+  const two = new File([bytes('the second statement')], 'two.pdf', { type: 'application/pdf' });
+  const browser = installBrowser({ publicKey, maxBytes: 1024, files: [one, two], fetch: async () => ({ ok: true, status: 201 }) });
+
+  await browser.load('../web/upload.js');
+  await browser.uploadForm.fire('submit');
+
+  assert.equal(browser.sent.length, 2, 'both files were sent');
+  assert.deepEqual(
+    browser.sent.map((request) => decodeURIComponent(request.headers['x-file-name'])),
+    ['one.pdf', 'two.pdf'],
+    'each under its own name',
+  );
+  // Two separate envelopes rather than one: the bodies are different ciphertexts.
+  assert.notDeepEqual(
+    Array.from(new Uint8Array(browser.sent[0].body)),
+    Array.from(new Uint8Array(browser.sent[1].body)),
+    'each file is encrypted on its own',
+  );
+  assert.equal(browser.reloads.count, 1, 'and the client is shown the result once, after both are away');
+});
+
 test('a file over the practice\u2019s limit is refused before it is encrypted', async () => {
   const { publicKey } = await generatePracticeKey(PASSPHRASE);
   const file = new File([bytes('a bank statement, longer than eight bytes')], 'big.pdf', { type: 'application/pdf' });
@@ -150,6 +174,51 @@ test('the practice\u2019s page opens the envelope in the tab and saves the docum
   assert.equal(browser.timers[0].ms, 60000, 'a minute after the save rather than during it');
   browser.timers[0].fn();
   assert.deepEqual(browser.revoked, [download.url], 'and releasing it is what the timer does');
+});
+
+test('download everything opens every envelope here and packs them into one archive', async () => {
+  const { publicKey, wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
+  const first = await encryptFile(publicKey, bytes(SECRET));
+  const second = await encryptFile(publicKey, bytes('the second document'));
+  const browser = installBrowser({
+    wrappedKey: wrappedPrivateKey,
+    fileList: {
+      archive: '2025 return.zip',
+      files: [
+        { name: 'Bank statements/first.pdf', url: '/files/one/download' },
+        { name: 'Photo ID/second.pdf', url: '/files/two/download' },
+      ],
+    },
+    fetch: async (request) => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => (request.url.includes('files/one') ? first.slice().buffer : second.slice().buffer),
+    }),
+  });
+
+  await browser.load('../web/download.js');
+  assert.equal(browser.downloadAllButton.disabled, true, 'it starts disabled, like the single saves');
+
+  browser.passphrase.value = PASSPHRASE;
+  await browser.unlockButton.fire('click');
+  assert.equal(browser.downloadAllButton.disabled, false, 'and opens with the key');
+
+  await browser.downloadAllButton.fire('click');
+
+  assert.equal(browser.sent.length, 2, 'both envelopes were fetched');
+  assert.equal(browser.saved.length, 1, 'and one archive reached the browser, not two loose files');
+
+  const [download] = browser.saved;
+  assert.equal(download.name, '2025 return.zip', 'under the name the request page chose');
+
+  // The archive is a real zip holding both documents as themselves. Store-mode keeps each file's
+  // bytes verbatim, so both plaintexts are in there — the proof that both were decrypted in this tab
+  // and packed, rather than the envelopes being handed over as they arrived.
+  const packed = new Uint8Array(await download.blob.arrayBuffer());
+  assert.deepEqual(Array.from(packed.slice(0, 4)), [0x50, 0x4b, 0x03, 0x04], 'it is a zip');
+  assert.ok(Buffer.from(packed).includes(SECRET), 'the first document is in there, decrypted');
+  assert.ok(Buffer.from(packed).includes('the second document'), 'and so is the second');
+  assert.equal(browser.downloadAllStatus.textContent, 'Saved 2025 return.zip — 2 files.');
 });
 
 test('a wrong passphrase opens nothing, and saves nothing', async () => {

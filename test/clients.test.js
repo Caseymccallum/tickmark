@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createLink, practiceWithRequest, upload, withServer } from './helpers.js';
+import { setBooksState, setFilingProfile } from '../src/store.js';
 
 test('an address typed later is kept, so a client is never permanently unreachable', async (t) => {
   await withServer(async ({ agent, db }) => {
@@ -243,5 +244,66 @@ test('the count on the client list is what is still wanted, not what has arrived
     assert.match(chase, /Northwind Ltd/, 'and the client is still on the chase list');
     assert.ok(!/Nothing is outstanding for anyone/.test(chase));
     assert.equal(clientRow.id.length, 36, 'the client row is the one the list linked to');
+  });
+});
+
+test('the client page shows their filing profile when a connection has read one', async () => {
+  await withServer(async ({ agent, db }) => {
+    const { client } = await practiceWithRequest({ agent, db }, 'sam@practice.example');
+    const practiceId = db.prepare('SELECT id FROM practice').get().id;
+    const clientRow = db.prepare('SELECT id FROM client WHERE practice_id = ?').get(practiceId);
+    setFilingProfile(db, practiceId, clientRow.id, {
+      entityType: 'COMPANY',
+      yearEnd: { day: 31, month: 3 },
+      taxNumber: 'GB123',
+    });
+
+    const page = await (await client.get(`/clients/${clientRow.id}`)).text();
+    assert.match(page, /limited company/, 'the entity type is named');
+    assert.match(page, /year end 31 March/, 'and the year end');
+    assert.match(page, /tax GB123/, 'and the tax number');
+
+    // A client whose connection has said nothing shows no line rather than a line of blanks.
+    setFilingProfile(db, practiceId, clientRow.id, null);
+    const bare = await (await client.get(`/clients/${clientRow.id}`)).text();
+    assert.ok(!/year end/.test(bare), 'no profile, no line');
+  });
+});
+
+test('a client whose books look behind is flagged on their page, and only the summary is named', async () => {
+  await withServer(async ({ agent, db }) => {
+    const { client } = await practiceWithRequest({ agent, db }, 'sam@practice.example');
+    const practiceId = db.prepare('SELECT id FROM practice').get().id;
+    const clientRow = db.prepare('SELECT id FROM client WHERE practice_id = ?').get(practiceId);
+
+    // No check has run, so there is nothing to flag.
+    const before = await (await client.get(`/clients/${clientRow.id}`)).text();
+    assert.ok(!/books look behind/.test(before), 'and no flag before a check');
+
+    // A check cached a summary that says behind: the page flags it, and names the summary — a count and a
+    // date — never a transaction.
+    setBooksState(db, practiceId, clientRow.id, { unreconciled: 12, lastActivityAt: '2026-03-03' });
+    const after = await (await client.get(`/clients/${clientRow.id}`)).text();
+    assert.match(after, /books look behind/, 'the flag is shown');
+    assert.match(after, /12 bank lines are unreconciled/, 'naming the count');
+    assert.match(after, /nothing has moved since 2026-03-03/, 'and the date');
+  });
+});
+
+test('raising a request for a client starts from their filing profile', async () => {
+  await withServer(async ({ agent, db }) => {
+    const { client } = await practiceWithRequest({ agent, db }, 'sam@practice.example');
+    const practiceId = db.prepare('SELECT id FROM practice').get().id;
+    const clientRow = db.prepare('SELECT id FROM client WHERE practice_id = ?').get(practiceId);
+    setFilingProfile(db, practiceId, clientRow.id, {
+      entityType: 'COMPANY',
+      yearEnd: { day: 31, month: 3 },
+      taxNumber: 'GB123',
+    });
+
+    const form = await (await client.get(`/requests/new?for=${clientRow.id}`)).text();
+    assert.match(form, /year ending 31 March/, 'the title names the period the books cover');
+    assert.match(form, /Statutory accounts/, 'and a limited company’s checklist is filled in');
+    assert.match(form, /filing profile/, 'and the page says where the suggestion came from');
   });
 });

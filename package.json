@@ -9,7 +9,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node --env-file-if-exists=.env src/server.js",
     "test": "node --test \"test/*.test.js\"",
     "check:container": "node tools/check-container.mjs",
     "check:pages": "node tools/check-pages.mjs",
@@ -27,7 +27,7 @@
     "probe:repeats": "node tools/probe-repeats.mjs",
     "check:style": "node tools/check-style.mjs",
     "check:docs": "node tools/check-docs.mjs",
-    "coverage": "node --test --experimental-test-coverage \"test/*.test.js\"",
+    "coverage": "node --test --experimental-test-coverage --test-coverage-lines=93 --test-coverage-functions=90 --test-coverage-branches=75 \"test/*.test.js\"",
     "preview:gateway": "node tools/preview-gateway.mjs",
     "check:nav": "node tools/check-nav.mjs",
     "transcript": "node tools/smtp-transcript.mjs"

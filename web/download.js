@@ -19,11 +19,18 @@
  * happen in the browser at all, which would put the plaintext back on the server.
  */
 import { decryptWithKeys, unwrapPracticeKey } from './tickmark-crypto.js';
+import { zip } from './zip.js';
 
 const keyElement = document.getElementById('key-records');
 const passphraseField = document.getElementById('passphrase');
 const unlockButton = document.getElementById('unlock');
 const unlockStatus = document.getElementById('unlock-status');
+// "Download everything": the same key and the same envelopes, but every file packed into one archive.
+// It reads its list from `#file-list` — the names the request page already worked out — so it deals
+// only in bytes and never invents a name.
+const downloadAllButton = document.getElementById('download-all');
+const downloadAllStatus = document.getElementById('download-all-status');
+const fileListElement = document.getElementById('file-list');
 
 /** The unwrapped private keys, for this page only. Never stored, never sent. */
 let privateKeys = [];
@@ -37,6 +44,7 @@ const saveButtons = () => [...document.querySelectorAll('button.save')];
 
 function setUnlocked(unlocked) {
   for (const button of saveButtons()) button.disabled = !unlocked;
+  if (downloadAllButton) downloadAllButton.disabled = !unlocked;
   if (passphraseField) passphraseField.disabled = unlocked;
   if (unlockButton) unlockButton.disabled = unlocked;
 }
@@ -130,4 +138,57 @@ if (keyElement) {
       }
     });
   }
+}
+
+/**
+ * "Download everything": open each envelope here and pack the documents into one archive.
+ *
+ * The plaintext of every file exists in this tab for exactly as long as it takes to build the zip,
+ * and never anywhere else — the archive is assembled from bytes already in memory and handed to the
+ * browser as one download. There is no request that could carry a document, and no server step that
+ * could see one: what is fetched is ciphertext and what is saved is the practice's own, opened here.
+ */
+if (downloadAllButton && fileListElement) {
+  downloadAllButton.addEventListener('click', async () => {
+    if (privateKeys.length === 0 && !(await unlock())) return;
+
+    const { archive, files } = JSON.parse(fileListElement.textContent);
+    if (!Array.isArray(files) || files.length === 0) {
+      setStatus(downloadAllStatus, 'There is nothing here to save yet.');
+      return;
+    }
+
+    try {
+      const entries = [];
+      let step = 0;
+      for (const file of files) {
+        step += 1;
+        setStatus(downloadAllStatus, `Opening ${step} of ${files.length} — ${file.name.split('/').pop()}…`);
+        const response = await fetch(file.url);
+        if (!response.ok) throw new Error(`the server refused ${file.name} (${response.status})`);
+        const envelope = new Uint8Array(await response.arrayBuffer());
+        entries.push({ name: file.name, bytes: await decryptWithKeys(privateKeys, envelope) });
+      }
+
+      setStatus(downloadAllStatus, `Packing ${entries.length} ${entries.length === 1 ? 'file' : 'files'}…`);
+      const packed = zip(entries);
+
+      // One download for the whole request, under the name the request page chose.
+      const url = URL.createObjectURL(new Blob([packed], { type: 'application/zip' }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = archive || 'documents.zip';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+      setStatus(downloadAllStatus, `Saved ${archive} — ${entries.length} ${entries.length === 1 ? 'file' : 'files'}.`);
+    } catch (error) {
+      // The usual one is "none of this practice's keys opens that file": the passphrase unlocked the
+      // keys but one document was sealed to a key it does not include. Nothing is packed and saved as
+      // a half-archive — that would be a file that quietly lost a document.
+      setStatus(downloadAllStatus, `Nothing was packed: ${error.message}`);
+    }
+  });
 }

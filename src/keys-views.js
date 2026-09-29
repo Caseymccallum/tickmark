@@ -24,15 +24,18 @@ import { newId, now } from './db.js';
 import { field, formFields, readBody, spoolBody } from './http.js';
 import { tellOwners } from './notices.js';
 import {
+  addKeyWrapping,
   addPracticeKey,
   allPracticeKeys,
   filesPerKey,
   history,
   practiceFor,
   practiceKeys,
+  recoveryWrapping,
   replaceUpload,
   replaceWrappedKey,
   retirePracticeKey,
+  setRecoveryWrapping,
   uploadsSealedTo,
 } from './store.js';
 import { TONES, badge, empty, fail, html, jsonTag, page, raw, redirect, requireSignIn, section, sendJson, sendPage } from './views.js';
@@ -360,6 +363,64 @@ export async function saveKeys({ db, request, response, practitioner, practiceId
  * would orphan every file encrypted to it, and a button that destroys a practice's access to its own
  * clients' documents should not exist until there is a way to re-encrypt those files first.
  */
+/**
+ * The recovery sheet controls.
+ *
+ * Two states, and the difference matters: with no sheet on file the page pushes to make one, because a
+ * practice with no recovery and one forgotten passphrase loses its files — the one unrecoverable event
+ * this product has. With a sheet on file, recovering is offered alongside remaking one (a secret should be
+ * remade if it was ever photographed or lost). Both forms do their work in the browser: the server only
+ * ever stores a sealed copy, and never sees the secret or the passphrase.
+ */
+function recoverySection(current, sheet, justSheeted, justRecovered) {
+  return html`<section class="card">
+    <h2>Recovery sheet</h2>
+    ${justSheeted
+      ? html`<p class="banner">The new recovery sheet was saved. Print the secret below and keep it safe — it is
+            shown once and never again.</p>`
+      : ''}
+    ${justRecovered
+      ? html`<p class="banner">Your key was re-sealed under the new passphrase. Every file still opens.</p>`
+      : ''}
+    ${sheet
+      ? html`<p class="note">A recovery sheet is on file. If a passphrase is ever lost, the printed secret opens the
+            key again.</p>
+          <details>
+            <summary>Recover with your recovery sheet</summary>
+            <form class="recover" data-key-id="${current.id}" method="post" action="/keys/${current.id}/recover">
+              <input type="password" name="secret" placeholder="the secret from your recovery sheet" aria-label="The recovery secret" required autocomplete="off">
+              <input type="password" name="fresh" placeholder="a new passphrase" aria-label="A new passphrase" required autocomplete="new-password">
+              <input type="password" name="again" placeholder="the new one again" aria-label="The new passphrase again" required autocomplete="new-password">
+              <button type="submit">Re-seal the key under a new passphrase</button>
+              <span class="status note"></span>
+            </form>
+          </details>
+          <details>
+            <summary>Make a new recovery sheet</summary>
+            <form class="recovery-sheet" data-key-id="${current.id}" method="post" action="/keys/${current.id}/recovery-sheet">
+              <input type="password" name="passphrase" placeholder="the current passphrase" aria-label="The current passphrase" required autocomplete="current-password">
+              <button type="submit">Make a new recovery sheet</button>
+              <span class="status note"></span>
+            </form>
+          </details>`
+      : html`<p class="note">If the passphrase is ever lost, the files are gone — that is what end-to-end encryption
+            means. A recovery sheet is the way out: a secret, printed once and kept offline, that opens the key when a
+            passphrase is lost. <strong>We never see it and cannot make another.</strong></p>
+          <form class="recovery-sheet" data-key-id="${current.id}" method="post" action="/keys/${current.id}/recovery-sheet">
+            <input type="password" name="passphrase" placeholder="the current passphrase" aria-label="The current passphrase" required autocomplete="current-password">
+            <button type="submit">Make a recovery sheet</button>
+            <span class="status note"></span>
+          </form>`}
+    <div id="recovery-sheet" class="card" hidden>
+      <h3>Your recovery sheet</h3>
+      <p><strong>Print this now and keep it somewhere safe.</strong> This is the only time it is shown: it is not
+      stored and not sent anywhere. Anyone holding this secret can open the practice's files.</p>
+      <p class="secret"></p>
+      <button type="button" class="print">Print it</button>
+    </div>
+  </section>`;
+}
+
 export function keysPage({ db, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
   const every = allPracticeKeys(db, practiceId, practitioner.id);
@@ -369,6 +430,9 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
   const unaccounted = counts.get(null) ?? 0;
   const current = live[0] ?? null;
   const justRetired = url.searchParams.get('retired');
+  const sheet = recoveryWrapping(db, practiceId);
+  const justSheeted = url.searchParams.get('sheet');
+  const justRecovered = url.searchParams.get('recovered');
 
   /**
    * A key that has been retired is history, not a control.
@@ -493,6 +557,9 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
             only evidence of what it opened.</p>
           </section>`
         : ''}
+      ${live.length > 0 ? recoverySection(current, sheet, justSheeted, justRecovered) : ''}
+      ${live.length > 0 && sheet ? jsonTag('recovery-record', { keyId: sheet.key_id, wrapped: sheet.wrapped }) : ''}
+      ${live.length > 0 ? raw('<script type="module" src="/assets/recovery.js"></script>') : ''}
       ${live.length > 0
         ? jsonTag('key-records', {
             currentKeyId: current?.id ?? null,
@@ -525,5 +592,45 @@ export async function changePassphrase({ db, request, response, practitioner, pa
   const changed = replaceWrappedKey(db, practiceId, practitioner.id, params[0], wrapped);
   if (!changed) return fail(response, 404, 'There is no key of yours with that id.', practitioner);
   return redirect(response, '/keys');
+}
+
+/**
+ * Store a recovery sheet: the practice key sealed under a secret the practice is about to print.
+ *
+ * The secret is made in the browser and never sent here — only the sealed copy arrives. So this is
+ * the one "backup" that cannot betray the practice: what lands in the database is a copy that opens
+ * nothing unless someone also holds the paper. It is checked exactly as any wrapped key is.
+ */
+export async function saveRecoverySheet({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const wrapped = field(fields, 'recovery_wrapping');
+  const problem = wrappedKeyProblem(wrapped);
+  if (problem) return fail(response, 400, problem, practitioner);
+  const keyId = setRecoveryWrapping(db, practiceId, wrapped);
+  if (!keyId) return fail(response, 404, 'There is no practice key to make a recovery sheet for.', practitioner);
+  return redirect(response, '/keys?sheet=1');
+}
+
+/**
+ * Recover a passphrase from a recovery sheet.
+ *
+ * The member types the printed secret; the browser unwraps the key with it and re-seals under a new
+ * passphrase. This is the same operation as a passphrase change, except the "old" secret comes off
+ * paper rather than out of memory — and it is the same key, so every file still opens. A member with
+ * no copy yet gains one; one who had a copy has it replaced. Either way the practice keeps its files.
+ */
+export async function recoverPassphrase({ db, request, response, practitioner, params, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const wrapped = field(fields, 'wrapped_private_key');
+  const problem = wrappedKeyProblem(wrapped);
+  if (problem) return fail(response, 400, problem, practitioner);
+  const sheet = recoveryWrapping(db, practiceId);
+  if (!sheet || sheet.key_id !== params[0]) {
+    return fail(response, 404, 'There is no recovery sheet for that key.', practitioner);
+  }
+  addKeyWrapping(db, { keyId: params[0], practitionerId: practitioner.id, wrappedPrivateKey: wrapped });
+  return redirect(response, '/keys?recovered=1');
 }
 

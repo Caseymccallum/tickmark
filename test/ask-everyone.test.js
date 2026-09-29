@@ -155,6 +155,42 @@ test('one action asks every client, and each gets a link of their own', async (t
   }, { mailer: mailerAt(fake.port) });
 });
 
+test('a file rides every ask — attached to each, sent, and kept nowhere', async (t) => {
+  const fake = await relay(t);
+  await withServer(async ({ agent, base, db }) => {
+    const { client, templateId } = await practiceWithList(
+      { agent, db },
+      [['Northwind Ltd', 'ap@northwind.example'], ['Lodis Ltd', 'ap@lodis.example']],
+    );
+
+    // The form a browser sends with a file in it: multipart/form-data, built here the way the page does —
+    // the same shape the single-ask attachment test uses, sent to the bulk route instead.
+    const form = new FormData();
+    form.set('template_id', templateId);
+    form.set('title', '2026 tax return');
+    form.set('everyone', '1');
+    form.set('file', new Blob([Buffer.from('a template, in bytes')], { type: 'text/plain' }), 'template.txt');
+
+    const report = await fetch(`${base}/ask-everyone`, {
+      method: 'POST',
+      headers: { cookie: client.cookie },
+      body: form,
+      redirect: 'manual',
+    });
+    assert.equal(report.status, 200, 'the run answers with a report');
+
+    assert.equal(fake.seen.messages.length, 2, 'one message per client');
+    for (const wire of fake.seen.messages) {
+      assert.match(wire, /Content-Type: multipart\/mixed/, 'each message carries the file');
+      assert.match(wire, /Content-Disposition: attachment; filename="template.txt"/, 'named for what it is');
+      // The bytes ride base64 in the attachment part — the file is sent and stored nowhere.
+      const compact = wire.replace(/=\r\n/g, '').replace(/\r\n/g, '');
+      const wanted = Buffer.from('a template, in bytes').toString('base64').replace(/=+$/, '');
+      assert.ok(compact.includes(wanted), 'and the bytes themselves are in there');
+    }
+  }, { mailer: mailerAt(fake.port) });
+});
+
 test('a client with no email address is named, not asked and not quietly dropped', async (t) => {
   const fake = await relay(t);
   await withServer(async ({ agent, db }) => {

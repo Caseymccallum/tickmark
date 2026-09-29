@@ -21,7 +21,7 @@ import { agoWords } from './clock.js';
 import { hashToken, newToken } from './crypto.js';
 import { now } from './db.js';
 import { field, formFields, originOf, readBody } from './http.js';
-import { MailError, mailHtml, sendMail } from './mailer.js';
+import { MailError, mailHtml, fromFor, sendMail } from './mailer.js';
 import { messageFor } from './notices.js';
 import {
   history,
@@ -384,7 +384,7 @@ export async function sendAllReminders({ db, request, response, practitioner, pr
       for (const rest of sendable.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
       break;
     }
-    results.push(await sendOneReminder(db, row, origin, mailer, practiceFor(db, practiceId).name));
+    results.push(await sendOneReminder(db, row, origin, mailer, practiceFor(db, practiceId)));
   }
 
   return sendPage(
@@ -402,7 +402,7 @@ export async function sendAllReminders({ db, request, response, practitioner, pr
 }
 
 /** One request's reminder, sent. Its own function so that the loop above reads as a loop. */
-async function sendOneReminder(db, row, origin, mailer, practiceName = null) {
+async function sendOneReminder(db, row, origin, mailer, practice = null) {
   const token = newToken();
   issueToken(db, {
     requestId: row.id,
@@ -410,15 +410,16 @@ async function sendOneReminder(db, row, origin, mailer, practiceName = null) {
     expiresAt: new Date(Date.now() + REMINDER_DAYS * 24 * 60 * 60 * 1000).toISOString(),
   });
 
-  const message = messageFor({ db, found: row, origin, token, practiceName });
+  const message = messageFor({ db, found: row, origin, token, practiceName: practice?.name ?? null });
   const hasLink = /\/r\/[A-Za-z0-9_-]{20,}/.test(message.body);
 
   try {
     const { messageId } = await sendMail(mailer, {
+      from: fromFor(practice, mailer),
       to: row.client_email,
       subject: message.subject,
       body: message.body,
-      html: mailHtml(message.body, practiceName),
+      html: mailHtml(message.body, practice?.name ?? null),
     });
     recordEvent(db, {
       requestId: row.id,

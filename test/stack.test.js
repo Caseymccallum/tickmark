@@ -32,6 +32,12 @@ import { createApp } from '../src/app.js';
 const PLAN_TABLES = [
   'access_token',
   'client',
+  // A practice's integration link: OAuth tokens that let the server read a client list. Readable
+  // rather than wrapped client-side, because the server must present them to the provider — the
+  // honest limit of any integration that has to call out on a practice's behalf.
+  'connection',
+  // One client, several matters: a company, a partnership, a personal return — requests group under these.
+  'entity',
   'event',
   'invite',
   'key_wrapping',
@@ -39,6 +45,10 @@ const PLAN_TABLES = [
   // table rather than a column on `session`, because a challenge grants nothing — and keeping the two apart
   // means a bug in one cannot produce a signed-in stranger.
   'login_challenge',
+  // A link that finishes a sign-up, sent to prove the address before a practice exists for it — and a
+  // link that sets a new password, proved by the mailbox rather than the old one. Both hashed, both
+  // single-use: like a session, a stolen database is not a pile of working links.
+  'password_reset',
   'practice',
   'practice_key',
   'practitioner',
@@ -47,6 +57,10 @@ const PLAN_TABLES = [
   'request',
   'request_item',
   'session',
+  // The other half of the pair above: a chosen address and a hashed password, waiting for the address
+  // to be proven. Nothing is created until the link is opened, which is what keeps sign-up from being
+  // a way to ask who has a practice here.
+  'signup_token',
   // Two tables rather than one, because a template's items are the same shape as a request's and there is no
   // sensible way to store a list of documents in a single row.
   'template',

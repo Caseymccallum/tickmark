@@ -261,6 +261,151 @@ export function createPractitioner(db, { practiceId, email, passwordHash, role =
   return id;
 }
 
+// --- finishing a sign-up, and getting back into an account --------------------
+//
+// Two links, one shape. Both are a token sent to an address, both are single-use and short-lived, and
+// both spend themselves atomically — the row is claimed with `AND used_at IS NULL`, so two people
+// opening one link cannot both come away with an account or a second password. What differs is only
+// what they finish: one makes a practice, the other replaces a password. `claimInvite` above is the
+// third of this shape and the reason the pattern is written the way it is.
+
+/**
+ * Start a sign-up: the chosen address and password, waiting for the address to be proven.
+ *
+ * The password is already hashed here. Nothing exists but this row, which grants nothing until the
+ * link in the address's inbox is opened — so a sign-up cannot be completed by anybody who cannot read
+ * that mail, and the address is proven before a practice exists to be looked for.
+ */
+export function createSignupToken(db, { email, passwordHash, tokenHash, expiresAt, at = now() }) {
+  const id = newId();
+  db.prepare(
+    'INSERT INTO signup_token (id, email, password_hash, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, email, passwordHash, tokenHash, expiresAt, at);
+  return id;
+}
+
+/**
+ * What state a sign-up link is in, by the digest of its token.
+ *
+ * A state rather than a row or null, for the same reason `inviteByToken` does it: an expired link
+ * should say "ask for another" and a spent one should say "this already worked", and neither should
+ * look like a wrong address.
+ */
+export function signupByToken(db, token, at = now()) {
+  if (typeof token !== 'string' || token.length === 0) return { state: 'unknown' };
+  const row = db.prepare('SELECT * FROM signup_token WHERE token_hash = ?').get(hashToken(token));
+  if (!row) return { state: 'unknown' };
+  if (row.used_at) return { state: 'used' };
+  if (row.expires_at <= at) return { state: 'expired' };
+  return { state: 'open', signup: row };
+}
+
+/**
+ * The chosen password still waiting on an address, for a link that has to be sent again.
+ *
+ * Only its hash is kept, like every password here — which is the whole reason a re-send has to read it
+ * back rather than reuse a link: the raw token is never stored, so "send it again" mints a *new* link
+ * carrying the same waiting password. The newest first, and a spent or expired one is not offered.
+ */
+export function pendingSignupFor(db, email, at = now()) {
+  return (
+    db
+      .prepare(
+        `SELECT password_hash FROM signup_token
+          WHERE email = ? AND used_at IS NULL AND expires_at > ?
+          ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(email, at) ?? null
+  );
+}
+
+/**
+ * Finish a sign-up: make the practice and its first member from a proven address, and spend the link.
+ *
+ * The claim is conditional and first, exactly as `claimInvite` does it — `AND used_at IS NULL` is the
+ * single-use rule, and spending it before the rows exist means a loser's transaction writes nothing.
+ *
+ * One case this refuses, and it is the point of the whole design: if the address now belongs to an
+ * account — a second sign-up racing the first, or an invitation that landed in between — it is spent
+ * and reported as `email-taken` rather than making a second member with one address, which would be a
+ * login nobody can reason about. The person who opened the link can read the address, so telling *them*
+ * it is taken reveals nothing they could not learn by trying to sign in.
+ */
+export function claimSignup(db, { token, at = now() }) {
+  return inTransaction(db, () => {
+    const found = signupByToken(db, token, at);
+    if (found.state !== 'open') return found;
+    const signup = found.signup;
+
+    if (practitionerByEmail(db, signup.email)) {
+      db.prepare('UPDATE signup_token SET used_at = ? WHERE id = ? AND used_at IS NULL').run(at, signup.id);
+      return { state: 'email-taken' };
+    }
+
+    const claim = db
+      .prepare('UPDATE signup_token SET used_at = ? WHERE id = ? AND used_at IS NULL')
+      .run(at, signup.id);
+    if (claim.changes !== 1) return { state: 'just-claimed' };
+
+    const practiceId = createPractice(db, { name: 'My practice', at });
+    const practitionerId = createPractitioner(db, {
+      practiceId,
+      email: signup.email,
+      passwordHash: signup.password_hash,
+      at,
+    });
+    return { state: 'created', practitionerId, practiceId };
+  });
+}
+
+/** Begin a password reset for one practitioner, whose mailbox will carry the link. */
+export function createPasswordReset(db, { practitionerId, tokenHash, expiresAt, at = now() }) {
+  const id = newId();
+  db.prepare(
+    'INSERT INTO password_reset (id, practitioner_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, practitionerId, tokenHash, expiresAt, at);
+  return id;
+}
+
+/** What state a reset link is in, by the digest of its token. A removed member's links are dead ones. */
+export function passwordResetByToken(db, token, at = now()) {
+  if (typeof token !== 'string' || token.length === 0) return { state: 'unknown' };
+  const row = db
+    .prepare(
+      `SELECT r.id, r.expires_at, r.used_at, p.id AS practitioner_id, p.email, p.removed_at
+         FROM password_reset r
+         JOIN practitioner p ON p.id = r.practitioner_id
+        WHERE r.token_hash = ?`,
+    )
+    .get(hashToken(token));
+  if (!row) return { state: 'unknown' };
+  if (row.used_at) return { state: 'used' };
+  if (row.removed_at) return { state: 'unknown' };
+  if (row.expires_at <= at) return { state: 'expired' };
+  return { state: 'open', reset: row };
+}
+
+/**
+ * Spend a reset link and set the new password.
+ *
+ * Claimed first and conditionally for the same reason as the other two: a reset link that could be
+ * used twice would be a second password handed out after the first was changed. The caller ends the
+ * account's sessions and reports the change — this file sets the hash and spends the link, and does
+ * not know what a session is.
+ */
+export function claimPasswordReset(db, { token, passwordHash, at = now() }) {
+  return inTransaction(db, () => {
+    const found = passwordResetByToken(db, token, at);
+    if (found.state !== 'open') return found;
+    const claim = db
+      .prepare('UPDATE password_reset SET used_at = ? WHERE id = ? AND used_at IS NULL')
+      .run(at, found.reset.id);
+    if (claim.changes !== 1) return { state: 'just-claimed' };
+    setPractitionerPassword(db, found.reset.practitioner_id, passwordHash);
+    return { state: 'reset', practitionerId: found.reset.practitioner_id, email: found.reset.email };
+  });
+}
+
 /**
  * A client of a practice.
  *
@@ -308,6 +453,294 @@ export function findOrCreateClient(db, { practiceId, createdBy, name, email = nu
   return existing.id;
 }
 
+/**
+ * What an import of these client rows would do — computed, without writing anything.
+ *
+ * A bulk import is a change to a practice's whole directory, and this product's long habit is to say
+ * what it is about to do before it does it. The classification is one definition of "same client",
+ * and it is the import's own: name (case-insensitively) is the identity, an email on the row against
+ * a blank in the database is an update, anything else on an existing client is nothing at all. It is
+ * deliberately a dry run of `importClients` rather than a second guess at the same rule.
+ */
+export function previewClientImport(db, practiceId, rows) {
+  const summary = { create: 0, update: 0, unchanged: 0, invalid: 0, rows: [] };
+  for (const row of rows) {
+    const name = String(row?.name ?? '').trim();
+    const email = String(row?.email ?? '').trim() || null;
+    if (!name) {
+      summary.invalid += 1;
+      summary.rows.push({ name: row?.name ?? '', email: row?.email ?? '', action: 'invalid' });
+      continue;
+    }
+    const existing = db
+      .prepare('SELECT id, email FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE')
+      .get(practiceId, name);
+    const action = !existing ? 'create' : email && email !== existing.email ? 'update' : 'unchanged';
+    summary[action] += 1;
+    summary.rows.push({ name, email, action });
+  }
+  return summary;
+}
+
+/**
+ * Import client rows under the rule the preview showed: name (case-insensitively) is the identity, so
+ * importing twice creates nothing twice, and a re-import that fills in an email updates it in place.
+ *
+ * `findOrCreateClient` is that rule's single definition — the preview, this import, and the form that
+ * makes one client all go through it — which is the only way a dry run can honestly promise what the
+ * run will do. Every row is classified into the summary, so "imported 40" never hides "skipped 200
+ * you already had" or "3 with no name, dropped".
+ */
+export function importClients(db, practiceId, createdBy, rows, at = now()) {
+  const summary = { created: 0, updated: 0, unchanged: 0, invalid: 0 };
+  for (const row of rows) {
+    const name = String(row?.name ?? '').trim();
+    const email = String(row?.email ?? '').trim() || null;
+    if (!name) {
+      summary.invalid += 1;
+      continue;
+    }
+    const existing = db
+      .prepare('SELECT id, email FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE')
+      .get(practiceId, name);
+    const clientId = findOrCreateClient(db, { practiceId, createdBy, name, email, at });
+    // The client's own accounting setup, when the source carried one (a Xero organisation, a
+    // QuickBooks company). Stored here so an import brings the filing profile along with the name —
+    // and left alone when the row has none, so a CSV import cannot erase one a connection already read.
+    if (row?.filingProfile) setFilingProfile(db, practiceId, clientId, row.filingProfile);
+    if (!existing) summary.created += 1;
+    else if (email && email !== existing.email) summary.updated += 1;
+    else summary.unchanged += 1;
+  }
+  return summary;
+}
+
+/**
+ * A client's filing profile — the entity type, financial year-end and tax number their own accounting
+ * setup states, and the facts a request is built on. Kept on the client rather than rediscovered every
+ * January. JSON in, JSON out: a handful of facts, not columns in their own right.
+ */
+export function setFilingProfile(db, practiceId, clientId, profile) {
+  db.prepare('UPDATE client SET filing_profile = ? WHERE id = ? AND practice_id = ?').run(
+    JSON.stringify(profile ?? null),
+    clientId,
+    practiceId,
+  );
+}
+
+/** The client's filing profile, or null when no connection has stated one. */
+export function filingProfileOf(db, clientId) {
+  const row = db.prepare('SELECT filing_profile FROM client WHERE id = ?').get(clientId);
+  if (!row?.filing_profile) return null;
+  try {
+    return JSON.parse(row.filing_profile);
+  } catch {
+    return null;
+  }
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+const ENTITY_NAMES = {
+  COMPANY: 'limited company',
+  SOLETRADER: 'sole trader',
+  PARTNERSHIP: 'partnership',
+  TRUST: 'trust',
+  CHARITY: 'charity',
+  LimitedLiabilityCompany: 'limited company',
+  SoleProprietorship: 'sole trader',
+  Partnership: 'partnership',
+  Cooperative: 'co-operative',
+  Trust: 'trust',
+};
+
+/**
+ * A filing profile as one line a person reads — "limited company · year end 31 March · tax GB123…".
+ * Each fact is shown only where the provider stated it, and none is invented to tidy the line: a
+ * profile with no year end simply does not mention one.
+ */
+export function describeFilingProfile(profile) {
+  if (!profile) return '';
+  const parts = [];
+  const entity = profile.entityType ? (ENTITY_NAMES[profile.entityType] ?? profile.entityType.toLowerCase()) : null;
+  if (entity) parts.push(entity);
+  if (profile.yearEnd) {
+    const month = MONTH_NAMES[profile.yearEnd.month - 1] ?? '';
+    const day = profile.yearEnd.day ? `${profile.yearEnd.day} ` : '';
+    parts.push(`year end ${day}${month}`.trim());
+  }
+  if (profile.taxNumber) parts.push(`tax ${profile.taxNumber}`);
+  return parts.join(' · ');
+}
+
+// The two thresholds the "books behind" judgement reads, named so a flag is a decision whose shape a
+// reader can see rather than a black box. A line or two unreconciled is ordinary; a pile of them is not.
+const BOOKS_BEHIND_UNRECONCILED = 5;
+const BOOKS_BEHIND_STALE_DAYS = 90;
+
+/**
+ * Whether a client's books look behind, from the summary the signal keeps — a count of unreconciled
+ * bank lines and the date of the last one. A couple of unreconciled lines is normal; five or more, or
+ * nothing moving for a quarter, is the practice's cue to ask for records. The summary is all this reads:
+ * the transactions behind it were discarded at the door, so nothing here can leak what a client spent.
+ */
+export function booksBehind(signal, today = new Date()) {
+  if (!signal) return false;
+  if ((signal.unreconciled ?? 0) >= BOOKS_BEHIND_UNRECONCILED) return true;
+  if (signal.lastActivityAt) {
+    const last = new Date(`${signal.lastActivityAt}T00:00:00Z`);
+    const days = Math.floor((today.getTime() - last.getTime()) / 86400000);
+    if (days >= BOOKS_BEHIND_STALE_DAYS) return true;
+  }
+  return false;
+}
+
+/**
+ * The cached summary behind the "books behind" flag — a count of unreconciled lines and the date of the
+ * last one, written only when the practice has turned the signal on and run a check. A count and a date,
+ * never a client's transactions.
+ */
+export function setBooksState(db, practiceId, clientId, summary) {
+  db.prepare('UPDATE client SET books_state = ? WHERE id = ? AND practice_id = ?').run(
+    JSON.stringify(summary ?? null),
+    clientId,
+    practiceId,
+  );
+}
+
+/** The client's cached books summary, or null when no check has run. */
+export function booksStateOf(db, clientId) {
+  const row = db.prepare('SELECT books_state FROM client WHERE id = ?').get(clientId);
+  if (!row?.books_state) return null;
+  try {
+    return JSON.parse(row.books_state);
+  } catch {
+    return null;
+  }
+}
+
+/** A client by name, case-insensitively — the same identity the import matches on. */
+export function clientByName(db, practiceId, name) {
+  return (
+    db
+      .prepare('SELECT id FROM client WHERE practice_id = ? AND name = ? COLLATE NOCASE')
+      .get(practiceId, name) ?? null
+  );
+}
+
+// The documents a request is usually built from, by the client's own entity type. A starting point the
+// practitioner edits rather than a rule — a practice knows its clients, and this exists so the first list
+// is not a blank box.
+const CHECKLISTS = {
+  COMPANY: ['Statutory accounts', 'Corporation tax computation', 'Bank statements', 'VAT records'],
+  SOLETRADER: ['Income and expenses records', 'Bank statements', 'Details of any other income'],
+  PARTNERSHIP: ['Partnership accounts', 'Bank statements', "Each partner's own income"],
+  TRUST: ['Trust accounts', 'Bank statements', 'Records of income and gains'],
+};
+const GENERIC_CHECKLIST = ['Bank statements', 'Records of income and expenses'];
+
+function checklistFor(entityType) {
+  const canonical = {
+    LimitedLiabilityCompany: 'COMPANY',
+    SoleProprietorship: 'SOLETRADER',
+    Partnership: 'PARTNERSHIP',
+    Trust: 'TRUST',
+  }[entityType] ?? entityType;
+  return CHECKLISTS[canonical] ?? GENERIC_CHECKLIST;
+}
+
+/** How far past the year-end a request is nominally due — a lead time the practice adjusts. */
+const SUGGESTED_LEAD_DAYS = 30;
+
+function addDays(date, days) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+function isoDate(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** The next time this year-end comes round. A month with no day is read as the first of that month. */
+function nextYearEnd(yearEnd, today) {
+  if (!yearEnd?.month) return null;
+  const day = yearEnd.day ?? 1;
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const thisYear = new Date(today.getFullYear(), yearEnd.month - 1, day);
+  return thisYear < todayStart ? new Date(today.getFullYear() + 1, yearEnd.month - 1, day) : thisYear;
+}
+
+/**
+ * What a request for this client is probably for, from their own filing profile: a title naming the
+ * period the books cover, a due date a little after that year-end, and a checklist for their entity
+ * type. Every part is a suggestion the practice edits — this fills a blank form with a sensible
+ * starting point and never creates anything. Null when no connection has stated a profile.
+ */
+export function suggestRequest(profile, today = new Date()) {
+  if (!profile) return null;
+  const items = checklistFor(profile.entityType);
+  const end = nextYearEnd(profile.yearEnd, today);
+  if (!end) return { title: null, dueAt: null, items };
+  const label = `${profile.yearEnd.day ? `${profile.yearEnd.day} ` : ''}${MONTH_NAMES[end.getMonth()]} ${end.getFullYear()}`;
+  return {
+    title: `Documents for the year ending ${label}`,
+    dueAt: isoDate(addDays(end, SUGGESTED_LEAD_DAYS)),
+    items,
+  };
+}
+
+/**
+ * A practice's integration link — the OAuth tokens that let Tickmark read their client list from one
+ * provider (Xero, QuickBooks, …). One row per practice per provider.
+ *
+ * Stored *readable*, unlike the ECDH keys wrapped client-side: the server must present these to the
+ * provider to fetch the list, so it cannot seal them to something only the client holds. Read scopes
+ * only, and a refresh replaces both tokens in place because providers rotate the refresh token every
+ * time — keeping the old one is a lockout waiting to happen. `externalId` is the provider's own id for
+ * the thing the list hangs off (QuickBooks' realmId) where one is needed.
+ */
+export function saveConnection(db, { provider, practiceId, externalId = null, accessToken, refreshToken, expiresAt, scope = '', at = now() }) {
+  const existing = db.prepare('SELECT id FROM connection WHERE practice_id = ? AND provider = ?').get(practiceId, provider);
+  if (existing) {
+    db
+      .prepare('UPDATE connection SET external_id = ?, access_token = ?, refresh_token = ?, expires_at = ?, scope = ?, updated_at = ? WHERE practice_id = ? AND provider = ?')
+      .run(externalId, accessToken, refreshToken, expiresAt, scope, at, practiceId, provider);
+    return existing.id;
+  }
+  const id = newId();
+  db
+    .prepare('INSERT INTO connection (id, provider, practice_id, external_id, access_token, refresh_token, expires_at, scope, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, provider, practiceId, externalId, accessToken, refreshToken, expiresAt, scope, at, at);
+  return id;
+}
+
+/** The practice's link to one provider, or null when they have not connected it. */
+export function connectionFor(db, practiceId, provider) {
+  return db.prepare('SELECT * FROM connection WHERE practice_id = ? AND provider = ?').get(practiceId, provider) ?? null;
+}
+
+/** Unlink one provider. Whatever those tokens could reach, this install stops being able to. */
+export function deleteConnection(db, practiceId, provider) {
+  db.prepare('DELETE FROM connection WHERE practice_id = ? AND provider = ?').run(practiceId, provider);
+}
+
+/**
+ * The opt-in for the "books behind" signal, on one connection. Off until the practice turns it on, and
+ * turning it on is a deliberate act taken behind a warning — see the integration page. This only records
+ * the choice: nothing is read because of it until a check runs, and a client's documents are unaffected
+ * either way.
+ */
+export function setBooksSignal(db, practiceId, provider, enabled) {
+  db
+    .prepare('UPDATE connection SET books_signal = ?, updated_at = ? WHERE practice_id = ? AND provider = ?')
+    .run(enabled ? 1 : 0, now(), practiceId, provider);
+}
+
+/** Whether the practice has turned the books signal on for this provider. On only when it is exactly 1. */
+export function booksSignalOn(connection) {
+  return connection?.books_signal === 1;
+}
+
 /** One client, scoped to the practice — the shape every client page starts from. */
 export function clientFor(db, practiceId, clientId) {
   return (
@@ -315,6 +748,34 @@ export function clientFor(db, practiceId, clientId) {
       .prepare('SELECT id, name, email, created_at FROM client WHERE id = ? AND practice_id = ?')
       .get(clientId, practiceId) ?? null
   );
+}
+
+/**
+ * An entity by name under a client — find it or make it, so a request can name "the partnership" and
+ * land on the right matter whether or not it existed before. Like `findOrCreateClient`, the name
+ * (case-insensitively) is the identity and a match never makes a second row.
+ */
+export function findOrCreateEntity(db, { practiceId, clientId, name, at = now() }) {
+  const existing = db
+    .prepare('SELECT id FROM entity WHERE client_id = ? AND name = ? COLLATE NOCASE')
+    .get(clientId, name);
+  if (existing) return existing.id;
+  const id = newId();
+  db.prepare('INSERT INTO entity (id, client_id, name, created_at, practice_id) VALUES (?, ?, ?, ?, ?)').run(
+    id,
+    clientId,
+    name,
+    at,
+    practiceId,
+  );
+  return id;
+}
+
+/** A client's entities, by name — the client page groups the work under these. */
+export function entitiesFor(db, practiceId, clientId) {
+  return db
+    .prepare('SELECT id, name, created_at FROM entity WHERE practice_id = ? AND client_id = ? ORDER BY name')
+    .all(practiceId, clientId);
 }
 
 /**
@@ -760,8 +1221,9 @@ export function requestsForClient(db, practiceId, clientId) {
   const progress = progressForClient(db, practiceId, clientId);
   return db
     .prepare(
-      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at, r.client_note
+      `SELECT r.id, r.title, r.due_at, r.closed_at, r.created_at, r.client_note, r.entity_id, e.name AS entity
          FROM request r
+         LEFT JOIN entity e ON e.id = r.entity_id
         WHERE r.practice_id = ? AND r.client_id = ?
         ORDER BY r.created_at DESC`,
     )
@@ -868,13 +1330,13 @@ export function updateRequest(
 }
 
 /** A titled list of documents owed by one client, with its items, created atomically. */
-export function createRequest(db, { practiceId, createdBy, clientId, title, dueAt = null, items = [], clientNote = null, at = now() }) {
+export function createRequest(db, { practiceId, createdBy, clientId, entityId = null, title, dueAt = null, items = [], clientNote = null, at = now() }) {
   return inTransaction(db, () => {
     const id = newId();
     db.prepare(
-      `INSERT INTO request (id, practice_id, practitioner_id, client_id, title, due_at, client_note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, practiceId, createdBy, clientId, title, dueAt, clientNote, at);
+      `INSERT INTO request (id, practice_id, practitioner_id, client_id, entity_id, title, due_at, client_note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, practiceId, createdBy, clientId, entityId, title, dueAt, clientNote, at);
     recordEvent(db, { requestId: id, kind: 'request.created', at });
     // Inside the transaction on purpose: a request that exists with none of its items
     // is a state the practice would have to notice and repair.
@@ -891,6 +1353,34 @@ export function addItem(db, { requestId, label, note = null, at = now() }) {
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(id, requestId, label, note, position, at);
   return id;
+}
+
+/**
+ * Raise the same request again — "the same as last year", the repeat this product exists to remove.
+ *
+ * A copy is one specific job's list brought forward: the same client, the same matter, the same
+ * checklist (notes and all), and a title whose year has rolled on — "2025 return" becomes "2026
+ * return". The deadline is deliberately left blank: a new year has a new one to set, and a silently
+ * carried date is how a request arrives already overdue. Everything happens in one transaction,
+ * because a request raised with half its list is worse than one not raised at all.
+ */
+export function reRaiseRequest(db, { practiceId, createdBy, requestId, title, at = now() }) {
+  return inTransaction(db, () => {
+    const source = db
+      .prepare('SELECT client_id, entity_id, client_note FROM request WHERE id = ? AND practice_id = ?')
+      .get(requestId, practiceId);
+    const id = newId();
+    db.prepare(
+      `INSERT INTO request (id, practice_id, practitioner_id, client_id, entity_id, title, due_at, client_note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, practiceId, createdBy, source.client_id, source.entity_id, title, null, source.client_note, at);
+    recordEvent(db, { requestId: id, kind: 'request.created', at });
+    for (const item of itemsOf(db, requestId)) {
+      if (item.withdrawn) continue;
+      addItem(db, { requestId: id, label: item.label, note: item.note, at });
+    }
+    return id;
+  });
 }
 
 /**
@@ -997,21 +1487,27 @@ export function recordClientMessage(db, { requestId, body, at = now() }) {
  * and a phone, and a partial post — an older page, a test, a script — must not silently wipe the fields it
  * never mentioned.
  */
-export function setPracticeContact(db, practiceId, { email, phone } = {}) {
+export function setPracticeContact(db, practiceId, { email, phone, mailFrom } = {}) {
   const clean = (value) => {
     if (value === undefined) return undefined;
     const text = (value ?? '').trim();
     return text.length === 0 ? null : text.slice(0, 200);
   };
 
-  const nextEmail = clean(email);
-  const nextPhone = clean(phone);
-  if (nextEmail !== undefined && nextPhone !== undefined) {
-    db.prepare('UPDATE practice SET contact_email = ?, contact_phone = ? WHERE id = ?').run(nextEmail, nextPhone, practiceId);
-  } else if (nextEmail !== undefined) {
-    db.prepare('UPDATE practice SET contact_email = ? WHERE id = ?').run(nextEmail, practiceId);
-  } else if (nextPhone !== undefined) {
-    db.prepare('UPDATE practice SET contact_phone = ? WHERE id = ?').run(nextPhone, practiceId);
+  // Built as one statement so a form may ask for any subset of the three without an
+  // if-branch per combination; "undefined means this form did not ask" still holds.
+  const fields = { contact_email: clean(email), contact_phone: clean(phone), mail_from: clean(mailFrom) };
+  const sets = [];
+  const params = [];
+  for (const [column, value] of Object.entries(fields)) {
+    if (value !== undefined) {
+      sets.push(`${column} = ?`);
+      params.push(value);
+    }
+  }
+  if (sets.length > 0) {
+    params.push(practiceId);
+    db.prepare(`UPDATE practice SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }
 }
 
@@ -1371,6 +1867,25 @@ export function requestProgress(db, requestId) {
 
 export function history(db, requestId) {
   return db.prepare('SELECT kind, detail, at FROM event WHERE request_id = ? ORDER BY at, rowid').all(requestId);
+}
+
+/**
+ * Every recorded event for a practice, oldest first, with the client and request it belongs to — the
+ * whole history in one query, for the export. `history` above is the same record for one request; this is
+ * it for the practice, which is the shape a spreadsheet wants. Ordered like `history`, so the file and
+ * the request pages cannot disagree about what happened first.
+ */
+export function eventsForPractice(db, practiceId) {
+  return db
+    .prepare(
+      `SELECT e.at, e.kind, e.detail, r.title, c.name AS client
+         FROM event e
+         JOIN request r ON r.id = e.request_id
+         JOIN client c ON c.id = r.client_id
+        WHERE r.practice_id = ?
+        ORDER BY e.at, e.rowid`,
+    )
+    .all(practiceId);
 }
 
 export function practitionerByEmail(db, email) {
@@ -1743,6 +2258,27 @@ export function addKeyWrapping(db, { keyId, practitionerId, wrappedPrivateKey, a
     'INSERT INTO key_wrapping (id, key_id, practitioner_id, wrapped_private_key, created_at) VALUES (?, ?, ?, ?, ?)',
   ).run(id, keyId, practitionerId, wrappedPrivateKey, at);
   return id;
+}
+
+/**
+ * The recovery sheet: the practice key sealed under the secret the practice printed and keeps
+ * offline. The server holds this copy but not the secret that opens it — the whole point. A member
+ * who has forgotten their passphrase arrives with the sheet and re-seals the key under a new
+ * passphrase (replaceWrappedKey), exactly as if they had typed the old one.
+ */
+export function setRecoveryWrapping(db, practiceId, wrappedPrivateKey) {
+  const key = db.prepare('SELECT id FROM practice_key WHERE practice_id = ?').get(practiceId);
+  if (!key) return null;
+  db.prepare('UPDATE practice_key SET recovery_wrapping = ? WHERE id = ?').run(wrappedPrivateKey, key.id);
+  return key.id;
+}
+
+/** The recovery wrapping for a practice, or null when no sheet has been made. */
+export function recoveryWrapping(db, practiceId) {
+  const row = db
+    .prepare('SELECT id AS key_id, recovery_wrapping AS wrapped FROM practice_key WHERE practice_id = ?')
+    .get(practiceId);
+  return row?.wrapped ? row : null;
 }
 
 /**

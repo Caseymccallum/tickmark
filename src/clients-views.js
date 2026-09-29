@@ -21,17 +21,23 @@
  *    screen is.
  */
 import { dateIn, monthIn } from './clock.js';
-import { field, formFields, readBody } from './http.js';
+import { clientRowsFromCsv, field, formFields, readBody } from './http.js';
 import {
+  booksBehind,
+  booksStateOf,
   clientFor,
+  describeFilingProfile,
+  filingProfileOf,
   clientSummaries,
   clientsDueForAsking,
   filesForPractice,
   fileCountFor,
   history,
+  importClients,
   progressForPractice,
   outstandingOf,
   practiceFor,
+  previewClientImport,
   previousChecklistFor,
   requestsForClient,
   updateClient,
@@ -256,7 +262,7 @@ export function listClients({ db, response, practitioner, practiceId, url }) {
             </td>
             <td>${row.email
               ? row.email
-              : html`${badge('no address', TONES.wrong)}`}</td>
+              : html`${badge('no email address', TONES.wrong)}`}</td>
             <td align="right">${row.open_requests === 0
               ? html`<span class="muted">—</span>`
               : row.open_requests}</td>
@@ -288,6 +294,7 @@ export function listClients({ db, response, practitioner, practiceId, url }) {
           <p class="sub">Everyone this practice asks for documents, and what each of them still owes.</p>
         </div>
         <div class="do">
+          <a class="btn" href="/clients/import">Import clients</a>
           <a class="btn primary" href="/requests/new">New request</a>
         </div>
       </div>
@@ -323,8 +330,8 @@ export function listClients({ db, response, practitioner, practiceId, url }) {
               ? tile(owing.length, 'still owe something', { href: '/chase', tone: 'attn' })
               : tile(0, 'still owe something')}
             ${noAddress.length > 0
-              ? tile(noAddress.length, 'with no address', { tone: 'warn' })
-              : tile(0, 'missing an address')}
+              ? tile(noAddress.length, 'with no email address', { tone: 'warn' })
+              : tile(0, 'missing an email address')}
           </div>`}
       ${onlyDue && rows.length > 0
         ? html`<div class="card">
@@ -342,8 +349,8 @@ export function listClients({ db, response, practitioner, practiceId, url }) {
           </div>`
         : ''}
       ${noAddress.length > 0
-        ? html`<p class="note">A client with no address is left out of every reminder — open one and add
-            it. The chase names them rather than dropping them quietly, but an address is faster.</p>`
+        ? html`<p class="note">A client with no email address is left out of every reminder — open one and add
+            it. The chase names them rather than dropping them quietly, but an email address is faster.</p>`
         : ''}
       ${table}`,
   }));
@@ -371,7 +378,7 @@ export function clientsCsv({ db, response, practitioner, practiceId, url }) {
     ]);
 
   return sendCsv(response, 'tickmark-clients.csv', [
-    ['Client', 'Address', 'Open requests', 'Closed requests', 'Outstanding', 'Last contact', 'First asked'],
+    ['Client', 'Email address', 'Open requests', 'Closed requests', 'Outstanding', 'Last contact', 'First asked'],
     ...rows,
   ]);
 }
@@ -447,6 +454,39 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
     <td><span class="muted">${request.created_at.slice(0, 10)}</span></td>
   </tr>`;
 
+  const table = (rows) => html`<div class="scroll"><table class="items">
+    <colgroup>
+      <col class="c-title"><col class="c-state"><col class="c-received">
+      <col class="c-due"><col class="c-asked">
+    </colgroup>
+    <thead>
+      <tr>
+        <th align="left">Request</th>
+        <th align="left">State</th>
+        <th align="right">Received</th>
+        <th align="left">Due</th>
+        <th align="left">Asked</th>
+      </tr>
+    </thead>
+    <tbody>${rows.map(rowFor)}</tbody>
+  </table></div>`;
+
+  // The work grouped by matter, the way the practice already thinks about it: a client with a company
+  // and a partnership keeps their requests apart instead of one flat list. Requests with no matter sit
+  // under one plain heading.
+  const groups = new Map();
+  for (const request of requests) {
+    const key = request.entity ?? '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(request);
+  }
+  const grouped = [...groups.entries()].map(([key, rows]) => html`<section class="card">
+    <h2>${key || 'Everything asked of them'}</h2>
+    ${table(rows)}
+  </section>`);
+
+  const filingProfile = filingProfileOf(db, found.id);
+  const booksState = booksStateOf(db, found.id);
   return sendPage(response, 200, page({
     title: found.name,
     practitioner,
@@ -457,7 +497,12 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
         <div class="titles">
           <p class="crumbs"><a href="/clients">Clients</a></p>
           <h1>${found.name}</h1>
-          <p class="sub">${found.email ?? 'No address yet — reminders cannot be sent to them'}</p>
+          <p class="sub">${found.email ?? 'No email address yet — reminders cannot be sent to them'}</p>
+          ${filingProfile ? html`<p class="note">${describeFilingProfile(filingProfile)}</p>` : ''}
+          ${booksBehind(booksState) ? html`<p class="banner"><strong>Their books look behind.</strong>
+            ${booksState.unreconciled} bank ${booksState.unreconciled === 1 ? 'line is' : 'lines are'} unreconciled
+            ${booksState.lastActivityAt ? `, and nothing has moved since ${booksState.lastActivityAt}` : ''} —
+            worth asking for records.</p>` : ''}
         </div>
         <div class="do">
           <a class="btn primary" href="/requests/new?for=${found.id}">New request</a>
@@ -476,25 +521,7 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
             'Ask them for something and everything they send appears here, with the requests they have had before.',
             html`<a class="btn primary" href="/requests/new?for=${found.id}">Ask for documents</a>`,
           )
-        : html`<section class="card">
-            <h2>Everything asked of them</h2>
-            <div class="scroll"><table class="items">
-              <colgroup>
-                <col class="c-title"><col class="c-state"><col class="c-received">
-                <col class="c-due"><col class="c-asked">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th align="left">Request</th>
-                  <th align="left">State</th>
-                  <th align="right">Received</th>
-                  <th align="left">Due</th>
-                  <th align="left">Asked</th>
-                </tr>
-              </thead>
-              <tbody>${requests.map(rowFor)}</tbody>
-            </table></div>
-          </section>`}
+        : grouped}
       <section class="card">
         <h2>Their details</h2>
         <form method="post" action="/clients/${found.id}">
@@ -505,9 +532,9 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
             a client typed twice by mistake is a thing you can repair rather than live with.</p>
           </div>
           <div class="field">
-            <label for="email">Their address <span class="note">for reminders</span></label>
+            <label for="email">Their email address <span class="note">for reminders</span></label>
             <input id="email" name="email" type="email" value="${found.email ?? ''}">
-            <p class="form-hint">Leave it empty to remove the address: reminders then name them as
+            <p class="form-hint">Leave it empty to remove the email address: reminders then name them as
             unreachable rather than being sent nowhere.</p>
           </div>
           <button type="submit">Save</button>
@@ -524,5 +551,146 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
             </div>
           </section>`
         : ''}`,
+  }));
+}
+
+/**
+ * Bring the client book across — the front door of switching, and the pipe every integration pours into.
+ *
+ * The research is unambiguous that a practice will not move unless its clients move easily, so this is
+ * the feature the switch lives or dies on. It is deliberately two steps — paste, *then* confirm —
+ * because importing a whole book of clients is the one change here that is not a single record, and
+ * this product's habit is to say what it will do before it does it.
+ *
+ * The columns are found by name (see `clientRowsFromCsv`), so the file can be Tickmark's own
+ * `clients.csv`, a practice-management export, or two columns pasted straight out of a spreadsheet.
+ * Rows with no name are counted and shown, never dropped in silence.
+ */
+function importFormPage(practitioner, value, notice) {
+  return page({
+    title: 'Import clients',
+    practitioner,
+    here: '/clients',
+    body: html`
+      <div class="page-head">
+        <div class="titles">
+          <h1>Import clients</h1>
+          <p class="sub">Bring your client book across in one go. Paste the list below — one client per
+          row, a name and (if you have it) an email address.</p>
+        </div>
+      </div>
+      ${notice ? html`<p class="note"><strong>${notice}</strong></p>` : ''}
+      <form method="post" action="/clients/import" class="card">
+        <label for="csv">Your clients</label>
+        <textarea id="csv" name="csv" rows="12"
+          placeholder="Client,Address&#10;Smith &amp; Co,sam@smith.test&#10;Jones,j@j.test">${value}</textarea>
+        <p class="note">Columns are matched by name, so this can be Tickmark's own
+        <a href="/clients.csv">clients.csv</a>, a practice-management export, or two columns from a
+        spreadsheet. A <code>name</code> (or <code>Client</code>, <code>Customer</code>,
+        <code>Contact</code>) column and an <code>email</code> (or <code>Address</code>) column are
+        recognised; a file with no header is read as name, then email address.</p>
+        <button type="submit">Preview the import</button>
+        <a class="btn" href="/integrations/xero">Import from Xero instead</a>
+        <a class="btn" href="/integrations/quickbooks">Import from QuickBooks instead</a>
+        <a class="btn ghost" href="/clients">Cancel</a>
+      </form>`,
+  });
+}
+
+/** The paste-the-list page. */
+export function importClientsForm({ response, practitioner }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  return sendPage(response, 200, importFormPage(practitioner, '', null));
+}
+
+/**
+ * Preview the import, or — on the confirm — do it.
+ *
+ * The preview and the run share one body of CSV and one definition of "same client" (`findOrCreateClient`,
+ * through `previewClientImport` and `importClients`), so the run cannot do anything the preview did not
+ * name. Nothing is written until the second step is pressed.
+ */
+export async function importClientsRun({ db, request, response, practitioner, practiceId }) {
+  if (!requireSignIn({ practitioner, response })) return;
+  const fields = formFields(await readBody(request));
+  const raw = field(fields, 'csv') ?? '';
+  const run = field(fields, 'run') === '1';
+  const rows = clientRowsFromCsv(raw);
+
+  if (rows.length === 0) {
+    return sendPage(
+      response,
+      200,
+      importFormPage(practitioner, raw, 'There are no client rows in that. The first column should be the client name.'),
+    );
+  }
+
+  if (run) {
+    const summary = importClients(db, practiceId, practitioner.id, rows);
+    return sendPage(response, 200, page({
+      title: 'Clients imported',
+      practitioner,
+      here: '/clients',
+      body: html`
+        <div class="page-head"><div class="titles">
+          <h1>Clients imported</h1>
+          <p class="sub">Your client book is across. Every row is accounted for — nothing was dropped in
+          silence.</p>
+        </div></div>
+        <section class="card">
+          <p><strong>${summary.created}</strong> created, <strong>${summary.updated}</strong> given an
+          address, <strong>${summary.unchanged}</strong> already there and left alone${summary.invalid
+            ? html`, and <strong>${summary.invalid}</strong> with no name, skipped`
+            : ''}.</p>
+          <div class="actions">
+            <a class="btn primary" href="/clients">See the clients</a>
+            <a class="btn" href="/clients/import">Import another list</a>
+          </div>
+        </section>`,
+    }));
+  }
+
+  const preview = previewClientImport(db, practiceId, rows);
+  const word = {
+    create: ['new', TONES.done],
+    update: ['email added', TONES.todo],
+    unchanged: ['already there', TONES.done_for],
+    invalid: ['no name', TONES.wrong],
+  };
+  const shown = preview.rows.slice(0, 200);
+  return sendPage(response, 200, page({
+    title: 'Import clients',
+    practitioner,
+    here: '/clients',
+    body: html`
+      <div class="page-head"><div class="titles">
+        <h1>Import clients</h1>
+        <p class="sub">Here is exactly what this will do. Nothing has been changed yet.</p>
+      </div></div>
+      <section class="card">
+        <p><strong>${preview.create}</strong> new, <strong>${preview.update}</strong> given an email address,
+        <strong>${preview.unchanged}</strong> already there and left alone${preview.invalid
+          ? html`, and <strong>${preview.invalid}</strong> with no name, skipped`
+          : ''}.</p>
+        <div class="scroll"><table class="wide">
+          <thead><tr>
+            <th align="left">Client</th><th align="left">Address</th><th align="left">What happens</th>
+          </tr></thead>
+          <tbody>${shown.map((row) => html`<tr>
+            <td class="cell-t">${row.name || '—'}</td>
+            <td>${row.email || ''}</td>
+            <td>${badge(word[row.action][0], word[row.action][1])}</td>
+          </tr>`)}</tbody>
+        </table></div>
+        ${preview.rows.length > shown.length
+          ? html`<p class="note">…and ${preview.rows.length - shown.length} more.</p>`
+          : ''}
+      </section>
+      <form method="post" action="/clients/import" class="card">
+        <input type="hidden" name="run" value="1">
+        <textarea name="csv" hidden>${raw}</textarea>
+        <button type="submit">Do the import</button>
+        <a class="btn ghost" href="/clients/import">Start over</a>
+      </form>`,
   }));
 }

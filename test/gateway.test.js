@@ -363,6 +363,51 @@ test('a failing card marks the practice past due, and paying opens it again', as
   );
 });
 
+test('a failing card keeps the documents open for the grace window, so a fixable hiccup is not a lockout', async () => {
+  await withSaas(
+    async ({ agent, registry }) => {
+      const client = agent();
+      await signup(client);
+      const tenant = tenantRow(registry);
+
+      await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'checkout.session.completed', data: { object: { metadata: { tenant_id: tenant.id } } } }));
+      await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'invoice.payment_failed', data: { object: { id: 'in_1', metadata: { tenant_id: tenant.id } } } }));
+      assert.equal(tenantRow(registry).status, 'past_due');
+
+      const open = await client.get('/t/acme-accounting/requests');
+      assert.notEqual(open.status, 402, 'the practice keeps working while the card is being fixed');
+    },
+    { env: { STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET } },
+  );
+});
+
+test('with the grace window set to zero, a failing card locks the practice at once', async () => {
+  // The grace length is read from the environment like `TICKMARK_PUBLIC_URL` and the cookie flag, so it
+  // is set here rather than through the server's `env` — which only carries Stripe's and the relay's.
+  const previous = process.env.TICKMARK_PAST_DUE_GRACE_DAYS;
+  process.env.TICKMARK_PAST_DUE_GRACE_DAYS = '0';
+  try {
+    await withSaas(
+      async ({ agent, registry }) => {
+        const client = agent();
+        await signup(client);
+        const tenant = tenantRow(registry);
+
+        await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'checkout.session.completed', data: { object: { metadata: { tenant_id: tenant.id } } } }));
+        await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'invoice.payment_failed', data: { object: { id: 'in_1', metadata: { tenant_id: tenant.id } } } }));
+        assert.equal(tenantRow(registry).status, 'past_due');
+
+        const locked = await client.get('/t/acme-accounting/requests');
+        assert.equal(locked.status, 402, 'an operator who wants no slack sets the window to zero and gets the old behaviour');
+      },
+      { env: { STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET } },
+    );
+  } finally {
+    if (previous === undefined) delete process.env.TICKMARK_PAST_DUE_GRACE_DAYS;
+    else process.env.TICKMARK_PAST_DUE_GRACE_DAYS = previous;
+  }
+});
+
 
 test('the platform root sends you to signup or to your dashboard, and a practice root is the core\u2019s', async () => {
   await withSaas(async ({ agent, base, registry }) => {

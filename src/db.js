@@ -1,5 +1,5 @@
 /**
- * The database: one file, fourteen tables, no dependencies.
+ * The database: one file, eighteen tables, no dependencies.
  *
  * `node:sqlite` ships in the runtime, so a practice that self-hosts this inherits no
  * driver, no ORM and no native module to compile. That matters more here than it would
@@ -77,6 +77,11 @@ export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS practice (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
+  -- The address mail leaves from, when a practice sends as itself rather than from the install-wide
+  -- TICKMARK_MAIL_FROM. The name above is what a client sees; this is the address, and the domain in it
+  -- is the one SPF, DKIM and DMARC must line up behind (see docs/mail.md). Null falls back to the
+  -- install-wide address — the self-hosted case, where the practice already owns that address.
+  mail_from  TEXT,
   created_at TEXT NOT NULL,
   -- How many days must pass before the batch chase will write to the same client again. **0 means no
   -- limit**, and 0 is the default: docs/product-needs.md says a threshold is a decision and not a default,
@@ -172,6 +177,12 @@ CREATE TABLE IF NOT EXISTS practice_key (
   public_key          TEXT NOT NULL,
   wrapped_private_key TEXT NOT NULL,
   created_at          TEXT NOT NULL,
+  -- The recovery sheet: the same private key sealed once more, under a secret the practice prints
+  -- and keeps offline. This column is what a forgotten passphrase recovers *from* — and the whole
+  -- point is that the server holds this copy but not the secret that opens it, so a database taken
+  -- from here is no more readable than the per-member copies in key_wrapping. Recovery does not
+  -- weaken "the server cannot read your files": the practice holds the one thing that can open it.
+  recovery_wrapping   TEXT,
   practice_id         TEXT REFERENCES practice(id),
   -- Set when the key is retired: its wrapped copies are destroyed, so it can open nothing, and the row
   -- stays as a tombstone rather than vanishing. A key that disappeared would take with it the only
@@ -215,6 +226,28 @@ CREATE TABLE IF NOT EXISTS client (
   practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
   name            TEXT NOT NULL,
   email           TEXT,
+  -- What the client's own accounting setup states: entity type, financial year-end, tax number. Read
+  -- from the Xero or QuickBooks connection (src/tenancy/) and kept as JSON because it is a handful of
+  -- facts a request is built on rather than columns in their own right. Null until a connection is read,
+  -- and never guessed — a fact the provider does not state is simply absent here.
+  filing_profile  TEXT,
+  -- The cached summary behind the optional "books behind" flag: a count of unreconciled bank lines and
+  -- the date of the last one, and nothing else. Written only when the practice has turned the signal on
+  -- and run a check; never a client's transactions. See docs/security.md.
+  books_state     TEXT,
+  created_at      TEXT NOT NULL,
+  practice_id     TEXT REFERENCES practice(id)
+);
+
+-- One client, several things to chase for. A client is the *contact* (Jane, one email); an entity is a
+-- matter under them — a limited company, a personal return, a partnership — each with its own
+-- documents. The research's clearest gap: a practice thinks "Jane has a Ltd and a partnership", not
+-- "Jane is one bucket of everything". Requests hang off an entity so the work is grouped the way the
+-- practice sees it; a request with no entity is simply ungrouped.
+CREATE TABLE IF NOT EXISTS entity (
+  id              TEXT PRIMARY KEY,
+  client_id       TEXT NOT NULL REFERENCES client(id),
+  name            TEXT NOT NULL,
   created_at      TEXT NOT NULL,
   practice_id     TEXT REFERENCES practice(id)
 );
@@ -223,6 +256,7 @@ CREATE TABLE IF NOT EXISTS request (
   id              TEXT PRIMARY KEY,
   practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
   client_id       TEXT NOT NULL REFERENCES client(id),
+  entity_id       TEXT REFERENCES entity(id),
   title           TEXT NOT NULL,
   due_at          TEXT,
   closed_at       TEXT,
@@ -400,6 +434,64 @@ CREATE TABLE IF NOT EXISTS recovery_code (
   used_at         TEXT
 );
 
+-- A link that finishes creating a practice, sent to the address the practice will belong to.
+--
+-- Sign-up is deliberately two steps. One step would mean creating an account for an address nobody
+-- proved they could read, and answering "that address is taken" to whoever asked — which is a way to
+-- find out who has a Tickmark practice, in a product holding financial records. Here the answer is
+-- always "check your email", the account is made only when the link is opened, and the person who
+-- opens it is the person who can read the address. The password waits here as a hash: nothing is
+-- created until the address is proven, and nothing is revealed to the person filling in the form.
+CREATE TABLE IF NOT EXISTS signup_token (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  token_hash    TEXT NOT NULL UNIQUE,
+  expires_at    TEXT NOT NULL,
+  used_at       TEXT,
+  created_at    TEXT NOT NULL
+);
+
+-- A link that lets somebody set a new password for an account whose mail they can read.
+--
+-- The proof is the mailbox, not the old password — which is the only proof available to somebody who
+-- has lost it. Single-use and short-lived like every other token here, and claiming it ends every
+-- session for the account: the point of a reset is that whatever was holding the old password stops
+-- working, which a reset that left those sessions alive would quietly refuse to do.
+CREATE TABLE IF NOT EXISTS password_reset (
+  id              TEXT PRIMARY KEY,
+  practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
+  token_hash      TEXT NOT NULL UNIQUE,
+  expires_at      TEXT NOT NULL,
+  used_at         TEXT,
+  created_at      TEXT NOT NULL
+);
+
+-- A practice's integration link (Xero, QuickBooks, …): the OAuth tokens that let Tickmark read their
+-- client list. One row per practice per provider, keyed by provider; external_id is the QuickBooks
+-- company (realmId) when the provider needs one. Stored *readable*, unlike the ECDH keys this product
+-- wraps client-side — the server must present these to the provider to fetch the list, so it cannot
+-- seal them to something only the client holds. Read scopes only (see tenancy/xero.js).
+CREATE TABLE IF NOT EXISTS connection (
+  id            TEXT PRIMARY KEY,
+  provider      TEXT NOT NULL,
+  practice_id   TEXT NOT NULL REFERENCES practice(id),
+  external_id   TEXT,
+  access_token  TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expires_at    TEXT NOT NULL,
+  scope         TEXT,
+  -- Opt-in for the "books behind" signal. Off by default, and on only when the practice has read the
+  -- warning and chosen it. When on, Tickmark reads a *summary* of a client's accounting activity (how
+  -- many bank lines are unreconciled, when the last one was) to flag books that need attention — never
+  -- the transactions themselves, and never a client document. Clients' documents stay end-to-end
+  -- encrypted and unreadable to this server whatever this is set to; this flag never weakens that. The
+  -- posture is written out in docs/security.md. 1 is on, anything else is off.
+  books_signal  INTEGER,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS request_client ON request(client_id);
 CREATE INDEX IF NOT EXISTS item_request   ON request_item(request_id, position);
 CREATE INDEX IF NOT EXISTS upload_item    ON upload(request_item_id);
@@ -510,14 +602,19 @@ function migrate(db) {
     ['practice_key', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['practice_key', 'deleted_at', 'TEXT'],
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
+    ['client', 'filing_profile', 'TEXT'],
+    ['client', 'books_state', 'TEXT'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'client_note', 'TEXT'],
+    ['request', 'entity_id', 'TEXT REFERENCES entity(id)'],
     ['upload', 'key_id', 'TEXT REFERENCES practice_key(id)'],
     ['practitioner', 'removed_at', 'TEXT'],
     ['practice', 'cadence_days', 'INTEGER'],
     ['practice', 'timezone', 'TEXT'],
     ['practice', 'notify_on_upload', 'INTEGER'],
     ['practice', 'contact_email', 'TEXT'],
+    ['practice', 'mail_from', 'TEXT'],
+    ['connection', 'books_signal', 'INTEGER'],
     ['practice', 'contact_phone', 'TEXT'],
     ['practitioner', 'role', 'TEXT'],
     ['practitioner', 'totp_secret', 'TEXT'],

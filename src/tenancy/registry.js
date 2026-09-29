@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS tenant (
   name        TEXT NOT NULL,
   plan        TEXT NOT NULL DEFAULT 'standard',
   status      TEXT NOT NULL DEFAULT 'active',
+  -- When the card first failed, for the grace window that decides how long the documents stay open
+  -- after past_due. Null unless the subscription is past due, and cleared the moment it is fixed — so a
+  -- card that fails, is retried, and fails again keeps one clock rather than a fresh window each time.
+  past_due_since TEXT,
   -- Stripe's identifiers for this practice. Copied from the checkout session and the subscription
   -- events, so a webhook that arrives later can be matched to a tenant without trusting metadata
   -- alone; and so support can find the customer record from a practice's row.
@@ -115,6 +119,12 @@ export function openRegistry(file) {
   }
   if (!columns.includes('stripe_subscription_id')) {
     db.exec('ALTER TABLE tenant ADD COLUMN stripe_subscription_id TEXT');
+  }
+  if (!columns.includes('past_due_since')) {
+    db.exec('ALTER TABLE tenant ADD COLUMN past_due_since TEXT');
+    // Start the grace clock for anyone already past due, rather than reading a null as "since when?"
+    // and locking a practice out whose card failed before this column existed.
+    db.prepare("UPDATE tenant SET past_due_since = ? WHERE status = 'past_due'").run(new Date().toISOString());
   }
   // The same startup sweep `src/db.js` does: platform sessions are live state, and a row nobody ever
   // touched again is a row that would otherwise outlive its own expiry forever.
@@ -264,7 +274,7 @@ export function tenantForToken(registry, token, at = new Date()) {
   const row = registry
     .prepare(
       `SELECT s.id, s.expires_at, a.id AS account_id, a.email,
-              t.id AS tenant_id, t.slug, t.name, t.plan, t.status
+              t.id AS tenant_id, t.slug, t.name, t.plan, t.status, t.past_due_since
          FROM saas_session s
          JOIN account a ON a.id = s.account_id
          LEFT JOIN tenant_member m ON m.account_id = a.id
@@ -333,26 +343,63 @@ export const TENANT_STATUS = {
   },
 };
 
-export const tenantAllowsAccess = (tenant) => (TENANT_STATUS[tenant?.status] ?? TENANT_STATUS.cancelled).allowed;
+/**
+ * How long a practice keeps its doors open after a card fails, before the documents are locked.
+ *
+ * Stripe's own dunning runs for weeks, and cutting a working practice off at the first failed charge is
+ * how a fixable billing hiccup becomes a cancellation. Zero means lock out at once. Per install, because
+ * how much slack to give a paying customer is the operator's call and not the software's.
+ */
+export const pastDueGraceDays = () => {
+  const value = Number(process.env.TICKMARK_PAST_DUE_GRACE_DAYS);
+  return Number.isFinite(value) && value >= 0 ? value : 14;
+};
+
+/**
+ * Whether the documents open for this tenant right now.
+ *
+ * `active` opens them; `pending_payment` and `cancelled` do not. `past_due` is the one with a judgement
+ * in it: a card that failed is a mistake to fix, not a decision to stop paying, so the documents stay
+ * open for `pastDueGraceDays()` while Stripe chases the card and close after it. `cancelled` — the
+ * subscription is over — still closes at once, because that is a decision rather than a hiccup.
+ */
+export function tenantAllowsAccess(tenant, at = new Date()) {
+  if (tenant?.status === 'past_due') {
+    const since = Date.parse(tenant?.past_due_since ?? '');
+    // A past-due practice with no clock is a state this code did not create (a hand-edited row). It is
+    // refused rather than waved through: an unmeasurable grace period must not become a door left open.
+    if (!Number.isFinite(since)) return false;
+    return at.getTime() < since + pastDueGraceDays() * 86400000;
+  }
+  return (TENANT_STATUS[tenant?.status] ?? TENANT_STATUS.cancelled).allowed;
+}
 
 /** Record what Stripe says. Returns the previous status, for the audit line. */
-export function setTenantBilling(registry, tenantId, { status = null, plan = null, customerId = null, subscriptionId = null }) {
+export function setTenantBilling(registry, tenantId, { status = null, plan = null, customerId = null, subscriptionId = null, at = now() }) {
   const current = registry
-    .prepare('SELECT status, plan, stripe_customer_id, stripe_subscription_id FROM tenant WHERE id = ?')
+    .prepare('SELECT status, plan, stripe_customer_id, stripe_subscription_id, past_due_since FROM tenant WHERE id = ?')
     .get(tenantId);
   if (!current) return null;
+
+  const nextStatus = status ?? current.status;
+  // The grace clock starts when the card first fails and stops the moment it is fixed. A repeat failure
+  // keeps the original clock rather than buying a fresh window — so "keep retrying a dead card" is not
+  // a way to hold the documents open forever.
+  const pastDueSince =
+    nextStatus === 'past_due' ? (current.status === 'past_due' ? current.past_due_since : at) : null;
 
   registry
     .prepare(
       `UPDATE tenant
-          SET status = ?, plan = ?, stripe_customer_id = ?, stripe_subscription_id = ?
+          SET status = ?, plan = ?, stripe_customer_id = ?, stripe_subscription_id = ?, past_due_since = ?
         WHERE id = ?`,
     )
     .run(
-      status ?? current.status,
+      nextStatus,
       plan ?? current.plan,
       customerId ?? current.stripe_customer_id,
       subscriptionId ?? current.stripe_subscription_id,
+      pastDueSince,
       tenantId,
     );
   return current;
@@ -433,7 +480,7 @@ export function tenantForHost(registry, host) {
   return (
     registry
       .prepare(
-        `SELECT t.id, t.slug, t.name, t.plan, t.status
+        `SELECT t.id, t.slug, t.name, t.plan, t.status, t.past_due_since
            FROM tenant_host h JOIN tenant t ON t.id = h.tenant_id
           WHERE h.host = ?`,
       )
@@ -444,7 +491,7 @@ export function tenantForHost(registry, host) {
 export function tenantForSlug(registry, slug) {
   return (
     registry
-      .prepare('SELECT id, slug, name, plan, status FROM tenant WHERE slug = ?')
+      .prepare('SELECT id, slug, name, plan, status, past_due_since FROM tenant WHERE slug = ?')
       .get(String(slug).toLowerCase()) ?? null
   );
 }

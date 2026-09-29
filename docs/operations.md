@@ -205,3 +205,66 @@ The reasons for the shape, in the order they matter:
 copy of that practice, in the layout `data/tenants/<id>/` expects — plus the registry's `saas.db` into `data/`, or
 nobody can sign in to any of them. Restore the practice whose day is on fire first, and take your time over the
 rest.
+
+## Running it in production: the checklist
+
+The pieces that are about *the machine and the network* rather than about Tickmark, gathered in one place so
+"ready for launch" is a list rather than a memory. Everything here is ordinary practice for any web app; none of
+it needs anything from this codebase beyond what is already there.
+
+### TLS, and the one header this does not set
+
+Put a reverse proxy in front — Caddy, nginx, Traefik — and let it terminate TLS. Tickmark listens over plain HTTP
+and deliberately sets **no `Strict-Transport-Security`**: it is often run over HTTP on a local network or in a
+trial, and HSTS on a plain-HTTP response is either ignored or, once cached, a way to lock an operator out of a
+machine they were still testing. **The proxy sets HSTS**, which is where it belongs — the layer that owns the
+certificate:
+
+```
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+```
+
+The app's own `Referrer-Policy`, `X-Content-Type-Options` and `X-Frame-Options` travel on every response already;
+HSTS is the one that is deliberately left to the proxy.
+
+### Backups: schedule them, and drill the restore
+
+Take one every night, onto another machine, and verify it in the same job:
+
+```
+# /etc/cron.d/tickmark — 2am nightly, one directory per day
+0 2 * * *  node /app/tools/backup-all.mjs --data /data --to /backups/$(date +\%F) && node /app/tools/backup-all.mjs --verify /backups/$(date +\%F)
+```
+
+(`backup.mjs` for a single-tenant install.) **A backup you have never restored is a hope, not a backup** — so once
+a month, run "What a restore involves" above against a scratch directory and open a practice. The test suite drills
+the *mechanics* (`test/backup.test.js`, `test/backup-all.test.js`); this drills *your* backup, on *your* disk.
+
+### Uptime: watch the one address that needs no sign-in
+
+```
+GET /healthz  ->  200 {"ok":true,"version":"0.2.0","practices":N}
+```
+
+Point any uptime monitor at it and alert on anything but 200. It touches the database, so a process that is up but
+cannot read its own schema answers `503 {"ok":false}` — which is exactly the case a health check that only opens a
+socket would call healthy. The `version` field is there so "which build is running" is answered without signing in.
+
+### Logs: one line per event, and the proxy's access log
+
+The app writes **one JSON line per operational event** to stdout/stderr — a request, or a failure:
+
+```
+{"ts":"…","level":"error","event":"request.failed","method":"POST","path":"/requests","error":"…","stack":"…"}
+```
+
+Alert on `event == "request.failed"`, and on `level == "error"` from the mail relay and Stripe. Per-request access
+logging is left to the reverse proxy, which already does it well; the app's own `request` line is there for a host
+that wants the app's view of status and timing without digging through the proxy. Ship both streams to whatever you
+aggregate with. On a self-host the same lines are simply in `docker logs` / the journal.
+
+### And the floor under the tests
+
+CI asserts the suite's coverage as well as reporting it — 93% lines, 90% functions, 75% branches, set from the
+measured baseline when the floor was laid down. A change that drops the suite below it fails the build rather than
+being noticed later. `npm run coverage` runs the same check locally.

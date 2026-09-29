@@ -129,18 +129,21 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
               ${COMMON_ZONES.map((zone) => html`<option value="${zone}"${practice.timezone === zone ? ' selected' : ''}>${zone}</option>`)}
             </select>
             <input name="contact_email" type="email" value="${practice.contact_email ?? ''}"
-              placeholder="clients@yourpractice.co.uk" aria-label="An address clients can write to">
+              placeholder="clients@yourpractice.co.uk" aria-label="An email address clients can write to">
             <input name="contact_phone" value="${practice.contact_phone ?? ''}"
               placeholder="Phone (optional)" aria-label="A phone number clients can ring">
+            <input name="mail_from" type="email" value="${practice.mail_from ?? ''}"
+              placeholder="Sending address (optional)" aria-label="The address emails to clients come from">
             <button type="submit">Save</button>
           </form>
         </div>
       </div>
       <p class="note">The name is what a client sees on every letter and on the page they upload to. The zone is
       where the practice is, and it decides one thing: whether a request is overdue yet. Everything stored is
-      in UTC; this is the calendar those dates are read on. The address and phone appear on the client's page
+      in UTC; this is the calendar those dates are read on. The email address and phone appear on the client's page
       — a client with a question about fees, or something they would rather not put in a message, is otherwise
-      looking for an old email.</p>
+      looking for an old email. The sending address is the one clients see in the From line of everything Tickmark
+      sends on your behalf; leave it blank to send from the installation's own address with your practice name on it.</p>
       <form method="post" action="/members/notify" class="card">
         <label class="check">
           <input type="checkbox" name="notify" value="1"${practice.notifyOnUpload ? raw(' checked') : ''}>
@@ -696,10 +699,11 @@ export async function renamePracticePage({ db, request, response, practitioner, 
 
   renamePractice(db, practiceId, name);
   if (posted('timezone')) setPracticeTimezone(db, practiceId, field(fields, 'timezone') ?? '');
-  if (posted('contact_email') || posted('contact_phone')) {
+  if (posted('contact_email') || posted('contact_phone') || posted('mail_from')) {
     setPracticeContact(db, practiceId, {
       email: posted('contact_email') ? field(fields, 'contact_email') : undefined,
       phone: posted('contact_phone') ? field(fields, 'contact_phone') : undefined,
+      mailFrom: posted('mail_from') ? field(fields, 'mail_from') : undefined,
     });
   }
   return redirect(response, '/members');

@@ -20,6 +20,7 @@ import { join } from 'node:path';
 
 import { openDatabase } from '../src/db.js';
 import { createApp } from '../src/app.js';
+import { NULL_LOG } from '../src/log.js';
 import { encryptFile, generatePracticeKey, unwrapPracticeKey } from '../web/tickmark-crypto.js';
 
 /** A browser-like client that keeps its own cookie jar. */
@@ -80,7 +81,43 @@ export function raw(base, path, { headers = {} } = {}) {
  * afterwards — including the uploaded blobs, because a test that leaves files behind is a
  * test that fills a disk.
  */
+/**
+ * What the app handed the mailer, newest last — and how to get a link back out of it.
+ *
+ * Sign-up and password-reset are two-step on purpose: the link that finishes either is *sent*, never
+ * shown to whoever asked (see `src/signin-views.js`). So a test that brings a mail server finishes the
+ * step by reading the link out of the letter that carried it — the same thing the recipient does —
+ * rather than off the page, where with a mailer it deliberately is not. `withServer` fills this by
+ * listening on the mailer's `onSent`. A test with no mail server has the link on the page instead (the
+ * "drafted, not sent" trial fallback) and never reaches for this.
+ */
+const sent = [];
+export const sentMessages = () => sent;
+
+/** The token out of the most recent letter whose link points at `path` — `'verify'`, or `'reset'`. */
+export function linkFromSent(path) {
+  const pattern = new RegExp(`/${path}/([A-Za-z0-9_-]{20,})`);
+  for (let i = sent.length - 1; i >= 0; i -= 1) {
+    const match = pattern.exec(String(sent[i]?.body ?? ''));
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/**
+ * The two-step account letters, held back from the relay.
+ *
+ * Sign-up and password-reset each send one link, and a test that brings a mail server is usually
+ * counting the *product's* mail — "exactly one reminder went out". The account letters are harness
+ * setup, not that: so `withServer` takes them (via the mailer's `onOutgoing`) instead of letting them
+ * land on the relay and be counted beside the reminder. They land here instead, and `signUp` reads the
+ * link out of them the way a recipient would. Matched on subject, which is the one thing that says
+ * what a letter is.
+ */
+const ACCOUNT_LETTER = /Finish creating your Tickmark practice|You already have a Tickmark practice|Set a new password for Tickmark/;
+
 export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter, webDir } = {}) {
+  sent.length = 0;
   const directory = mkdtempSync(join(tmpdir(), 'tickmark-test-'));
   const blobDir = join(directory, 'blobs');
   const db = openDatabase(join(directory, 'tickmark.db'));
@@ -89,12 +126,21 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
     maxUploadBytes,
     maxRequestBytes,
     maxRequestFiles,
-    mailer,
+    mailer: mailer
+      ? {
+          ...mailer,
+          onOutgoing: (message) => {
+            sent.push(message);
+            return ACCOUNT_LETTER.test(String(message.subject ?? '')) ? false : undefined;
+          },
+        }
+      : null,
     chaseBudgetMs,
     signInLimiter,
     signUpLimiter,
     clientLimiter,
     webDir,
+    log: NULL_LOG,
   });
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -129,7 +175,30 @@ export function plainBody(message) {
     : text.split('\r\n\r\n').slice(1).join('\r\n\r\n');
   return Buffer.from((payload ?? '').replace(/=\r\n/g, '').replace(/\r\n/g, ''), 'base64').toString('utf8');
 }
-export const signUp = (client, email, password = PASSWORD) => client.post('/signup', { email, password });
+/**
+ * Sign a practice up, and finish it the way a person has to.
+ *
+ * Sign-up is two steps by design (see `src/signin-views.js`): the account is only made when the link
+ * sent to the address is opened, which is what stops sign-up being a way to find out who has a
+ * practice. With no mail server — every test that does not bring a fake relay — the trial shows that
+ * link on the page, the same "drafted, not sent" fallback reminders use. So this helper opens the link
+ * and confirms it, and hands back the response that *created* the account (a 303), so callers that
+ * check `status === 303` keep saying what they mean.
+ *
+ * A response that is not the "check your email" page — a too-short password, a rate limit — is handed
+ * back untouched and **unread**, so a test can still read its body to check the words.
+ */
+export async function signUp(client, email, password = PASSWORD) {
+  const response = await client.post('/signup', { email, password });
+  if (response.status !== 200) return response;
+  // On the page when there is no mail server; in the letter the mailer carried when there is one.
+  // Either way it is the same link the person would open, so the step below is the same step.
+  let token = /\/verify\/([A-Za-z0-9_-]{20,})/.exec(await response.text())?.[1] ?? null;
+  if (!token) token = linkFromSent('verify');
+  if (!token) return response;
+  await client.get(`/verify/${token}`);
+  return client.post(`/verify/${token}`, {});
+}
 
 /**
  * Give a signed-in practice an encryption key, which is what sending a link requires.

@@ -27,6 +27,65 @@ built-in mail server.
 If a relay is not available, `docs/roadmap.md` records the alternative honestly: don't set these
 variables, and Tickmark keeps drafting reminders for you to send from wherever you normally do.
 
+## Making sure it lands: the sending domain
+
+The relay sends the mail; whether it *arrives* — and not in spam — depends on three DNS records on the
+domain in `TICKMARK_MAIL_FROM`. This is the one part of sending that is DNS rather than software, so it is
+done once at setup and then forgotten. A message that asks a client for financial records and then lands in
+spam is worse than no reminder at all.
+
+- **SPF** says which servers may send as your domain. Your relay gives you the record to add — or it is
+  already there if you relay through a provider you already send with (Google Workspace, Microsoft 365,
+  Fastmail, Postmark, SendGrid). It looks like `v=spf1 include:_spf.google.com ~all`. There must be
+  **exactly one** SPF record on the domain: two of them make both invalid.
+
+- **DKIM** signs each message so a recipient can check it really came from your domain, unaltered. Your
+  relay gives you a selector and a public key to publish as a `TXT` record (for example
+  `google._domainkey.example.com`). Once it is live, the relay signs every message automatically.
+
+- **DMARC** says what to do when SPF and DKIM both fail, and where the reports go. Start at
+  `v=DMARC1; p=none; rua=mailto:dmarc@example.com`, watch the reports for a couple of weeks to be sure
+  legitimate mail is passing, then tighten to `p=quarantine` and finally `p=reject`. A `p=reject` domain
+  is what stops anyone spoofing your practice's name to your clients — worth having when the mail is
+  asking people for their records.
+
+With all three in place and the relay configured, a reminder leaves from the practice's own address and
+arrives like any other piece of its post. The account letters — the link that finishes a sign-up, and the
+one that sets a password again — go out over the same relay and the same domain, so they inherit the same
+reputation and the same DMARC policy. **Watch the first real send of each anyway**: the tests below prove
+the conversation, not the inbox.
+
+## Sending as the practice, not as Tickmark
+
+The `From` is not one address for every practice on an installation. It is built per practice,
+from two of the practice's own settings (`fromFor` in `mailer.js`):
+
+- the **practice name** (settings → My practice) is always the display name, so a client sees who
+  wrote;
+- the **sending address** (`mail_from`, optional) is the address itself, when the practice has one —
+  on their own domain.
+
+So a practice that sets a sending address sends as `Ash & Co <accounts@ashandco.co.uk>` — their name
+and their domain. One that leaves it blank sends as `Ash & Co <no-reply@installation.example>`: their
+name, on the installation's address. That is the difference between a `From` a client recognises and a
+bare no-reply, and it is worth more than looks.
+
+### Why the per-practice From matters for deliverability
+
+A `From` on the practice's own domain is what makes the SPF / DKIM / DMARC alignment above **real**
+rather than hoped for. When a hosted installation sends as each practice's domain, the sending domain
+and the `From` domain match, so the practice's own SPF and DKIM cover the mail and DMARC passes on
+alignment. If the `From` were always the installation's address, every practice's mail would arrive as
+the installation's domain wearing a display name that is not that domain — precisely the shape mail
+filters are trained to distrust.
+
+So for a hosted setup sending as the practice's domain, the practice's DNS needs all three of the
+records above pointed at the installation's sending host, and the per-practice `mail_from` is the piece
+Tickmark holds up its end with. A single-user install is untouched by any of this: it sends as whatever
+`TICKMARK_MAIL_FROM` says, and if that is a Gmail address, Gmail's DMARC will quarantine the mail —
+which is exactly why the local-tunnel section below exists.
+
+
 ## What it sends
 
 Plain text, UTF-8, `Auto-Submitted: auto-generated` so a well-behaved out-of-office does not answer

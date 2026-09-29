@@ -149,6 +149,29 @@ export async function rewrapPrivateKey(wrappedPrivateKey, oldPassphrase, newPass
   return wrapPkcs8(await unwrapToPkcs8(wrappedPrivateKey, oldPassphrase), newPassphrase);
 }
 
+// --- the recovery sheet --------------------------------------------------------------------
+//
+// A forgotten passphrase is normally fatal to end-to-end encryption: the one thing that opens the
+// key is gone, and no server can help, because no server ever had it. The recovery sheet is the
+// honest way out. The browser makes a fresh random secret, seals the same private key under it —
+// which `rewrapPrivateKey` does in one step — and hands the practice the secret **on paper**, to
+// print and keep in a safe. The sealed copy goes to the server like every other; the secret does
+// not. So the server still cannot read a file, and a practice that loses a passphrase recovers from
+// its own filing cabinet rather than from us. Recovery never weakens the promise — it is the same
+// promise, held one way more.
+//
+// The secret is high-entropy random (32 bytes), not a chosen passphrase: it passes through the same
+// PBKDF2 record as a passphrase only so it shares the one wrapped format, and so the cost of a guess
+// stays the entire defence. `rewrapPrivateKey(wrapped, passphrase, newRecoverySecret())` makes a
+// sheet; `rewrapPrivateKey(sheet, recoverySecret, newPassphrase)` recovers from one.
+
+export const RECOVERY_SECRET_BYTES = 32;
+
+/** A fresh recovery secret, produced by the browser and printed once — never sent anywhere. */
+export function newRecoverySecret() {
+  return toBase64Url(random(RECOVERY_SECRET_BYTES));
+}
+
 // --- inviting someone into a practice ----------------------------------------------------
 //
 // The problem this solves: a new member needs the practice's private key, and the server must never

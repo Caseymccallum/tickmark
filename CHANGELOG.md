@@ -12,6 +12,194 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### Know whose books are behind — opt-in, and it never touches a document
+
+One optional feature reads past the client list, so it says exactly what it does and does not. A practice may
+turn on a signal that reads a **summary** of a client's accounting activity from their own Xero or QuickBooks —
+how many bank lines are unreconciled, and when the last one was — to flag the books that need attention before a
+deadline. It is **off until the practice turns it on**, and turning it on happens behind a warning. It is
+**read-only**, and it keeps a count and a date, **never the transactions themselves**: the fetch reduces the rows
+and discards them at the door. Clients' **documents** are untouched by any of this — they stay encrypted in the
+client's browser and unreadable to the server, whatever this setting says. The whole posture is written out in
+`docs/security.md`: a deliberate, disclosed widening of what is read about a client's **finances**, and a firm
+refusal to widen what is read about their **documents**. That line is the product.
+
+### The filing behind the request
+
+The Xero and QuickBooks connections have always read the client list and thrown the rest away — but the scope a
+practice already grants reaches further. Both now read each client's **filing profile**: the legal entity type,
+the financial year-end and the tax number — the facts a document request is built on. A limited company with a
+31 March year-end and a sole trader need different Januarys, and neither should be retyped or guessed. Nothing
+is invented: a record with no month is reported as no year-end, and QuickBooks, which states only a fiscal
+*start* month, keeps the month and leaves the day null rather than making up a date. The profile is kept on the
+client and shown on their page — "limited company · year end 31 March · tax GB123" — and a new request now starts
+there: for a client whose books say limited company with a 31 March year-end, the form arrives titled for the
+period the books cover, dated around that year-end, and carrying a limited company's checklist. Every part is a
+starting point to edit rather than a rule — the practice is the judge, and nothing is saved until they say so.
+
+### The recovery sheet
+
+The last feature, and the most delicate — the one that touches the end-to-end promise. A forgotten passphrase is
+normally the end of an encrypted practice: the one thing that opens the key is gone, and no server can help,
+because no server ever had it. The recovery sheet is the honest way out. The browser seals the same key under a
+fresh secret, the practice prints that secret once and keeps it offline, and the server stores only the sealed
+copy — a copy that opens nothing without the paper. So a practice recovers from its own filing cabinet, and "we
+cannot read your files" survives recovery intact. It is the same promise, held one way more.
+
+### The same as last year, in one action
+
+The biggest repeat cost in the research, closed as an operation rather than a feature. "Do this again" on a request
+raises the same list forward — the same client, the same matter, the same checklist, notes and all — with the
+title's year rolled on ("2025 return" becomes "2026 return") and the deadline left blank, because a new year has a
+new one to set. The original is never touched. It sits on both the open and the closed request: closing one year
+and raising the next are two halves of the same January habit.
+
+### One client, several matters
+
+The research's clearest gap. A practice thinks "Jane has a limited company and a partnership", not "Jane is one
+bucket of everything" — so a client is now the *contact* (one name, one email) and an entity is a matter under
+them: a limited company, a personal return, a partnership, each with its own documents. The request form asks
+"which matter?", a client's work groups under those matters on their page, and a request with no matter is simply
+ungrouped. Like a client name, a matter's name is its identity — type "the partnership" twice and it is the same
+one.
+
+### QuickBooks, and Practice Manager, into the same pipeline
+
+The integration surface is finished. QuickBooks gets the same connect → import flow as Xero — and its Customers
+carry `DisplayName` and `PrimaryEmailAddr`, so unlike Xero's organisations these rows arrive with an address. The
+Xero import now prefers Practice Manager when a practice has a PM tenant (its Clients carry name *and* email),
+falling back to the names-only organisations for a plain-Xero practice. Both pour into the one ingestion pipeline.
+
+Underneath, the per-provider connection rows collapsed into a single `connection` table keyed by `provider` — Xero,
+QuickBooks, and (through Xero's own token) Practice Manager share one definition of "a linked integration".
+
+### A file on "ask everyone"
+
+The bulk ask now takes the same optional attachment a single ask does — a signed engagement letter, a template to
+fill in — sent with every message and kept nowhere. Until now the seasonal send went out bare, so a practice that
+attaches to each individual ask could not attach to the run that saves the most time.
+
+### The client book, from QuickBooks
+
+The third source into the same pipeline, and the first that brings a name *and* an address in one query.
+QuickBooks Customers carry `DisplayName` and `PrimaryEmailAddr.Address`, so — unlike Xero's `connections` — these
+rows arrive ready to email. OAuth 2.0 against Intuit's own discovery-documented endpoints (not memory), read-only
+scopes, and the same dry run and report as a CSV. The one wrinkle is `realmId`: QuickBooks scopes everything to a
+company and hands the id back on the callback, so a practice that keeps each client in its own company is one
+realm each — the shape Xero calls an organisation. The adapter is built and tested here; the connect/import UI is
+the wiring that follows.
+
+### "Email address", where it is one
+
+The product called a client's email "their address", which reads like a postal address and confuses exactly the
+person who has to fill it in. Wherever the thing is an email address — the client's details, the "no email
+address" badge, the "with no email address" tile, the CSV columns, the import preview — it now says so. The CSV
+import still reads an old `Address` column, so a file exported before this still round-trips.
+
+### The client book, from Practice Manager — with emails
+
+`connections` gives a name and no address; Practice Manager's Clients carry `Name`, their own `Email`, and
+`Contacts[]` with `IsPrimary`. That second source is the one that brings a chase-ready record, and it pours into
+the same pipeline — client's own email first, else the primary contact's, else any contact's. Built and tested
+here, but Xero holds the Practice Manager API behind a partner gate (a security self-assessment and approval
+before the `practicemanager` scope is granted), so this half reaches a live practice only once Xero approves the
+app. The names-only `connections` import works today with no approval at all.
+
+### The client book, from Xero
+
+The integration half of the same import. Connect the practice's Xero (OAuth 2.0, hand-rolled over `fetch` in
+`tenancy/xero.js` — the same bargain as Stripe, no SDK in a project with none), and the client book comes across
+through the *same* pipeline a CSV uses: the same dry run, the same "importing twice creates nothing twice", the
+same report. One definition of "same client", and the integration does not get to invent a second.
+
+The `state` that guards the callback is the whole CSRF story: `/connect` mints one and parks it in a short-lived
+cookie, `/callback` refuses anything that cannot present it, and a forged callback is turned away before a single
+token is exchanged or stored. The scopes are read-only on purpose — a client-list import has no business writing
+to anybody's books.
+
+`connections` is the source: the organisations a practice manages in Xero, one per client. That carries a name and
+no address, so rows arrive with a blank email and the pipeline counts them as clients the practice chases by phone.
+The richer record (name *and* contact) lives in Practice Manager's Clients; the transform is a seam, so both pour
+into one pipeline when a practice needs it. Tokens are stored readable — the server must present them to Xero, so
+unlike the ECDH keys they cannot be sealed client-side; the scope is the promise, and it is read.
+
+### The client book, across in one go
+
+The switching-cost wall, and the pipe every integration will pour into. Import a whole practice's clients from a
+pasted list — Tickmark's own `clients.csv`, a practice-management export, or two columns straight out of a
+spreadsheet. The columns are matched by name (`clientRowsFromCsv`), so the file does not have to be ours.
+
+It is deliberately two steps — paste, *then* confirm — because importing a book of clients is the one change here
+that is not a single record. The preview reports exactly what the run will do and writes nothing; the preview and
+the run share one definition of "same client" (`findOrCreateClient`, through `previewClientImport` and
+`importClients`), so a dry run can honestly promise what the run does. Name is the identity, case-insensitively:
+importing twice creates nothing twice, and a re-import that fills in an address updates it in place. Every row is
+counted — created, given an address, already there, or no name and skipped — so "imported 40" cannot quietly hide
+"200 you already had".
+
+`parseCsv` is the inverse of the `csvCell` the exports write, so the round trip holds: export, fix names in a
+sheet, import. Quoted fields, CRLF and Excel's BOM are read the way a spreadsheet writes them, because "Smith,
+Jones & Co" is one client name and must not split on its comma. This is the foundation the Xero Practice Manager
+and QuickBooks syncs will stand on — each is one more source that produces `{ name, email }` rows and nothing more.
+
+### A document that rides the ask or the reminder
+
+The one thing a practice could not do before: send a client something along with the ask — a template to fill, a
+signed letter, a spreadsheet. It is now an optional attachment on the ask and on the reminder, and the decision
+that shapes the whole feature is where the file lives: **it does not**. It is attached to the outgoing message and
+then gone — never written to the database and never written to disk — so there is nothing at rest for anyone,
+this server included, to read. That keeps the promise that the server cannot read your files true in *both*
+directions, which a portal download could not have: a file resting on the server is a file the server can read.
+
+`buildMessage` grew `multipart/mixed` — the words first, then the file — without changing a byte of what a message
+with no attachment looks like. The body is read by a hand-written `multipart/form-data` parser (`readForm`), in the
+spirit of the SMTP client and the ZIP reader: no dependency touches a request body. The record notes the file too,
+so the history — and its export — says a document went out and what it was called.
+
+### The whole history, out as a spreadsheet
+
+Requests, clients and documents all exported as CSV; the event log — arguably the most valuable record the product
+keeps — did not. `GET /history.csv` gives it now: every recorded event across every request, with the client and
+the request it belongs to on each row, so a season can be sorted by either. `What` is the event's own name, the
+same code the request page shows, so the file and the screen cannot disagree about what happened. It answers "did
+we ever get the bank statements?" from a file rather than from memory.
+
+### A sign-up that proves the address, and a password set again from the mailbox
+
+Sign-up used to make the account the moment the form was posted, and answered "that address is taken" to
+whoever asked — which is a way to find out who has a Tickmark practice, in a product that holds financial
+records. It is now two steps: the form always answers "check your email", and the practice is made only when
+the link in that inbox is opened. Nothing is created before the address is proven, and nothing about who is
+already here is said to the person at the keyboard. The password is hashed *before* the lookup rather than
+after, so the reply takes the same time either way — a lookup that answered "taken" in a millisecond and
+"free" after a scrypt hash would have been the same leak in a different costume.
+
+The other half of getting in is getting back in. A lost password is set again from the mailbox it belongs to:
+a single-use link that proves the address, expires in an hour, and ends every session when it is spent — the
+point of a reset is that whatever was holding the old password stops working. With a mail server the link is
+sent and shown nowhere else; with none it is never shown at all, because a reset link handed to whoever asked
+would be a reset for everybody, and the page points at `tools/reset-password.mjs` instead. And either link can
+be **sent again** from the page you are waiting on, in case the mail did not arrive.
+
+Two tables carry it — `signup_token` and `password_reset` — each holding only a digest of its token, like
+every other link here. The schema changed, so this is the entry that matters most to an upgrader: both tables
+are created on open and nothing is deleted. `test/account-recovery.test.js` is mostly about what the flow
+*refuses* to say.
+
+### A failed card is a mistake to fix, not a lockout
+
+A `past_due` subscription used to close a practice's documents the moment Stripe said a charge failed —
+mid-season, while the card was still being fixed. Stripe's own dunning runs for weeks, and cutting a working
+practice off at the first failed charge is how a fixable billing hiccup becomes a cancellation. The documents
+now stay open for a grace window and close after it, and the length is the operator's call:
+`TICKMARK_PAST_DUE_GRACE_DAYS`, fourteen days by default, zero for the old behaviour. `cancelled` — the
+subscription is over — still closes at once, because that is a decision rather than a hiccup.
+
+`past_due_since` records when the card *first* failed, so a card that fails, is retried, and fails again keeps
+one clock rather than a fresh window each time: "keep retrying a dead card" is not a way to hold the documents
+open forever. Paying clears it. A `past_due` practice with no clock recorded is refused rather than waved
+through, so an unmeasurable grace period can never become a door left open.
+
 ### Every practice on the machine, backed up and checked in one command
 
 Hosting several practices had a documented procedure that could not work. `docs/operations.md` gave a shell loop —

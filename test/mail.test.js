@@ -20,6 +20,7 @@ import {
   buildMessage,
   dotStuff,
   encodeHeader,
+  fromFor,
   mailerFromEnvironment,
   parseSmtpUrl,
   sendMail,
@@ -275,4 +276,19 @@ test('the message builder refuses nothing and invents nothing', () => {
     'and a non-ASCII one is encoded rather than sent raw',
   );
   assert.equal(encodeHeader('a\r\nb'), 'a b', 'a header cannot be broken across lines by whatever was typed');
+
+test('the From line is the practice — their name, and their own address when one is set', () => {
+  const config = { from: 'no-reply@tickmark.example.com' };
+  // No address of their own: the installation's, with the practice's name on it so a client sees who
+  // wrote rather than a bare no-reply.
+  assert.equal(fromFor({ name: 'Ash & Co' }, config), 'Ash & Co <no-reply@tickmark.example.com>');
+  // Their own address on their own domain: both halves are theirs, which is what makes the
+  // SPF/DKIM/DMARC alignment a real one rather than a hope.
+  assert.equal(
+    fromFor({ name: 'Ash & Co', mail_from: 'accounts@ashandco.co.uk' }, config),
+    'Ash & Co <accounts@ashandco.co.uk>',
+  );
+  // No practice at all (a system message): the installation's own address, unchanged.
+  assert.equal(fromFor(null, config), 'no-reply@tickmark.example.com');
+});
 });

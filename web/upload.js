@@ -57,17 +57,21 @@ if (keyElement) {
     const fileInput = form.querySelector('input[type=file]');
     const sendButton = form.querySelector('button[type=submit]');
 
-    // The moment a file is chosen, not the moment a button is pressed: a client who picked the
+    // The moment files are chosen, not the moment a button is pressed: a client who picked the
     // wrong file should learn it while they are still looking at the picker, and the send button
-    // stays dead until they pick one that can actually be accepted.
+    // stays dead until they pick something that can actually be accepted.
     //
-    // Two of the three checks warn rather than stop. Only the size limit is a refusal, because the server
-    // would refuse it anyway and a dead button is the honest signal. A locked PDF or a file that looks like an
-    // earlier one is a judgement, the client may not be able to do anything about it, and refusing to send the
-    // only copy somebody has would be worse than the problem being prevented — see web/preflight.js.
-    fileInput.addEventListener('change', async () => {
-      const file = fileInput.files[0];
-      if (!file) {
+    // Two of the checks warn rather than stop. Only the size limit is a refusal, because the server
+    // would refuse it anyway and a dead button is the honest signal. A locked PDF or a file that looks
+    // like an earlier one is a judgement, the client may not be able to do anything about it, and
+    // refusing to send the only copy somebody has would be worse than the problem being prevented —
+    // see web/preflight.js.
+    //
+    // It validates *every* picked file, because a client who chose three files needs to hear about
+    // the one that is too large before any of them are encrypted, not after the first two went.
+    const validate = async () => {
+      const files = [...fileInput.files];
+      if (files.length === 0) {
         sendButton.disabled = false;
         say(form, '');
         return;
@@ -76,82 +80,126 @@ if (keyElement) {
       const warnings = [];
       let blocked = false;
 
-      if (file.size > maxBytes) {
+      const oversized = files.filter((file) => file.size > maxBytes);
+      if (oversized.length > 0) {
         warnings.push(
-          `This file is too large (${readable(file.size)}). Your practice's maximum upload limit per file is ${readable(maxBytes)}.` +
+          `${oversized.length === 1 ? 'This file is' : `These ${oversized.length} files are`} too large ` +
+            `(${oversized.map((file) => `${file.name} ${readable(file.size)}`).join(', ')}). ` +
+            `Your practice's maximum upload limit per file is ${readable(maxBytes)}.` +
             ' Try exporting a smaller version — most scanners can make a smaller PDF.',
         );
         blocked = true;
       }
 
-      // Both of the checks below read the file, which takes a moment on a large scan — so the disabling and
-      // the message happen after the awaiting, and nothing is said in the meantime. A half-second of silence is
-      // better than a message that changes under the reader's eyes.
+      // The checks below read the files, which takes a moment on a large scan — so the disabling and
+      // the message happen after the awaiting, and nothing is said in the meantime. A half-second of
+      // silence is better than a message that changes under the reader's eyes.
       try {
-        if (!blocked && (await looksPasswordProtected(file))) {
-          warnings.push(
-            'This looks like a password-protected PDF — your practice will not be able to open it.' +
-              ' If you can, save or print a copy without the password first.',
-          );
+        for (const file of files) {
+          if (file.size > maxBytes) continue;
+          if (await looksPasswordProtected(file)) {
+            warnings.push(
+              `${file.name} looks like a password-protected PDF — your practice will not be able to open it.` +
+                ' If you can, save or print a copy without the password first.',
+            );
+            continue;
+          }
+          const twin = duplicateOf(file, alreadySent);
+          if (twin) {
+            warnings.push(
+              `You already sent a file called ${twin.name} (${readable(twin.bytes)}) on ${twin.at}.` +
+                ' If this is a different document, send it anyway.',
+            );
+          }
         }
       } catch {
-        // Reading the file is best-effort. A browser that cannot slice a file is not a reason to stop
+        // Reading a file is best-effort. A browser that cannot slice a file is not a reason to stop
         // somebody sending their documents.
-      }
-
-      const twin = duplicateOf(file, alreadySent);
-      if (!blocked && twin) {
-        warnings.push(
-          `You already sent a file called ${twin.name} (${readable(twin.bytes)}) on ${twin.at}.` +
-            ' If this is a different document, send it anyway.',
-        );
       }
 
       sendButton.disabled = blocked;
       say(form, warnings.join(' '), blocked);
+    };
+
+    fileInput.addEventListener('change', validate);
+
+    // A desktop convenience that costs nothing on a phone: dropping files on the form is the same as
+    // choosing them, so the picker is not the only way in.
+    for (const kind of ['dragover', 'dragenter']) {
+      form.addEventListener(kind, (event) => {
+        event.preventDefault();
+        form.classList.add('dropping');
+      });
+    }
+    form.addEventListener('dragleave', () => form.classList.remove('dropping'));
+    form.addEventListener('drop', (event) => {
+      event.preventDefault();
+      form.classList.remove('dropping');
+      const dropped = event.dataTransfer?.files ?? [];
+      if (dropped.length > 0) {
+        fileInput.files = dropped;
+        validate();
+      }
     });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const file = fileInput.files[0];
-      if (!file) return;
+      const files = [...fileInput.files];
+      if (files.length === 0) return;
 
       // A backstop beside the change listener, for a form submitted without a change event.
-      if (file.size > maxBytes) {
+      const oversized = files.find((file) => file.size > maxBytes);
+      if (oversized) {
         say(
           form,
-          `This file is too large (${readable(file.size)}). Your practice's maximum upload limit per file is ${readable(maxBytes)}.`,
+          `${oversized.name} is too large (${readable(oversized.size)}). Your practice's maximum upload limit per file is ${readable(maxBytes)}.`,
         );
         return;
       }
 
+      // Each file is encrypted and sent as its own envelope, one after another: the route takes one
+      // file at a time, and a batch that stops halfway says where it stopped rather than pretending.
+      // The client's note goes with each, because it is what they said about what they are sending.
+      const note = form.querySelector('input[name=note]')?.value ?? '';
       try {
-        say(form, `Encrypting ${file.name} (${Math.round(file.size / 1024)} KB)…`);
-        const plaintext = new Uint8Array(await file.arrayBuffer());
-        const envelope = await encryptFile(publicKey, plaintext);
+        let sent = 0;
+        for (const file of files) {
+          const where = files.length > 1 ? ` (${sent + 1} of ${files.length})` : '';
+          say(form, `Encrypting ${file.name}${where} — ${Math.round(file.size / 1024)} KB…`);
+          const plaintext = new Uint8Array(await file.arrayBuffer());
+          const envelope = await encryptFile(publicKey, plaintext);
 
-        say(form, `Sending ${Math.round(envelope.length / 1024)} KB…`);
-        const response = await fetch(form.action, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/octet-stream',
-            'x-file-name': encodeURIComponent(file.name),
-            'x-file-type': file.type || 'application/octet-stream',
-            // The client's own words about what they sent. A header, like the filename, because the
-            // body is the encrypted file and nothing else may travel in it.
-            'x-note': encodeURIComponent(form.querySelector('input[name=note]')?.value ?? ''),
-            // Which key sealed it, so the practice can tell later which files a key is holding.
-            ...(keyId ? { 'x-key-id': keyId } : {}),
-          },
-          body: envelope,
-        });
+          say(form, `Sending ${file.name}${where}…`);
+          const response = await fetch(form.action, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/octet-stream',
+              'x-file-name': encodeURIComponent(file.name),
+              'x-file-type': file.type || 'application/octet-stream',
+              // The client's own words about what they sent. A header, like the filename, because the
+              // body is the encrypted file and nothing else may travel in it.
+              'x-note': encodeURIComponent(note),
+              // Which key sealed it, so the practice can tell later which files a key is holding.
+              ...(keyId ? { 'x-key-id': keyId } : {}),
+              // Which checklist line this answers, when the form offers one (the practice adding a
+              // file for a client). Absent on the client's page, where each row is already a line.
+              ...(form.querySelector('select[name=item]')?.value
+                ? { 'x-item-id': form.querySelector('select[name=item]').value }
+                : {}),
+            },
+            body: envelope,
+          });
 
-        if (response.ok) {
-          location.reload();
-          return;
+          if (!response.ok) {
+            const page = await response.text();
+            const words = page.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+            // One file needs no name in its own failure; a batch does, or the client cannot tell which.
+            say(form, files.length > 1 ? `Could not send ${file.name}: ${words}` : words);
+            return;
+          }
+          sent += 1;
         }
-        const page = await response.text();
-        say(form, page.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200));
+        location.reload();
       } catch (error) {
         say(form, `That did not work: ${error.message}`);
       }

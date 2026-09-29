@@ -302,10 +302,17 @@ to the core app untouched. The pieces:
   the practice's file with the core's own `createSession`, under the core's own cookie name. That
   is why `src/app.js` still knows nothing about registries, and why every existing page works
   unchanged for a hosted practice.
-- **The billing wall lives in the resolver** (`§2.4`, step 4): a tenant whose status is not
-  `active` is answered *before* `pool.get`, so a locked-out practice's database is never opened for
-  a request that cannot be served. Client links (`/r/<token>`) are deliberately **not** blocked —
-  a client mid-collection must not be stranded by their accountant's billing.
+- **The billing wall lives in the resolver** (`§2.4`, step 4): a tenant whose subscription does not open
+  the documents is answered *before* `pool.get`, so a locked-out practice's database is never opened for a
+  request that cannot be served. `active` opens them; `pending_payment` and `cancelled` do not; and
+  `past_due` stays open for a grace window first. Client links (`/r/<token>`) are deliberately **not**
+  blocked — a client mid-collection must not be stranded by their accountant's billing.
+- **A failed card is a mistake to fix, not a lockout.** `past_due` keeps the documents open for
+  `TICKMARK_PAST_DUE_GRACE_DAYS` (fourteen by default, zero for the old instant lockout) while Stripe
+  chases the card. `past_due_since` records when it *first* failed, so a card that fails, is retried, and
+  fails again keeps one clock rather than a fresh window each time. `cancelled` — the subscription is over
+  — closes at once, because that is a decision rather than a hiccup. `tenantAllowsAccess` in
+  `src/tenancy/registry.js` is the one place this is decided.
 - **Confirmed sign-in, and the one thing this does not do yet.** Payment is confirmed by the
   webhook, never by the `success_url` redirect: a browser can close before it arrives, and Stripe
   retries until the endpoint says 200.

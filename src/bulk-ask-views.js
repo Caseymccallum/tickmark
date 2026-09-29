@@ -18,8 +18,8 @@
  */
 import { CHASE_BUDGET_MS } from './chase-views.js';
 import { hashToken, newToken } from './crypto.js';
-import { field, formFields, originOf, readBody } from './http.js';
-import { mailHtml, sendMail } from './mailer.js';
+import { field, originOf, readForm } from './http.js';
+import { mailHtml, fromFor, sendMail } from './mailer.js';
 import { openingDraft } from './notices.js';
 import {
   clientsForBulkSend,
@@ -112,7 +112,7 @@ export function askEveryonePage({ db, response, practitioner, practiceId, url, m
               'Every client on your list is missing an email address, and this action is entirely about writing to people.',
               html`<a class="btn primary" href="/clients">Go to clients</a>`,
             )
-          : html`<form method="post" action="/ask-everyone" class="card">
+          : html`<form method="post" action="/ask-everyone" class="card" enctype="multipart/form-data">
               <h2>The list and the deadline</h2>
               <label for="template_id">Which list?</label>
               <select id="template_id" name="template_id" required>
@@ -144,6 +144,11 @@ export function askEveryonePage({ db, response, practitioner, practiceId, url, m
                 placeholder="Here is the list for your 2026 filing. Please send these by the end of the month.">${chosen?.note ?? ''}</textarea>
               <p class="note">The same words go to everyone, so leave out anything only true of one client — any
               request can be edited afterwards.</p>
+
+              <h2>Attachment</h2>
+              <p class="note">Optional: a file that goes with every ask — a signed engagement letter, a template to
+              fill in. It rides each email and is kept nowhere, exactly as on a single ask.</p>
+              <input type="file" name="attachment">
 
               <h2>Who to ask</h2>
               <p class="note">${reachable.length} of ${clients.length}
@@ -179,9 +184,12 @@ export function askEveryonePage({ db, response, practitioner, practiceId, url, m
  * describe. So every request exists before the first email is attempted, the run bounds itself in time, and
  * what it did not reach is reported as unsent *and finishable* rather than as lost.
  */
-export async function askEveryone({ db, request, response, practitioner, practiceId, mailer, chaseBudgetMs = CHASE_BUDGET_MS }) {
+export async function askEveryone({ db, request, response, practitioner, practiceId, mailer, maxUploadBytes, chaseBudgetMs = CHASE_BUDGET_MS }) {
   if (!requireSignIn({ practitioner, response })) return;
-  const fields = formFields(await readBody(request));
+  const { fields, files } = await readForm(request, maxUploadBytes);
+  // A file may ride every ask exactly as on a single one: attached, sent, and kept nowhere.
+  const file = files[0] ?? null;
+  const attachment = file ? { filename: file.filename, contentType: file.contentType, data: file.data } : null;
 
   const template = templateFor(db, practiceId, field(fields, 'template_id') ?? '');
   const title = (field(fields, 'title') ?? '').trim();
@@ -238,7 +246,7 @@ export async function askEveryone({ db, request, response, practitioner, practic
   }
   const items = template.items.map((item) => item.label);
   const origin = originOf(request);
-  const practiceName = practiceFor(db, practiceId).name;
+  const practice = practiceFor(db, practiceId);
 
   // Every request first, each with its own link issued here rather than inside the send loop: a request that was
   // made is then one its client can already use, whatever the email does.
@@ -279,7 +287,7 @@ export async function askEveryone({ db, request, response, practitioner, practic
       break;
     }
     results.push(
-      await sendOneOpening(db, row, { origin, title, dueAt: due || null, clientNote, items }, mailer, practiceName),
+      await sendOneOpening(db, row, { origin, title, dueAt: due || null, clientNote, items, attachment }, mailer, practiceFor(db, practiceId)),
     );
   }
 
@@ -299,7 +307,7 @@ export async function askEveryone({ db, request, response, practitioner, practic
  * It goes through `openingDraft` — the same wording the single-request page drafts — so "here is what we need"
  * has exactly one home, and a practice that improves it improves it on every request rather than on most.
  */
-async function sendOneOpening(db, { client, requestId, token }, { origin, title, dueAt, clientNote, items }, mailer, practiceName) {
+async function sendOneOpening(db, { client, requestId, token }, { origin, title, dueAt, clientNote, items, attachment = null }, mailer, practice) {
   const message = openingDraft({
     clientName: client.name,
     title,
@@ -307,17 +315,19 @@ async function sendOneOpening(db, { client, requestId, token }, { origin, title,
     items,
     note: clientNote,
     link: `${origin}/r/${token}`,
-    practiceName,
+    practiceName: practice?.name ?? null,
   });
 
   try {
     const { messageId } = await sendMail(mailer, {
+      from: fromFor(practice, mailer),
       to: client.email,
       subject: message.subject,
       body: message.body,
-      html: mailHtml(message.body, practiceName),
+      html: mailHtml(message.body, practice?.name ?? null),
+      attachment,
     });
-    recordEvent(db, { requestId, kind: 'request.sent', detail: `${client.email} — ${messageId}` });
+    recordEvent(db, { requestId, kind: 'request.sent', detail: `${client.email} — ${messageId}${attachment ? ` — with ${attachment.filename} attached` : ''}` });
     return { row: { client, requestId }, outcome: 'sent', to: client.email, messageId };
   } catch (error) {
     // Recorded against the request it belongs to, so that client's history says the ask failed rather than
@@ -377,7 +387,7 @@ function askEveryoneReportPage({ practitioner, template, title, results, without
             ${withoutAddress.length === 1 ? 'client was' : 'clients were'} not asked</strong> because they have no
             email address. Nothing was made for them: ${withoutAddress
               .map((client) => client.name)
-              .join(', ')} — add an address on <a href="/clients">the clients page</a> and ask again.</p>`
+              .join(', ')} — add an email address on <a href="/clients">the clients page</a> and ask again.</p>`
         : ''}
 
       <div class="scroll"><table>

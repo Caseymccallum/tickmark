@@ -113,7 +113,7 @@ test('the board exports as a spreadsheet, honouring the filters it was made from
     const [header, first] = body.replace('\uFEFF', '').split('\r\n');
     assert.equal(
       header,
-      'Client,Address,Request,State,Documents,Received,Outstanding,To check,Due,Asked,Closed',
+      'Client,Email address,Request,State,Documents,Received,Outstanding,To check,Due,Asked,Closed',
       'the columns are named',
     );
     assert.match(first, /^Lodis Ltd,accounts@lodis\.example,2026 filing,waiting on the client,1,0,1,0,2026-03-31,/, 'and each row is a request');
@@ -169,7 +169,7 @@ test('the clients list exports too, and searches by name or address', async (t) 
     const body = (await csv.text()).replace('\uFEFF', '');
     assert.match(
       body,
-      /^Client,Address,Open requests,Closed requests,Outstanding,Last contact,First asked/,
+      /^Client,Email address,Open requests,Closed requests,Outstanding,Last contact,First asked/,
       'columns — "Last contact" rather than "Last written to", because since 2v a recorded phone call counts as contact too, and a column name that lies about its contents is the defect this project keeps finding',
     );
     assert.match(body, /Lodis Ltd,accounts@lodis\.example,1,0,1,/, 'a row per client, with what they owe');

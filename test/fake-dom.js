@@ -194,6 +194,7 @@ export function installBrowser({
   maxBytes = null,
   alreadySent = null,
   files = [],
+  fileList = null,
   fetch: respond = null,
 } = {}) {
   const sent = [];
@@ -226,6 +227,12 @@ export function installBrowser({
     parentElement: element({ children: { '.status': saveStatus } }),
   });
 
+  // "Download everything" and the list it packs. They appear only when a test supplies `fileList`, so
+  // a page with no bulk control runs exactly as it did before this existed.
+  const downloadAllButton = element();
+  const downloadAllStatus = element();
+  const fileListElement = fileList === null ? null : element({ textContent: JSON.stringify(fileList) });
+
   const document = {
     getElementById: (id) =>
       ({
@@ -237,6 +244,9 @@ export function installBrowser({
         passphrase,
         unlock: unlockButton,
         'unlock-status': unlockStatus,
+        'download-all': fileList === null ? null : downloadAllButton,
+        'download-all-status': fileList === null ? null : downloadAllStatus,
+        'file-list': fileListElement,
       })[id] ?? null,
     querySelectorAll: (selector) =>
       selector === 'form.upload' ? [uploadForm] : selector === 'button.save' ? [saveButton] : [],
@@ -284,6 +294,8 @@ export function installBrowser({
     unlockStatus,
     saveButton,
     saveStatus,
+    downloadAllButton,
+    downloadAllStatus,
     load(path) {
       installGlobals({
         document,

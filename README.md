@@ -84,9 +84,10 @@ Since then, and in the order a practice meets them:
   day early in Auckland and a day late in Honolulu for part of every day.
 - **Your own account**: change your password — it costs the current one, and ends every other session —
   change your address, and see where you are signed in, with a button per session. And for the day the
-  password is lost entirely, `tools/reset-password.mjs` replaces it from the command line. The passphrase
-  that unwraps the key is untouched and unrecoverable, because that is the design — see [the encryption
-  document](docs/encryption.md).
+  password is lost entirely, set a new one from a link sent to your own address: it proves the mailbox, it
+  works once, and spending it signs out every other session. With no mail server, `tools/reset-password.mjs`
+  replaces it from the command line. The passphrase that unwraps the key is untouched and unrecoverable,
+  because that is the design — see [the encryption document](docs/encryption.md).
 - **An invitation you can take back**: a link that hands over a copy of the practice's key can be revoked
   before it is used, instead of waiting seven days for it to die.
 - **A letter, not a memo**: the ask and the reminder leave as plain text *and* as a styled letter with
@@ -216,9 +217,19 @@ Tickmark's answer is: **on your server, and nobody else.**
   key of their own, and from then on every upload is sealed to them. `src/totp.js` is
   RFC 6238 in about a hundred lines of `node:crypto`, checked against the specification's
   own test vectors
+- **a sign-up that proves the address**: making a practice is two steps — the form always says "check your
+  email", and the account exists only when the link in that inbox is opened. It never answers "is that
+  address taken?", because a product holding financial records should not also be a way to find out who has
+  one. The same mailbox brings a password back when one is lost, and either link can be sent again if the
+  mail does not arrive. See [docs/security.md](docs/security.md).
 - **client records you can reuse**: a directory of everyone you ask, with what each still owes and
   whether they can be written to at all, and **who is due an ask** — shown on the board when the year
   has come round, and with the ask already ticked. See [docs/clients.md](docs/clients.md).
+- **bring your clients in from the tools you already run**: import the list from a CSV, or straight from
+  **Xero**, **QuickBooks** or **Xero Practice Manager** — and the same connection reads each client's
+  **filing profile**: the entity type, financial year-end and tax number, kept and shown on their page.
+  A new request starts there — titled for the period the books cover, dated around that year-end, with a
+  checklist for their entity type. No retyping a January client list, and no guessing when a year ends.
 - **a list you use again**: a checklist saved under a name, and **ask everyone at once** —
   one list, one deadline, a request per client with its own link, and a report naming every
   outcome
@@ -226,8 +237,12 @@ Tickmark's answer is: **on your server, and nobody else.**
   if you configure a mail relay, with every attempt recorded whether it worked or not. It
   also tells *you* when a client sends something, once a day at most, so you are not the last
   to know about your own work
+- **a document that rides the ask or the reminder**: attach a template, a letter or a spreadsheet to any message
+  going to a client. It goes out with the email and is kept nowhere — not on the server, not in a database — so
+  the promise that this cannot read your files holds in both directions.
 - a **record**: an append-only log of what was sent, what arrived, and when, so the
-  question "did we get it?" is answered by reading rather than remembering
+  question "did we get it?" is answered by reading rather than remembering — and exportable as
+  `history.csv`, the whole trail in one file.
 - **end-to-end encryption**: files are encrypted in the client's browser to your
   public key. The server stores ciphertext it cannot read, including if you self-host
   it — which matters when the host is a VPS you do not physically control.

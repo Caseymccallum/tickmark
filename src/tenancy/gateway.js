@@ -24,6 +24,7 @@ import { redirect, sendPage } from '../views.js';
 import { applyStripeEvent } from './billing.js';
 import {
   TENANT_STATUS,
+  tenantAllowsAccess,
   accountByEmail,
   clearSaasSessionCookie,
   createAccount,
@@ -136,7 +137,10 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
   }
 
   /** What a status means for access, from the one table that says so. */
-  const statusFor = (tenant) => TENANT_STATUS[tenant?.status] ?? TENANT_STATUS.cancelled;
+  const statusFor = (tenant) => ({
+    ...(TENANT_STATUS[tenant?.status] ?? TENANT_STATUS.cancelled),
+    allowed: tenantAllowsAccess(tenant),
+  });
 
   return { handle, tenantUrlFor, tenantOfHost, customerIdOf, statusFor };
 
