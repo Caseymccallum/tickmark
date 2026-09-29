@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 
 import { SmsError, normalisePhone, parseSmsUrl, sendSms, smsFromEnvironment, smsReminder } from '../src/sms.js';
+import { practiceWithRequest, withServer } from './helpers.js';
 
 /** A gateway that records what it was sent and replies with the given status and body. */
 function fakeGateway(status = 200, body = '{"sid":"SM123"}') {
@@ -154,4 +155,59 @@ test('the reminder is one line and a link, naming two documents and counting the
 
   const nothing = smsReminder({ practiceName: 'Lodis', title: '2025 return', missing: [], link: 'https://x/r/a' });
   assert.match(nothing, /a reminder about 2025 return/, 'with nothing missing it is a nudge, not a list');
+});
+
+// --- the reminder, as it goes out ---------------------------------------------------------------
+
+test('the chase texts a client who has a number, beside the letter', async () => {
+  const texted = [];
+  await withServer(
+    async ({ agent, db }) => {
+      const practice = await practiceWithRequest({ agent, db });
+      const clientId = db.prepare('SELECT client_id FROM request WHERE id = ?').get(practice.requestId).client_id;
+      db.prepare('UPDATE client SET phone = ? WHERE id = ?').run('+44 7700 900123', clientId);
+
+      const report = await practice.client.post('/chase', {});
+      assert.equal(report.status, 200, 'the run reports back');
+
+      assert.equal(texted.length, 1, 'one text went out, beside the letter');
+      assert.equal(texted[0].to, '+447700900123', 'to the number on the client, made diallable');
+      assert.match(texted[0].body, /2025 return/, 'naming what is still owed');
+      assert.match(texted[0].body, /\/r\//, 'and carrying the same link the letter does');
+
+      const recorded = db.prepare("SELECT detail FROM event WHERE kind = 'sms.sent'").get();
+      assert.match(recorded.detail, /447700900123/, 'and the record says the text went out');
+    },
+    {
+      // The letter is taken by the hook so no relay is needed; the text is taken the same way and kept.
+      mailer: { from: 'office@practice.example', onOutgoing: () => false },
+      sms: {
+        onOutgoing: (message) => {
+          texted.push(message);
+          return false;
+        },
+      },
+    },
+  );
+});
+
+test('a client with no number is emailed and never texted', async () => {
+  const texted = [];
+  await withServer(
+    async ({ agent, db }) => {
+      const practice = await practiceWithRequest({ agent, db });
+      const report = await practice.client.post('/chase', {});
+      assert.equal(report.status, 200, 'the run still reports');
+      assert.equal(texted.length, 0, 'a blank number means email alone');
+    },
+    {
+      mailer: { from: 'office@practice.example', onOutgoing: () => false },
+      sms: {
+        onOutgoing: (message) => {
+          texted.push(message);
+          return false;
+        },
+      },
+    },
+  );
 });

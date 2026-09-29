@@ -1,9 +1,10 @@
 # Sending reminders by text
 
-The half that talks to the outside world: a gateway the practice points at, and one line-and-a-link
-message — built beside `src/mailer.js` and tested against a gateway written into the test. **What is
-here is the sender and the words**; the last step of wiring it to the chase — a phone number on each
-client, and a text sent beside the email — is recorded as the next thing in `docs/roadmap.md`.
+The half that talks to the outside world, and the wiring that puts it on the chase: a gateway the
+practice points at, and one line-and-a-link message — built beside `src/mailer.js` and tested against
+a gateway written into the test. **A reminder now goes out as a text beside the letter** to every
+client with a phone number on their record (the number lives on the client's own page). One line and
+the same link, never a document.
 
 > **The short version.** Point `TICKMARK_SMS_URL` at your SMS gateway's send endpoint (the one your
 > provider gives you), put the number texts come from in `TICKMARK_SMS_FROM`, restart.

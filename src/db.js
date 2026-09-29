@@ -226,6 +226,9 @@ CREATE TABLE IF NOT EXISTS client (
   practitioner_id TEXT NOT NULL REFERENCES practitioner(id),
   name            TEXT NOT NULL,
   email           TEXT,
+  -- Their phone number, for a text reminder (docs/sms.md). Nullable, and null means "email alone": the
+  -- chase simply does not text a client with no number, which is the honest reading of a blank.
+  phone           TEXT,
   -- What the client's own accounting setup states: entity type, financial year-end, tax number. Read
   -- from the Xero or QuickBooks connection (src/tenancy/) and kept as JSON because it is a handful of
   -- facts a request is built on rather than columns in their own right. Null until a connection is read,
@@ -607,6 +610,7 @@ function migrate(db) {
     ['client', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['client', 'filing_profile', 'TEXT'],
     ['client', 'books_state', 'TEXT'],
+    ['client', 'phone', 'TEXT'],
     ['request', 'practice_id', 'TEXT REFERENCES practice(id)'],
     ['request', 'client_note', 'TEXT'],
     ['request', 'entity_id', 'TEXT REFERENCES entity(id)'],

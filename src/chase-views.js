@@ -22,6 +22,7 @@ import { hashToken, newToken } from './crypto.js';
 import { now } from './db.js';
 import { field, formFields, originOf, readBody } from './http.js';
 import { MailError, mailHtml, fromFor, sendMail } from './mailer.js';
+import { sendSms, smsReminder } from './sms.js';
 import { messageFor } from './notices.js';
 import {
   history,
@@ -367,7 +368,7 @@ export async function setCadencePage({ db, request, response, practitioner, prac
  *    thing a report must never be. The split comes from `chaseSplits`, the same function the page reads,
  *    so the pre-flight count and the run cannot disagree.
  */
-export async function sendAllReminders({ db, request, response, practitioner, practiceId, mailer, chaseBudgetMs = CHASE_BUDGET_MS }) {
+export async function sendAllReminders({ db, request, response, practitioner, practiceId, mailer, sms, chaseBudgetMs = CHASE_BUDGET_MS }) {
   if (!requireSignIn({ practitioner, response })) return;
   if (!mailer) {
     return fail(response, 400, 'This installation has no mail server configured, so nothing can be sent.', practitioner);
@@ -384,7 +385,7 @@ export async function sendAllReminders({ db, request, response, practitioner, pr
       for (const rest of sendable.slice(index)) results.push({ row: rest, outcome: 'not-attempted' });
       break;
     }
-    results.push(await sendOneReminder(db, row, origin, mailer, practiceFor(db, practiceId)));
+    results.push(await sendOneReminder(db, row, origin, mailer, practiceFor(db, practiceId), sms));
   }
 
   return sendPage(
@@ -402,7 +403,7 @@ export async function sendAllReminders({ db, request, response, practitioner, pr
 }
 
 /** One request's reminder, sent. Its own function so that the loop above reads as a loop. */
-async function sendOneReminder(db, row, origin, mailer, practice = null) {
+async function sendOneReminder(db, row, origin, mailer, practice = null, sms = null) {
   const token = newToken();
   issueToken(db, {
     requestId: row.id,
@@ -412,6 +413,33 @@ async function sendOneReminder(db, row, origin, mailer, practice = null) {
 
   const message = messageFor({ db, found: row, origin, token, practiceName: practice?.name ?? null });
   const hasLink = /\/r\/[A-Za-z0-9_-]{20,}/.test(message.body);
+
+  // A text beside the letter, to whoever has a number: the channel a client who ignores email still
+  // reads. One line and the same link, never a document — so it costs nothing of the zero-knowledge
+  // promise. Sent before the email and in its own try, because a text that fails must not stop the
+  // letter, and a letter that fails must not stop the text. With no number on the client, nothing is
+  // sent and nothing is recorded — a blank means email alone.
+  if (sms) {
+    const phone =
+      db.prepare('SELECT c.phone FROM client c JOIN request r ON r.client_id = c.id WHERE r.id = ?').get(row.id)
+        ?.phone ?? null;
+    if (phone) {
+      try {
+        const sent = await sendSms(sms, {
+          to: phone,
+          body: smsReminder({
+            practiceName: practice?.name ?? null,
+            title: row.title,
+            missing: outstandingOf(db, row.id).map((item) => item.label),
+            link: `${origin}/r/${token}`,
+          }),
+        });
+        recordEvent(db, { requestId: row.id, kind: 'sms.sent', detail: `to ${sent.to}` });
+      } catch (error) {
+        recordEvent(db, { requestId: row.id, kind: 'sms.failed', detail: `to ${phone} — ${error.message}` });
+      }
+    }
+  }
 
   try {
     const { messageId } = await sendMail(mailer, {

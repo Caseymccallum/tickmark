@@ -344,6 +344,9 @@ export function createApp(db, {
   maxRequestFiles = DEFAULT_MAX_REQUEST_FILES,
   webDir = join(HERE, '..', 'web'),
   mailer = null,
+  // Texting, when configured (docs/sms.md). Like the mailer: null when off, and the pages say so
+  // rather than the process refusing to run. Independent of the mail relay.
+  sms = null,
   // How long a run of reminders may take. Injected so that a test can watch the run stop halfway, which
   // is otherwise a two-minute test — and a safety property that cannot be tested is a safety property
   // nobody has checked.
@@ -425,7 +428,7 @@ export function createApp(db, {
     // The one object every handler below reads from, resolved per request before any routing.
     // Declared here so that the catch block reports against the practice the request was
     // actually answered by, not whichever one started the process.
-    let scoped = { db, blobDir, mailer, chaseBudgetMs, maxUploadBytes, maxRequestBytes, maxRequestFiles, onLinkIssued };
+    let scoped = { db, blobDir, mailer, sms, chaseBudgetMs, maxUploadBytes, maxRequestBytes, maxRequestFiles, onLinkIssued };
 
     try {
       if (preHandle) {
@@ -443,6 +446,7 @@ export function createApp(db, {
           db: tenant.db,
           blobDir: tenant.blobDir ?? blobDir,
           mailer: tenant.mailer ?? mailer,
+          sms: tenant.sms ?? sms,
           chaseBudgetMs: tenant.chaseBudgetMs ?? chaseBudgetMs,
           maxUploadBytes: tenant.maxUploadBytes ?? maxUploadBytes,
           // A hosted plan's storage ceiling arrives the same way the per-file one does: injected, so plan limits
@@ -489,6 +493,7 @@ export function createApp(db, {
           maxRequestFiles: scoped.maxRequestFiles,
           webDir,
           mailer: scoped.mailer,
+          sms: scoped.sms,
           chaseBudgetMs: scoped.chaseBudgetMs,
           signInLimiter,
           signUpLimiter,

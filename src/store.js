@@ -754,7 +754,7 @@ export function booksSignalOn(connection) {
 export function clientFor(db, practiceId, clientId) {
   return (
     db
-      .prepare('SELECT id, name, email, created_at FROM client WHERE id = ? AND practice_id = ?')
+      .prepare('SELECT id, name, email, phone, created_at FROM client WHERE id = ? AND practice_id = ?')
       .get(clientId, practiceId) ?? null
   );
 }
@@ -1248,18 +1248,20 @@ export function requestsForClient(db, practiceId, clientId) {
  * address — on this page that is a decision, which is why it is spelled out in the form rather than
  * inferred from a blank field on some other form.
  */
-export function updateClient(db, { practiceId, clientId, name, email = null }) {
+export function updateClient(db, { practiceId, clientId, name, email = null, phone = null }) {
   const before = clientFor(db, practiceId, clientId);
   if (!before) return null;
   const trimmed = email?.trim() || null;
-  if (before.name === name && before.email === trimmed) return before;
-  db.prepare('UPDATE client SET name = ?, email = ? WHERE id = ? AND practice_id = ?').run(
+  const dialled = phone === undefined ? (before.phone ?? null) : (phone?.trim() || null);
+  if (before.name === name && before.email === trimmed && (before.phone ?? null) === dialled) return before;
+  db.prepare('UPDATE client SET name = ?, email = ?, phone = ? WHERE id = ? AND practice_id = ?').run(
     name,
     trimmed,
+    dialled,
     clientId,
     practiceId,
   );
-  return { ...before, name, email: trimmed };
+  return { ...before, name, email: trimmed, phone: dialled };
 }
 
 /** The checklist of a client's most recent request, for "the same as last time". */

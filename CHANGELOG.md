@@ -12,6 +12,18 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### A reminder reaches the client who ignores email
+
+The chase now sends a **text beside the letter** to every client with a phone number on their record — the
+client who deletes the email still sees the text. It is one line and the *same link* the letter carries (who is
+asking, what is still missing, and where to send it), and **never a document**, so it costs nothing of the
+zero-knowledge promise. The number lives on the client's own page ("Their phone number"); a blank means email
+alone. Sending is through whatever SMS gateway the practice already uses (`TICKMARK_SMS_*`, `docs/sms.md`) — a
+`To`/`From`/`Body` POST, hand-written and dependency-free, exactly the relay shape the mail uses. A text that
+fails is reported with the gateway's own reply and recorded beside the request as `sms.sent` or `sms.failed`,
+so a client's history says what reached them and on which channel. It sits in its own try: a text that fails
+never stops the letter, and a letter that fails never stops the text.
+
 ### A document reviewed in the browser, where the reviewer cannot read it
 
 Zendoc reviews every upload the moment it lands — wrong type, illegible, missing page, expired ID — by opening

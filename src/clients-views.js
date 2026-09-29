@@ -408,6 +408,7 @@ export async function saveClient({ db, request, response, practitioner, params, 
   const fields = formFields(await readBody(request));
   const name = (field(fields, 'name') ?? '').trim();
   const email = (field(fields, 'email') ?? '').trim();
+  const phone = (field(fields, 'phone') ?? '').trim();
   if (!name) return fail(response, 400, 'A client needs a name.', practitioner);
   if (name.length > 200) return fail(response, 400, 'That name is longer than 200 characters.', practitioner);
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -426,7 +427,7 @@ export async function saveClient({ db, request, response, practitioner, params, 
     );
   }
 
-  updateClient(db, { practiceId, clientId: found.id, name, email: email || null });
+  updateClient(db, { practiceId, clientId: found.id, name, email: email || null, phone: phone || null });
   return redirect(response, `/clients/${found.id}?saved=1`);
 }
 
@@ -541,6 +542,12 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
             <input id="email" name="email" type="email" value="${found.email ?? ''}">
             <p class="form-hint">Leave it empty to remove the email address: reminders then name them as
             unreachable rather than being sent nowhere.</p>
+          </div>
+          <div class="field">
+            <label for="phone">Their phone number <span class="note">for a text reminder</span></label>
+            <input id="phone" name="phone" type="tel" value="${found.phone ?? ''}">
+            <p class="form-hint">With a number here and texting set up (docs/sms.md), a reminder reaches
+            them as a text as well as an email. Leave it empty to text nobody.</p>
           </div>
           <button type="submit">Save</button>
         </form>
