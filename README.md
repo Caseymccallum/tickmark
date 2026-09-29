@@ -198,6 +198,7 @@ Guides, and the reasoning behind the decisions:
 - [go-succeed-prep.md](docs/go-succeed-prep.md) — the business-prep pack for a Go Succeed NI application
 - [splitting.md](docs/splitting.md) — how the code is split into modules, and the recipe for the rest
 - [demand-posts.md](docs/demand-posts.md) — where to ask, and what the room rules actually say
+- [competitive.md](docs/competitive.md) — the nearest competitor (Zendoc): what to match, what to protect, and what to refuse
 
 | File | What it is |
 | --- | --- |
@@ -215,6 +216,7 @@ Guides, and the reasoning behind the decisions:
 | `docs/audit.md` | A full audit: feature gaps, performance, and the plan for the code |
 | `docs/roadmap.md` | What comes next and why, including what is deliberately not being built |
 | `docs/verify-demand.md` | The pre-build check: who was asked, and what the answers decide |
+| `docs/competitive.md` | The competitor read: Zendoc's bets, and what Tickmark matches vs refuses |
 
 ## Licence
 

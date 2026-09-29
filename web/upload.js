@@ -8,7 +8,7 @@
  * of `encryptFile`, and the practice's public key is the only thing needed to make it.
  */
 import { encryptFile } from './tickmark-crypto.js';
-import { duplicateOf, looksEncryptedPdf, readableBytes } from './preflight.js';
+import { duplicateOf, looksEncryptedPdf, looksTruncatedPdf, looksUnreadablySmall, readableBytes } from './preflight.js';
 
 const keyElement = document.getElementById('practice-key');
 const limitElement = document.getElementById('upload-limit');
@@ -27,18 +27,17 @@ const alreadySent = sentElement ? JSON.parse(sentElement.textContent) : [];
 const readable = readableBytes;
 
 /**
- * Whether a picked file is an encrypted PDF, judged from its two ends.
+ * The two ends of a file, read before it is encrypted and without any of it leaving the browser.
  *
- * Only the ends are read, so this costs nothing on a 20 MB scan — and the file never leaves the browser, which
- * is the whole reason the check is possible here and not on the server.
+ * Only the ends are read — the first 64 KB (enough for a PDF's opening marker, or an image's size in
+ * its header) and the last 4 KB (a PDF's closing `%%EOF`) — so this costs nothing on a 20 MB scan.
+ * The plaintext never leaves this tab, which is the whole reason these checks can run here and not on
+ * the server. See preflight.js for what is checked and, just as deliberately, what is not.
  */
-async function looksPasswordProtected(file) {
-  const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
-  if (!isPdf) return false;
-  const window = 4096;
-  const head = new Uint8Array(await file.slice(0, window).arrayBuffer());
-  const tail = new Uint8Array(await file.slice(Math.max(0, file.size - window)).arrayBuffer());
-  return looksEncryptedPdf({ name: file.name, type: file.type, head, tail });
+async function readEnds(file) {
+  const head = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
+  const tail = new Uint8Array(await file.slice(Math.max(0, file.size - 4096)).arrayBuffer());
+  return { head, tail };
 }
 
 if (keyElement) {
@@ -97,12 +96,26 @@ if (keyElement) {
       try {
         for (const file of files) {
           if (file.size > maxBytes) continue;
-          if (await looksPasswordProtected(file)) {
+          const { head, tail } = await readEnds(file);
+          if (looksEncryptedPdf({ name: file.name, type: file.type, head, tail })) {
             warnings.push(
               `${file.name} looks like a password-protected PDF — your practice will not be able to open it.` +
                 ' If you can, save or print a copy without the password first.',
             );
             continue;
+          }
+          if (looksTruncatedPdf({ name: file.name, type: file.type, tail })) {
+            warnings.push(
+              `${file.name} looks like it stops before the end, so it may be missing pages.` +
+                ' If it should have more than it does, please send it again.',
+            );
+          }
+          const small = looksUnreadablySmall({ name: file.name, type: file.type, head });
+          if (small) {
+            warnings.push(
+              `${file.name} is only ${small.width}\u00d7${small.height} \u2014 a scan that small is often too blurry to read.` +
+                ' If you can, send a larger or clearer photo.',
+            );
           }
           const twin = duplicateOf(file, alreadySent);
           if (twin) {

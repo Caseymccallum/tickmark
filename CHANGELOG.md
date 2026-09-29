@@ -12,6 +12,19 @@ the entry that matters most is the one that says the schema changed.
 Entries for what is true now and not yet in a numbered release. Written as they land rather than saved up for a
 tag, because a changelog assembled at release time is one reconstructed from memory.
 
+### A document reviewed in the browser, where the reviewer cannot read it
+
+Zendoc reviews every upload the moment it lands — wrong type, illegible, missing page, expired ID — by opening
+each file on its own servers. That is the one thing this product will not do, so the same review now happens
+**in the client's browser instead**, on the file it is already holding before it encrypts it. Two checks were
+already there (a password-protected PDF, and the same file twice); this adds the two that answer a
+competitor's headline: a **PDF that stops before its `%%EOF`** — a cut-off scan, the "missing pages" case — and
+a **photo too small to read** (below `MIN_READABLE_SIDE` on its short side, judged from the pixel size in the
+header, the "illegible scan" case). All four **warn, never refuse**, and none needs the server to see a byte.
+Deliberately left out is the *semantic* half — "this is a pay stub where a W-2 should be" — because saying that
+would mean handing a client's document to a machine that reads it. `docs/competitive.md` records the trade and
+the Zendoc read it came from.
+
 ### The client book, kept fresh — on demand and while you work, never on a timer
 
 Bringing clients across used to mean pressing Import and hoping nobody had added a client since. It now keeps

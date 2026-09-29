@@ -45,6 +45,8 @@ Phase 2   Make it usable in the field
                                   decrypts a document out of the backup on every run; v0.2.0 tagged
           2ad the accounting connection COMPLETE — Xero/QuickBooks import, filing profiles, the opt-in
                                    books signal, and a client book kept fresh (Sync now + a quiet refresh)
+          2ae a deeper preflight   COMPLETE — a cut-off PDF and an unreadable photo caught in the
+                                   browser before upload, and the competitor read in docs/competitive.md
 
 Phase 3   Find out if anyone wants it  RUNNING — interviews and a competitor's revenue have answered half;
                                   the other half is real practices, not more posts
