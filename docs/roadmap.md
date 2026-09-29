@@ -58,7 +58,7 @@ it again" for both. **A failed card that is a grace period rather than a lockout
 documents open for `TICKMARK_PAST_DUE_GRACE_DAYS` while Stripe chases the card, and `cancelled` still closes at
 once. `CHANGELOG.md` records both.
 
-What is left is not a feature list: it is 2k, which has never been driven against a real Stripe account, and
+What is left is not a feature list: it is 2k, which now has a drill (`npm run drill:stripe`) that drives it against a real Stripe account and needs one run with test keys to close, and
 Phase 3's open half — who does not buy the incumbent, and whether the privacy wedge matters to a buyer — which
 now needs real practices on the receiving end rather than more posts.
 

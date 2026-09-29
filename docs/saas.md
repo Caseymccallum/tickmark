@@ -317,6 +317,15 @@ to the core app untouched. The pieces:
   webhook, never by the `success_url` redirect: a browser can close before it arrives, and Stripe
   retries until the endpoint says 200.
 
+**Driving it, rather than trusting it.** The gateway's tests exercise the whole lifecycle against synthetic
+events signed with Stripe's own scheme — but "tested against a stub" and "driven against a real Stripe
+account" are different claims, and only the second is a proof. `npm run drill:stripe` makes the second
+checkable: against **test-mode** keys it drives the live API (a real Checkout Session, the customer portal),
+then the webhook signature and the paid → past_due → grace → cancelled lifecycle with a real signing secret,
+and finally prints the two `stripe` CLI commands that finish the proof with a webhook Stripe actually sent.
+It is the thing that turns `2k` from *built, unproven* into *driven*.
+
+
 One limitation, stated rather than discovered: **slug paths (`/t/<slug>/…`) do not rewrite the
 core's own redirects** — after a form posts under a slug prefix, the core redirects to `/requests/…`
 without the prefix, which only matters on a deployment with no tenant host mapped. Slug paths are

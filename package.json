@@ -30,7 +30,8 @@
     "coverage": "node --test --experimental-test-coverage --test-coverage-lines=93 --test-coverage-functions=90 --test-coverage-branches=75 \"test/*.test.js\"",
     "preview:gateway": "node tools/preview-gateway.mjs",
     "check:nav": "node tools/check-nav.mjs",
-    "transcript": "node tools/smtp-transcript.mjs"
+    "transcript": "node tools/smtp-transcript.mjs",
+    "drill:stripe": "node tools/stripe-drill.mjs"
   },
   "dependencies": {},
   "devDependencies": {}
