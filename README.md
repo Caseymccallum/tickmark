@@ -75,9 +75,9 @@ full, including the seven things it does not protect.
 
 ## Two ways to run it
 
-**Hosted — we run it for you.** £49 a month, flat. Unlimited clients, never priced per client, per return or
-per person: your busiest month costs the same as your quietest. A 14-day trial, no demo call, no sales
-process. Best if you just want it to work.
+**Hosted — we run it for you.** £49 per month for one practice, billed from checkout. Payment details are
+required and the first payment is due immediately; there is currently no free trial. The hosted account
+includes up to 5 GiB of encrypted document storage. Best if you want the service operated for you.
 
 **Run it yourself — free, forever.** Tickmark is open source (AGPL-3.0). Put it on your own server and it is
 yours: no fees, no limits, and full control over where your clients' files live. Best if you would rather
@@ -91,7 +91,7 @@ you could just send me…".
 
 ## Getting started
 
-- **Want it hosted?** Start a 14-day trial — no call, no card up front.
+- **Want it hosted?** Create a workspace and subscribe for £49 per month. Checkout requires payment details and charges immediately.
 - **Want to run it yourself?** It is a Node app you can have running locally in a couple of minutes. See
   [Run it on your machine](#run-it-on-your-machine).
 
@@ -113,7 +113,9 @@ Then open <http://127.0.0.1:8787>.
 
 `TICKMARK_DATA` chooses where the data lives, and `TICKMARK_ORIGIN` sets the address clients should use in
 links. To let it send reminders, point it at a mail relay (`TICKMARK_MAIL_*`) — see [docs/mail.md](docs/mail.md).
-Tickmark needs no third-party auth, no email reading, no cloud storage, no telemetry and no CDN.
+The single-practice self-hosted core uses local accounts and filesystem storage. Hosted mode adds a platform
+registry and Stripe billing; email and accounting connections use operator-configured providers. No analytics
+or telemetry service is included by default.
 
 ## Run it for a practice
 
@@ -197,6 +199,8 @@ Guides, and the reasoning behind the decisions:
 - [phase-1-hosted-identity.md](docs/phase-1-hosted-identity.md) — hosted login, TOTP, staff invitations, membership and verification results
 - [phase-2-data-custody.md](docs/phase-2-data-custody.md) — storage quotas, upload reconciliation, owner export/restore, offboarding and retention
 - [phase-3-hosted-operations.md](docs/phase-3-hosted-operations.md) — hosted topology, off-site backup/restore, retention, monitoring and operator procedures
+- [phase-4-commercial-readiness.md](docs/phase-4-commercial-readiness.md) — billing lifecycle, truthful hosted offer, customer journey, legal drafts and launch gates
+- [hosted-legal-drafts.md](docs/hosted-legal-drafts.md) — hosted terms, privacy, DPA, security, retention and operator fact placeholders; draft only
 - [operations.md](docs/operations.md) — running it for a practice: backup and restore, and storage
 - [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
 - [go-succeed-prep.md](docs/go-succeed-prep.md) — the business-prep pack for a Go Succeed NI application
@@ -217,6 +221,8 @@ Guides, and the reasoning behind the decisions:
 | `docs/phase-1-hosted-identity.md` | Hosted login, TOTP, staff invitations, membership and verification results |
 | `docs/phase-2-data-custody.md` | Storage limits, export, restore, reconciliation, deletion and retention |
 | `docs/phase-3-hosted-operations.md` | Hosted topology, off-site backup/restore, retention, monitoring and operator procedures |
+| `docs/phase-4-commercial-readiness.md` | Commercial delivery report, billing, onboarding, verification evidence and pre-launch checklist |
+| `docs/hosted-legal-drafts.md` | Hosted legal and privacy drafts with unknown operator details marked |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
 | `docs/sms.md` | Texting a reminder: the gateway, the one-line message, and what it never carries |
 | `docs/operations.md` | Running it for a practice: backup, restore, and the storage ceilings |

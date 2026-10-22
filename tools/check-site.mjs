@@ -7,6 +7,7 @@
  * no page at all.
  */
 import { readFileSync } from 'node:fs';
+import { COMMERCIAL_PRICE } from '../src/tenancy/commercial-config.js';
 
 const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
 const count = (pattern, text = html) => (text.match(pattern) ?? []).length;
@@ -89,8 +90,11 @@ if (unexpected.length > 0) problems.push(`third-party requests: ${unexpected.joi
 // been wrong once already: the page said MIT in three places while the repository said AGPL, which is two
 // different licences with two different businesses behind them. It was then briefly FSL-1.1-ALv2 and back,
 // which is why the assertion names one licence and fails on both of the others.
-for (const claim of ['£49', '$59', '14-day', '25 MB', 'AGPL-3.0', 'Unlimited clients']) {
+for (const claim of ['£49', COMMERCIAL_PRICE.display, '5 GiB', '25 MB', 'AGPL-3.0']) {
   if (!html.includes(claim)) problems.push(`the page no longer says "${claim}"`);
+}
+for (const outdated of ['$59', '$35 a month', '14-day trial', 'No card for the trial', 'Unlimited clients', 'Unlimited storage']) {
+  if (html.includes(outdated)) problems.push(`the page still contains the unsupported claim "${outdated}"`);
 }
 for (const wrong of ['MIT', 'FSL', 'Apache 2', 'source-available']) {
   if (new RegExp(`\\b${wrong}\\b`).test(html)) {

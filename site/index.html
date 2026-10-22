@@ -21,7 +21,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tickmark — collect documents from clients, and keep the files where you can point at them</title>
-<meta name="description" content="A checklist per client, a link they open without an account, and files that never leave your server — or sit on one that cannot read them. £49 a month flat, unlimited clients, no per-client pricing, no demo call.">
+<meta name="description" content="A checklist per client, a link clients open without an account, and browser-encrypted files. Hosted service £49 per month, billed from checkout; payment details required.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0a0e15" media="(prefers-color-scheme: dark)">
@@ -30,7 +30,7 @@
 <!-- Open Graph: what a link to this looks like in a group or a message, which is where it will actually be seen. -->
 <meta property="og:type" content="website">
 <meta property="og:title" content="Tickmark — collect documents from clients, and keep the files where you can point at them">
-<meta property="og:description" content="£49 a month flat. Unlimited clients, no per-client pricing, no demo call. Encrypted in your client's browser to a key your practice holds.">
+<meta property="og:description" content="Hosted document collection for £49 per month. Payment details required at checkout; the first payment is due immediately. Files are encrypted in the client's browser to a key the practice holds.">
 
 <style>
 /* ==== The application's design system. Copied from src/style.js, not paraphrased. ==== */
@@ -507,16 +507,17 @@ details .answer p:last-child { margin-bottom: 0; }
     <p class="lead">
       A checklist for each client, a link they open without an account, and a tick as every document
       arrives. Files are encrypted in your client&rsquo;s browser to a key only your practice holds &mdash;
-      so whatever is stored is something the server cannot read. Whether that server is yours or ours.
+      so the server cannot decrypt stored document bytes from server-side data alone. It still handles workflow
+      and file metadata. This describes the application design, not a guarantee about a compromised browser.
     </p>
     <div class="cta-row">
-      <a class="btn primary lg" href="/signup">Start a 14-day trial</a>
+      <a class="btn primary lg" href="/signup">Create a workspace</a>
       <a class="btn secondary lg" href="#yours">Run it yourself, free</a>
     </div>
     <p class="reassure">
       <span>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        No card for the trial
+        £49 per month, billed at checkout
       </span>
       <span>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -524,7 +525,7 @@ details .answer p:last-child { margin-bottom: 0; }
       </span>
       <span>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Unlimited clients, flat price
+        No per-client or per-seat charge
       </span>
     </p>
   </div>
@@ -538,15 +539,15 @@ details .answer p:last-child { margin-bottom: 0; }
     </div>
     <div>
       <p class="n">1,300</p>
-      <p class="k">firms already pay a competitor to solve this problem, so the demand is not in question</p>
+      <p class="k">a workflow hypothesis to test with independent bookkeepers and small practices</p>
     </div>
     <div>
       <p class="n">£49</p>
-      <p class="k">a month, flat. Not per client, per return or per seat</p>
+      <p class="k">per month for one hosted practice; includes 5 GiB of document storage</p>
     </div>
     <div>
       <p class="n">0</p>
-      <p class="k">dependencies to install, and no third-party service anywhere in the path</p>
+      <p class="k">runtime dependencies in the core; hosted email and billing use configured providers</p>
     </div>
   </div>
 </div>
@@ -640,20 +641,18 @@ details .answer p:last-child { margin-bottom: 0; }
     </div>
     <div class="grid two">
       <div class="card">
-        <h3>What the tools for this cost you</h3>
+        <h3>What the first release is for</h3>
         <p>
-          The closest product to this one charges $35 a month for <em>20 open requests</em>, $71 for 50 and
-          $119 for 100 &mdash; and caps how many people you can have on every tier. A practice with sixty
-          clients mid-season is pushed onto the $119 plan, about £92. That is per-client pricing wearing a
-          different hat.
+          Independent bookkeepers and small accountancy practices can test whether a reusable checklist and a
+          clear outstanding-work view reduce the time they spend chasing clients. Pricing and demand still need
+          direct customer validation.
         </p>
       </div>
       <div class="card">
-        <h3>And the larger ones will not sell to you</h3>
+        <h3>Designed for a small practice</h3>
         <p>
-          The enterprise tools in this space gate everything behind a demo. The form asks how many
-          professionals you have. Nobody at a three-person practice is going to take that call, which means
-          those tools are not really an option &mdash; they are a category you read about.
+          Tickmark is aimed at a small practice that does not already have a satisfactory client portal. It does
+          not claim to replace established suites with workflow or compliance features it does not provide.
         </p>
       </div>
     </div>
@@ -859,12 +858,11 @@ details .answer p:last-child { margin-bottom: 0; }
   <div class="wrap">
     <div class="band-head">
       <p class="eyebrow">The difference</p>
-      <h2>Other tools read your clients&rsquo; documents. This one cannot.</h2>
+      <h2>One checklist. A clear view of what is still missing.</h2>
       <p class="lead">
-        The leading product in this space advertises &ldquo;AI agents that pre-screen documents as they
-        arrive&rdquo; &mdash; which cannot work unless the platform can open every file, in full, on its own
-        servers. That is a real feature. It is also the opposite of this one, and choosing between them is a
-        choice about where your clients&rsquo; bank statements live.
+        Send each client one request checklist and a link they can open without creating an account. See what
+        has arrived and what is still outstanding. Uploaded files are encrypted in the browser to a key your
+        practice holds; the hosted server stores the encrypted files and workflow metadata.
       </p>
     </div>
 
@@ -872,46 +870,30 @@ details .answer p:last-child { margin-bottom: 0; }
       <table>
         <thead>
           <tr>
-            <th>&nbsp;</th>
-            <th class="ours">Tickmark</th>
-            <th>A typical document portal</th>
+            <th>Workflow</th>
+            <th class="ours">What Tickmark does today</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>Who can read an uploaded file</td>
-            <td class="ours yes">Only your practice</td>
-            <td class="no">The vendor, and anyone who asks them</td>
+            <td class="ours">The server does not receive the practice's private document key. Browser integrity and practice devices remain part of the protection.</td>
           </tr>
           <tr>
             <td>What the server stores</td>
-            <td class="ours">Ciphertext, which nothing there can open</td>
-            <td class="no">The file</td>
+            <td class="ours">Encrypted file bytes plus client, request and upload metadata.</td>
           </tr>
           <tr>
-            <td>Can you check the claim yourself</td>
-            <td class="ours yes">Yes &mdash; the source is public</td>
-            <td class="no">No &mdash; you take their word for it</td>
+            <td>How documents are requested</td>
+            <td class="ours">One checklist and a link clients can open without creating an account.</td>
           </tr>
           <tr>
-            <td>Run it on your own hardware</td>
-            <td class="ours yes">Yes, free, forever</td>
-            <td class="no">No</td>
+            <td>Hosted price and storage</td>
+            <td class="ours">£49 per month in GBP; 5 GiB hosted storage quota.</td>
           </tr>
           <tr>
-            <td>How it is priced</td>
-            <td class="ours yes">£49 flat</td>
-            <td class="no">Per client, per return, or a cap on open requests</td>
-          </tr>
-          <tr>
-            <td>How you buy it</td>
-            <td class="ours yes">A card, in two minutes</td>
-            <td class="no">A demo call and a procurement process</td>
-          </tr>
-          <tr>
-            <td>Documents read by AI on arrival</td>
-            <td class="ours no">No &mdash; it would break every line above</td>
-            <td class="yes">Yes &mdash; their headline feature</td>
+            <td>Checkout</td>
+            <td class="ours">Payment details required; the first monthly payment is due immediately. No free trial.</td>
           </tr>
         </tbody>
       </table>
@@ -921,9 +903,8 @@ details .answer p:last-child { margin-bottom: 0; }
       <div class="notice ok">
         <strong>What that buys you, concretely.</strong>
         <p>
-          Nobody at this end can read a client document &mdash; not support, not an engineer, not whoever runs
-          the server. There is no back door to forget to close, because there is no key here to close one
-          with.
+          The server does not receive the practice's private document key. Browser integrity and the practice's
+          own devices remain part of the protection, and the server still handles client and request metadata.
         </p>
       </div>
       <div class="notice warn">
@@ -957,19 +938,17 @@ details .answer p:last-child { margin-bottom: 0; }
         <span class="tag">Hosted</span>
         <h3>Tickmark, run for you</h3>
         <p class="amount"><span class="v">£49</span><span class="per">a month</span></p>
-        <p class="alt">$59 a month if you are in the US. Cancel any time.</p>
+        <p class="alt">Payment details are required at checkout. The first payment is due immediately. Cancel through your billing settings.</p>
         <ul class="ticks">
-          <li><strong>Unlimited clients</strong> &mdash; not 20, not 50, not 100</li>
-          <li><strong>Unlimited requests</strong>, open at once or across the year</li>
-          <li><strong>Unlimited people</strong> in your practice, each with their own login</li>
-          <li><strong>Unlimited storage</strong> for client documents</li>
-          <li>Your own address, your own key, set up in ten minutes</li>
-          <li>14-day trial, no card</li>
+          <li>No per-client or per-seat charge</li>
+          <li>Client and staff counts are not separately metered</li>
+          <li><strong>5 GiB document storage</strong> for this hosted practice</li>
+          <li>Your own address and practice-held encryption key</li>
+          <li>No free trial is currently offered</li>
         </ul>
-        <a class="btn primary" href="/signup">Start the trial</a>
+        <a class="btn primary" href="/signup">Create workspace and subscribe</a>
         <p class="fine">
-          One caveat, stated rather than discovered: a <strong>single file is capped at 25 MB</strong>. That is
-          an operational limit, not a pricing one, and it can be raised if you have a reason.
+          Each file is capped at <strong>25 MB</strong>, and the hosted practice has a 5 GiB storage quota.
         </p>
       </div>
 
@@ -979,7 +958,7 @@ details .answer p:last-child { margin-bottom: 0; }
         <p class="alt">Open source under the AGPL. The same software, on your own server.</p>
         <ul class="ticks">
           <li>One command: <code>docker compose up</code></li>
-          <li>The same unlimited everything, because there is nobody to bill</li>
+          <li>No hosted subscription or hosted storage quota; file-size and host capacity limits still apply</li>
           <li>Nothing leaves hardware you control</li>
           <li>No account with us at all &mdash; no email, no signup, nothing</li>
           <li class="dim">You are the one who updates it</li>
@@ -994,12 +973,11 @@ details .answer p:last-child { margin-bottom: 0; }
     </div>
 
     <div class="notice ok" style="margin-top:1.75rem">
-      <strong>Why £49, and not per client.</strong>
+      <strong>Pricing to validate with practices.</strong>
       <p>
-        The closest tool to this one charges $35 a month for <em>20 open requests</em>, $71 for 50 and $119 for
-        100, with a cap on users at every tier. A practice with sixty clients mid-season is pushed onto the $119
-        plan &mdash; about £92 &mdash; because it has been a busy year. We charge less than that, and the
-        ceiling is removed rather than moved.
+        The current commercial hypothesis is £49 per practice per month, with no per-client charge and a 5 GiB
+        hosted storage quota. Validate willingness to pay, expected storage and support needs with bookkeepers
+        before treating this price or package as proven.
       </p>
     </div>
   </div>
@@ -1012,8 +990,8 @@ details .answer p:last-child { margin-bottom: 0; }
       <p class="eyebrow">Self-hosted</p>
       <h2>Three commands, then it is yours</h2>
       <p class="lead">
-        One container, one volume. No external database, no third-party service, no account to create, and no
-        dependencies to install &mdash; the runtime and the database are the two that are already inside Node.
+        One container and one volume for the core workflow. No external database is required. Optional email and
+        accounting connections need the providers you choose to configure.
       </p>
     </div>
 
@@ -1036,10 +1014,9 @@ docker compose up -d</pre>
       <div class="card">
         <h3>Why we can say the install works</h3>
         <p>
-          Because a script checks it rather than our word: the container is built, run, and driven through the
-          whole cycle &mdash; uploads, a key rotation, the re-encryption pass that follows it &mdash; then
-          restarted to confirm the volume kept the records. It is in the repository, so you can point it at
-          your own container.
+          The repository includes a container definition and automated checks. The current Docker engine was not
+          available for a real image build, container run or volume-restart check; review the Phase 3 operations
+          report before choosing this deployment path.
         </p>
       </div>
     </div>
@@ -1081,13 +1058,13 @@ docker compose up -d</pre>
         <summary>What happens if I stop paying?</summary>
         <div class="answer">
           <p>
-            Your practice is locked out of the hosted service until it is settled &mdash; and your
-            clients&rsquo; links keep working while that is sorted out, because somebody mid-collection should
-            not be stranded by their accountant&rsquo;s card.
+            A failed payment starts a 14-day access grace period. After that, practice sign-in is paused until
+            billing is resolved. Client upload links continue to work while the workspace is retained.
           </p>
           <p>
-            You can export everything and move to your own server at any time. The software does not disappear,
-            because it was never ours to take away.
+            Before cancellation, use the workspace export tools and verify your recovery key. After access ends,
+            request an operator-assisted export or deletion through <strong>[support contact to publish before launch]</strong>.
+            The current billing wall has no self-serve export button.
           </p>
         </div>
       </details>
@@ -1096,9 +1073,9 @@ docker compose up -d</pre>
         <summary>Can I move between hosted and self-hosted?</summary>
         <div class="answer">
           <p>
-            Yes. Moving in is one command in the repository, and moving out is a copy of the data directory. It
-            is a single SQLite file plus the encrypted uploads beside it, which is the whole reason both
-            directions are easy.
+            Yes. The repository has import and ciphertext-preserving export tools. Hosted export after access
+            ends is operator-assisted: use the support route that must be published before launch and verify that your practice has
+            the recovery key before restoring the export to a self-hosted installation.
           </p>
         </div>
       </details>
@@ -1125,9 +1102,9 @@ docker compose up -d</pre>
             with your practice &mdash; so what a host holds is ciphertext.
           </p>
           <p>
-            On your own server, nothing leaves hardware you control and there is no processor to name in your
-            own records. On ours, you get a data processing agreement and the honest statement that we hold
-            files we cannot open.
+            On your own server, you choose the host and providers and assess the roles they play. Hosted privacy
+            and processing drafts are being prepared; operator details and legal review are still required before
+            they can be offered as final documents.
           </p>
         </div>
       </details>
@@ -1163,9 +1140,10 @@ docker compose up -d</pre>
           </p>
           <p>
             <strong>What it does not do is stop somebody hosting this and charging for it</strong> &mdash; and
-            that is the honest position. The hosted edition above competes by being run well: the servers, the
-            support, the backups, and somebody to ring. If that turns out not to be worth &pound;49 to
-            somebody, they should run it themselves, and the licence is written so that they can.
+            that is the honest position. The hosted offer is £49 per month, but customer demand and willingness
+            to pay are not validated. Hosting, provider-backed recovery and support arrangements still need
+            external verification before a controlled launch. If the workflow or price is not a fit, the source
+            remains available to run yourself.
           </p>
           <p>
             Nothing on this page asks you to take on trust anything you cannot check in five minutes. That is
@@ -1187,29 +1165,13 @@ docker compose up -d</pre>
   <div class="wrap">
     <div class="narrow" style="text-align:center">
       <p class="eyebrow" style="margin-bottom:.7rem">Start</p>
-      <h2>Fourteen days, no card, no call</h2>
+      <h2>Hosted access is £49 per month</h2>
       <p class="lead" style="margin:1rem auto 0">
-        You get your own address, your own login and your own key. Nothing is asked for until the trial ends,
-        and if it is not for you, closing the tab is the whole cancellation process.
+        Create a workspace, complete Stripe Checkout with payment details, and the first £49 monthly payment is
+        due immediately. There is no free trial today. Manage cancellation in your account&rsquo;s billing settings.
       </p>
 
-      <!--
-        ONE LINE TO CHANGE WHEN THERE IS SOMEWHERE TO POST TO.
-
-        Right now this posts to a mailto:, which needs no account, no service and no money — and it answers
-        "where does my address go" honestly, which is: to the person who wrote the page.
-
-        The "Start" buttons around this page point at /signup — the hosted sign-up. They are relative, so this
-        page still makes no third-party requests (which is a claim it makes elsewhere). If the app lives at
-        another host — app.example.com rather than this one — change those three hrefs to its full signup URL.
-
-        When there is a list, replace the action= below with the form endpoint (Buttondown, Formspree and Tally
-        all have a free tier) and delete the sentence underneath. Nothing else on this page has to change.
-      -->
-      <form class="signup" action="mailto:hello@tickmarkpractice.com?subject=Tickmark%20trial" method="post" enctype="text/plain">
-        <input type="email" name="email" required placeholder="you@yourpractice.co.uk" spellcheck="false" aria-label="Your email address">
-        <button class="btn primary lg" type="submit">Start the trial</button>
-      </form>
+      <p><a class="btn primary lg" href="/signup">Create workspace and subscribe</a></p>
 
       <p class="tiny" style="margin-top:.85rem">
         That is a plain mailto link for now: it opens your own mail client and sends an address. Nothing is
@@ -1266,12 +1228,10 @@ docker compose up -d</pre>
     <p class="note" style="max-width:46rem">
       Written plainly on purpose. This page describes software that exists and can be read line by line, and a
       price that is new this month. What has not happened yet is a paying customer &mdash; which is exactly why
-      there is a fortnight of trial and no card.
+      hosted Checkout requires payment details and bills immediately. No free trial is configured.
     </p>
     <p class="tiny" style="max-width:46rem">
-      Prices in GBP and USD. UK VAT is not charged &mdash; this is a small operation, below the registration
-      threshold. If that changes, everybody already signed up will be told first, and the price they joined at
-      will be honoured.
+      Hosted pricing is £49 per month in GBP. Tax treatment and invoice requirements need confirmation from the operator before launch.
     </p>
   </div>
 </footer>

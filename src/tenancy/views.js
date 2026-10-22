@@ -26,6 +26,7 @@
  *    something pending, `arrow` a way onward.
  */
 import { badge, html, icon, page, tick } from '../views.js';
+import { COMMERCIAL_PRICE } from './commercial-config.js';
 
 /**
  * A page with no practice header — the shape every gateway page shares.
@@ -64,16 +65,17 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
         <div class="hero">
           <p class="eyebrow">A workspace of your own</p>
           <h1>Start your practice</h1>
-          <p class="lead">Your own database file, your own passphrase, on a server you choose — so the documents
-          your clients send are not readable by whoever runs it.</p>
+          <p class="lead">A hosted workspace for your practice. You create and keep the practice encryption key;
+          client files are encrypted in their browser before upload. The service server stores encrypted files
+          and workflow metadata.</p>
         </div>
 
         <div class="promise">
           ${icon('shield')}
           <div>
-            <strong>Nobody here can read your clients' documents.</strong>
-            <p class="note">They are encrypted in the client's browser before they are sent. That is not a promise
-            about anybody's intentions — the server is never given the key.</p>
+            <strong>The hosted server does not receive your private document key.</strong>
+            <p class="note">This protects stored file bytes from server-side access. Your browser and devices still
+            need to be trustworthy, and the service can see client, request, filename and file-size metadata.</p>
           </div>
         </div>
 
@@ -85,7 +87,8 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
 
         ${problem ? html`<p class="error">${problem}</p>` : ''}
         ${billingReady
-          ? ''
+          ? html`<p class="note"><strong>Hosted subscription: ${COMMERCIAL_PRICE.display}.</strong>
+              Payment details are required at checkout and the first payment is due immediately. There is no free trial.</p>`
           : html`<p class="warning"><strong>Payments are not configured on this installation.</strong>
               You can still create a workspace, and you will be able to finish setting up billing
               once the operator has configured it.</p>`}
@@ -94,7 +97,7 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
           <label for="practice_name">Your practice</label>
           <input id="practice_name" name="practice_name" required value="${values.practice_name ?? ''}"
             placeholder="Acme Accounting" autofocus>
-          <p class="note">This becomes your address here, and can be changed later.</p>
+          <p class="note">This name is used to create your workspace address.</p>
           <label for="email">Your email</label>
           <input id="email" name="email" type="email" required value="${values.email ?? ''}" spellcheck="false"
             autocomplete="username">
@@ -318,10 +321,11 @@ export function billingWallPage({ tenant, status, account = null }) {
         <div class="promise quiet">
           ${icon('shield')}
           <div>
-            <strong>Nothing has been lost, and nothing is at risk.</strong>
-            <p class="note">Your documents are where they were, encrypted, and every client link still works.
-            Signing in again is not needed: this is about the subscription, not your account. If you think it is a
-            mistake, contact whoever set up your workspace.</p>
+            <strong>Your documents have not been deleted.</strong>
+            <p class="note">The hosted service retains the workspace under its retention policy. Client links may
+            remain available while it is retained. To arrange an export or deletion after access ends, contact
+            the service operator through its published support route. Billing status does not change your
+            practice's encryption keys.</p>
           </div>
         </div>
 
