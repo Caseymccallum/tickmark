@@ -33,7 +33,7 @@ const source = readFileSync('src/style.js', 'utf8');
 let failed = false;
 
 // ── 1. Backticks inside the sections ────────────────────────────────────────────────────────────────
-const names = ['TOKENS', 'BASE', 'COMPONENTS', 'FORMS', 'TABLES', 'SURFACES', 'CLIENT_AND_MISC'];
+const names = ['TOKENS', 'BASE', 'COMPONENTS', 'FORMS', 'TABLES', 'SURFACES', 'CLIENT_AND_MISC', 'SHELL'];
 const sheets = [];
 for (const name of names) {
   const start = source.indexOf(`const ${name} = \``);

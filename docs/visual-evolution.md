@@ -1,0 +1,33 @@
+# Tickmark visual evolution
+
+## Phase A: architecture and migration plan
+
+Starting main: `dca09fe8ec027f17e8f45e45214caefa048676e3`. Branch: `codex/tickmark-visual-evolution`. Final implementation SHA and verification are recorded at completion. The original audit checkout and its dirty `docs/go-succeed-prep.md` remain separate.
+
+The app renders tagged/escaped HTML from `src/views.js`; `page()` owns the shared shell, CSP-nonced inline stylesheet, skip link, theme metadata, footer and small selection handler. `src/style.js` contains semantic tokens and component sections. `src/app.js` owns the core route table. Hosted gateway rendering is in `src/tenancy/views.js`; `entry.js`, `gateway.js` and `resolve.js` retain host/path, membership and billing semantics. `web/*.js` attach to existing forms and IDs for browser encryption and interaction. Marketing is the independent `site/index.html`, currently never served at hosted platform root.
+
+No repository AGENTS or contribution file was found. Relevant guidance: README; docs/design.md, mvp.md, roles.md, members.md, encryption.md, security.md, saas.md and the Phase 1–5/release reports. CI additionally runs the unused-export and container checks.
+
+### Screen and form inventory
+
+| Surface | Renderer and existing routes/workflows | Shared dependencies |
+| --- | --- | --- |
+| Self-hosted entry and account | signin-views.js: landing, signup, verification, sign-in, password reset, account email/password and session management; account-views.js: TOTP setup, challenge, recovery and disable | page, center/card, labels, notices, existing auth fields |
+| Hosted gateway | tenancy/views.js: signup, login, TOTP/expired challenge, dashboard, no-workspace state, active/pending/past-due/cancelled subscription, checkout/return, errors | page, gateway, state, facts, promise, inline POST actions |
+| Requests overview | board-views.js: /requests, open/closed/state/search/order filters, onboarding steps, export, new request | page-head, tiles, bar/seg/search, board table, empty |
+| Request lifecycle | request-actions.js and board-views.js: new/duplicate/edit, checklist, review/check-all, attention/replacement, answers, link issuance/revocation, send/reminder previews, close/reopen, contact/history, file download/re-encryption | items table, cards, timeline, confirmation forms, existing IDs/actions |
+| Clients and files | clients-views.js: directory, search/import/CSV, client detail/edit/filing profile/history, requests and files; all-document metadata search/download | tables, facts, file rows, search and notices |
+| Templates and bulk requests | templates-views.js and bulk-ask-views.js: list/new/edit, save checklist, ask-everyone preview and explicit send confirmation | card forms, pick list, preview, actions |
+| Reminders | chase-views.js: chase board, drafts, preview/run/limited progress, cadence/budgets, message history | tables, notices, confirmation, tiles |
+| Team/security/settings | members-views.js, keys-views.js, account-views.js: roles, invitation create/accept/revoke/recovery, remove, notification preferences, key generation/copy/recovery/rotation/move/retirement, TOTP and sessions | cards, warnings, code/key fields, live status, role-gated forms |
+| Integrations | integrations-views.js, xero-views.js, quickbooks-views.js: connections, import/sync/profile, consent, disconnect, provider errors | same shell/cards/tables; OAuth semantics retained |
+| Client portal | client-portal.js: open/expired/revoked/unknown/not-ready/closed request, checklist, upload/receipt/replacement, cannot-provide/later answers, extra files, messages; resolver subscription pause | page, upload.js, practice-key/upload-limit/already-sent JSON, form.upload/status selectors |
+| Marketing | site/index.html: hero, fictional previews, benefits, four-step flow, security, pricing, self-hosting, FAQ, footer | generated copy of canonical tokens, standalone CSS, no app state |
+
+All core endpoints/forms remain in the existing route table; no capability is added by navigation labels. The 42-page HTTP snapshot and 14 gateway states are the representative state matrix; render/interaction tests cover additional security, empty and error states.
+
+### Controlled migration
+
+A. Establish this inventory and DESIGN.md; refine tokens and reusable controls. B. Redesign static marketing and document configurable two-origin hosting. C. Apply hosted account layouts without altering field names/actions. D. Replace crowded workspace navigation with a shared shell and improve dense workflows through existing primitives. E. Render client checklist as responsive cards, retaining upload form selectors and cryptography. F. Run regression, structural, contrast and security checks; record unsupported browser/manual evidence.
+
+Browser automation initialization failed with `failed to write kernel assets ... path specified`. No before/after browser screenshots or visual inspection is claimed unless later evidence supersedes this limitation.

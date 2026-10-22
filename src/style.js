@@ -24,7 +24,7 @@
  * exactly the kind of detail that makes an interface feel assembled rather than designed. One source, so the
  * bar and the page cannot drift apart.
  */
-export const CANVAS = { light: '#f7f8fa', dark: '#0a0e15' };
+export const CANVAS = { light: '#f6f7f4', dark: '#0d1513' };
 
 const TOKENS = `
   :root {
@@ -33,25 +33,25 @@ const TOKENS = `
     /* Surfaces: canvas, card, and the recessed fill used for table headers and inputs. */
     --canvas: ${CANVAS.light};
     --surface: #ffffff;
-    --sunken: #f2f4f7;
-    --line: #e6e9ee;
-    --line-2: #d5dae2;
+    --sunken: #edf1ec;
+    --line: #dfe6de;
+    --line-2: #c9d3ca;
 
     /* Ink, in four weights. Headings are a very dark navy rather than black: it reads as
        considered rather than default, and it is what makes a white page feel expensive. */
-    --ink: #131c2b;
-    --ink-2: #2b3644;
-    --soft: #5c6875;
+    --ink: #172d25;
+    --ink-2: #30443b;
+    --soft: #4e625a;
     /* The quietest ink, and the only one whose whole job is small type: table headers, eyebrows, the footer.
        It was #8b95a3, which measures 2.9:1 on the canvas — a label a person has to work to read is not a
        subtle label, it is a missing one. #656e7b measures 4.9:1 on the canvas, 5.2 on a card and 4.7 on
        the sunken fill, so the smallest type in the product clears AA on every surface it is actually used
        on. Measured with the same formula the checkers would use, not chosen by eye. */
-    --faint: #656e7b;
+    --faint: #58675f;
 
-    --link: #2a5bd7;
-    --brand: #0d9f6e;
-    --primary: #131c2b;
+    --link: #155e48;
+    --brand: #167052;
+    --primary: #164e3c;
     --primary-ink: #ffffff;
 
     /* State. Five families, five meanings, no other colour anywhere. */
@@ -70,9 +70,9 @@ const TOKENS = `
     --focus: 0 0 0 3px color-mix(in srgb, var(--link) 22%, transparent);
 
     --r-xs: 5px; --r-sm: 7px; --r-md: 9px; --r-lg: 12px; --r-pill: 999px;
-    --control: 34px; --control-sm: 28px;
+    --control: 44px; --control-sm: 36px;
     /* The sticky header's height: the shell uses it, and so does the offset an anchor needs. */
-    --header: 3.5rem;
+    --header: 4rem;
     /* The page's side margin, and the notch. A client opens their page on a phone, often in landscape, and
        the content must not run under the rounded corner of the screen. One gutter for the whole shell, so no
        page invents its own — and two derived tokens, because one max() per rule would be four copies of
@@ -81,10 +81,14 @@ const TOKENS = `
     --pad-l: max(var(--gutter), env(safe-area-inset-left));
     --pad-r: max(var(--gutter), env(safe-area-inset-right));
 
-    --fs-xs: 11.5px; --fs-sm: 12.5px; --fs-md: 13.5px;
-    --fs-base: 15px; --fs-lg: 16.5px; --fs-xl: 19px; --fs-2xl: 23px; --fs-3xl: 28px;
+    --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px;
+    --fs-base: 16px; --fs-lg: 18px; --fs-xl: 21px; --fs-2xl: 28px; --fs-3xl: 34px;
 
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    --sans: Aptos, "Segoe UI", "Helvetica Neue", sans-serif;
+    --display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --sidebar: 14.5rem; --content: 76rem;
+    --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
+    --space-6: 1.5rem; --space-8: 2rem; --space-12: 3rem;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   }
 
@@ -92,22 +96,22 @@ const TOKENS = `
     :root {
       color-scheme: dark;
       --canvas: ${CANVAS.dark};
-      --surface: #10151e;
-      --sunken: #0d121a;
-      --line: #1b2230;
-      --line-2: #2c3644;
+      --surface: #14201c;
+      --sunken: #101b17;
+      --line: #283c32;
+      --line-2: #42594b;
 
-      --ink: #e9edf4;
-      --ink-2: #d2dae5;
-      --soft: #94a0b1;
+      --ink: #e8f0eb;
+      --ink-2: #d0ded5;
+      --soft: #a0b3a8;
       /* The same rule as the light faint — 5.1:1 on the canvas, 4.8 on a card — so a table header is as
          readable in the dark as it is in the light. */
-      --faint: #7a8491;
+      --faint: #9caaa1;
 
-      --link: #8ab0ff;
-      --brand: #35d39a;
-      --primary: #e9edf4;
-      --primary-ink: #0a0e15;
+      --link: #83d6b0;
+      --brand: #83d6b0;
+      --primary: #a5e6c7;
+      --primary-ink: #10241b;
 
       --ok-bg: #06271b;    --ok-ink: #6ee7b7;    --ok-line: #12543a;
       --info-bg: #0c1a33;  --info-ink: #96b8ff;  --info-line: #1e3a6e;
@@ -150,7 +154,7 @@ const BASE = `
 
   /* --- the page frame ---------------------------------------------------------------------- */
   .wrap {
-    width: 100%; max-width: 68rem; margin: 0 auto;
+    width: 100%; max-width: var(--content); margin: 0 auto;
     padding: 1.75rem var(--pad-r) 4.5rem var(--pad-l);
   }
   @media (max-width: 40rem) {
@@ -199,7 +203,7 @@ const BASE = `
   }
 
   .foot {
-    max-width: 68rem; margin: 0 auto; padding: 1.5rem var(--pad-r) 3rem var(--pad-l);
+    max-width: var(--content); margin: 0 auto; padding: 1.5rem var(--pad-r) 3rem var(--pad-l);
     border-top: 1px solid var(--line);
     font-size: var(--fs-sm); color: var(--faint); line-height: 1.65;
   }
@@ -214,7 +218,7 @@ const BASE = `
     color: var(--ink); font-weight: 600; letter-spacing: -.02em;
     margin: 0 0 .5rem; text-wrap: balance;
   }
-  h1 { font-size: var(--fs-2xl); line-height: 1.25; }
+  h1 { font-family: var(--display); font-size: 2rem; font-weight: 500; line-height: 1.2; }
   h2 { font-size: var(--fs-lg); line-height: 1.35; letter-spacing: -.015em; }
   h3 { font-size: var(--fs-base); line-height: 1.4; }
   p { margin: .55rem 0; }
@@ -301,7 +305,7 @@ const COMPONENTS = `
   }
   .seg a, .seg button {
     display: inline-flex; align-items: center; gap: .35rem;
-    height: 26px; margin: 0; padding: 0 .6rem;
+    min-height: 36px; margin: 0; padding: 0 .6rem;
     font-size: var(--fs-md); font-weight: 550; color: var(--soft);
     background: none; border: 0; border-radius: var(--r-sm);
     box-shadow: none; text-decoration: none; cursor: pointer;
@@ -328,7 +332,7 @@ const COMPONENTS = `
   button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
   button:focus-visible, .btn:focus-visible, a:focus-visible,
   input:focus-visible, textarea:focus-visible, select:focus-visible {
-    outline: none; box-shadow: var(--focus);
+    outline: 2px solid var(--link); outline-offset: 3px; box-shadow: var(--focus);
   }
 
   button.primary, .btn.primary {
@@ -527,10 +531,10 @@ const TABLES = `
   /* --- tiles: one number, and the words that name it ---------------------------------------- */
   .tiles {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
-    gap: .5rem; margin: 0 0 1.25rem;
+    gap: .75rem; margin: 0 0 1.5rem;
   }
   .tile {
-    display: block; padding: .7rem .85rem; text-decoration: none;
+    display: block; padding: 1.1rem 1.2rem; text-decoration: none;
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
     box-shadow: var(--sh-1); transition: box-shadow .15s ease, border-color .15s ease, transform .1s ease;
   }
@@ -828,6 +832,89 @@ const CLIENT_AND_MISC = `
  * attribute. So the widths live here, where styling lives, and the markup says `class="w34"` instead
  * of inventing a number per table. (`tools/check-pages.mjs` fails a page that brings one back.)
  */
+const SHELL = `
+  .workspace .top { background: var(--surface); backdrop-filter: none; }
+  .workspace-label { color: var(--soft); font-size: var(--fs-sm); border-left: 1px solid var(--line); padding-left: 1rem; }
+  .app-layout { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); min-height: calc(100vh - var(--header)); }
+  .sidebar { position: sticky; top: var(--header); height: calc(100vh - var(--header)); overflow-y: auto; padding: 1.6rem 1rem; border-right: 1px solid var(--line); background: var(--surface); }
+  .nav-group + .nav-group { margin-top: 1.75rem; }
+  .nav-label { font-size: var(--fs-xs); font-weight: 650; color: var(--soft); letter-spacing: .08em; text-transform: uppercase; padding: 0 .75rem; margin-bottom: .5rem; }
+  .sidebar nav a, .mobile-nav nav a { display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .65rem .75rem; border-radius: var(--r-sm); color: var(--soft); font-size: var(--fs-md); font-weight: 550; text-decoration: none; }
+  .sidebar nav a:hover, .mobile-nav nav a:hover { background: var(--sunken); color: var(--ink); }
+  .sidebar nav a[aria-current=page], .mobile-nav nav a[aria-current=page] { background: var(--ok-bg); color: var(--ok-ink); box-shadow: inset 3px 0 var(--brand); }
+  .sidebar-note { margin: 2rem .75rem 0; padding-top: 1rem; border-top: 1px solid var(--line); font-size: var(--fs-xs); color: var(--soft); }
+  .workspace .wrap { min-width: 0; padding-top: 2rem; }
+  .workspace .foot { margin-left: var(--sidebar); }
+  .mobile-nav { display: none; }
+  .account-actions { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  .account-actions form { margin: 0; }
+  .page-head { padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
+  .page-head .sub { max-width: 48rem; margin-top: .5rem; line-height: 1.6; }
+  .scroll { scrollbar-color: var(--line-2) var(--surface); }
+  .scroll:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+  .gateway { max-width: 64rem; padding: 2rem 0; }
+  .gateway.auth-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 4rem; align-items: start; }
+  .gateway .hero h1 { font-family: var(--display); font-size: clamp(2.3rem, 4vw, 3.25rem); font-weight: 500; line-height: 1.12; }
+  .gateway .hero .lead { font-size: var(--fs-lg); }
+  .auth-panel { padding: 1.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--sh-2); }
+  .auth-panel form.card { padding: 0; margin: 1.25rem 0 0; border: 0; box-shadow: none; }
+  .auth-panel form button { width: 100%; margin-top: 1.25rem; }
+  .auth-panel .aside { font-size: var(--fs-md); }
+  .auth-intro .promise, .auth-intro .ticks { max-width: none; }
+  .center { max-width: 30rem; }
+  .center h1 { font-family: var(--display); font-size: 2rem; font-weight: 500; text-align: left; }
+  .center .note { text-align: left; }
+  .client { max-width: 48rem; margin: 0 auto; }
+  .client-identity { padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
+  .client h1 { font-family: var(--display); font-size: clamp(2rem, 5vw, 2.8rem); font-weight: 500; line-height: 1.16; }
+  .client-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0; }
+  .client-summary progress { width: 14rem; height: .65rem; accent-color: var(--brand); }
+  .client-checklist { list-style: none; padding: 0; display: grid; gap: 1rem; counter-reset: checklist; }
+  .client-item { padding: 1.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--sh-1); }
+  .client-item-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-bottom: 1.25rem; }
+  .client-item h2 { font-size: var(--fs-lg); margin: 0; }
+  .client .cell-s { display: block; font-size: var(--fs-sm); color: var(--soft); margin-top: .35rem; overflow-wrap: anywhere; }
+  .client .upload { padding: 1rem; background: var(--sunken); border: 1px dashed var(--line-2); border-radius: var(--r-md); gap: .75rem; }
+  .client .upload input { max-width: 100%; }
+  .client .upload input[type=file] { padding: .5rem; background: var(--surface); }
+  .client .upload button[type=submit] { color: var(--primary-ink); background: var(--primary); border-color: var(--primary); }
+  .client .says { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; }
+  .client .says button { min-height: 44px; white-space: normal; text-align: left; }
+  .client .status { overflow-wrap: anywhere; }
+  .client-support { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line); }
+  @media (max-width: 64rem) {
+    .app-layout { display: block; }
+    .sidebar { display: none; }
+    .workspace .foot { margin-left: auto; }
+    .workspace .top { height: auto; min-height: var(--header); flex-wrap: wrap; padding-top: .65rem; padding-bottom: .65rem; gap: .65rem; }
+    .workspace-label { display: none; }
+    .mobile-nav { display: block; margin-left: auto; }
+    .mobile-nav summary { min-height: 44px; padding: .6rem .8rem; border: 1px solid var(--line-2); border-radius: var(--r-sm); cursor: pointer; font-size: var(--fs-md); }
+    .mobile-nav nav { position: absolute; left: var(--pad-l); right: var(--pad-r); top: 100%; display: block; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--sh-3); border-radius: var(--r-lg); max-height: 70vh; overflow-y: auto; padding: 1rem; }
+    .mobile-nav:not([open]) nav { display: none; }
+    .account-actions .who { display: none; }
+    .top .account-actions { width: auto; margin-left: 0; }
+  }
+  @media (max-width: 48rem) {
+    .gateway.auth-layout { grid-template-columns: 1fr; gap: 2rem; }
+    .gateway { padding: .5rem 0; }
+    .auth-intro .ticks { display: none; }
+    .client-item { padding: 1rem; }
+    .client .upload { padding: .75rem; }
+    .client-summary progress { width: 100%; }
+    button.sm, .btn.sm, .seg a, .seg button { min-height: 44px; height: auto; }
+    input, select, textarea { font-size: 16px; }
+    .facts { grid-template-columns: 1fr; gap: .2rem; }
+    .facts dd { margin-bottom: .8rem; overflow-wrap: anywhere; }
+  }
+  @media (forced-colors: active) {
+    button, .btn, input, select, textarea, .card, .client-item { border: 1px solid CanvasText; }
+    :focus-visible { outline: 3px solid Highlight; box-shadow: none; }
+    .badge { border: 1px solid CanvasText; }
+  }
+  @media print { .sidebar, .mobile-nav, .account-actions { display: none; } .app-layout { display: block; } .workspace .foot { margin-left: 0; } }
+`;
+
 const WIDTHS = `
 .w8  { width: 8%; }  .w9  { width: 9%; }  .w10 { width: 10%; } .w12 { width: 12%; }
 .w14 { width: 14%; } .w15 { width: 15%; } .w17 { width: 17%; } .w18 { width: 18%; }
@@ -840,4 +927,7 @@ const WIDTHS = `
  * The sheet, assembled. Order matters only in that later sections may refine earlier ones; nothing
  * here needs to win an argument with a `!important`.
  */
-export const STYLE = `${TOKENS}\n${BASE}\n${COMPONENTS}\n${FORMS}\n${TABLES}\n${SURFACES}\n${CLIENT_AND_MISC}\n${WIDTHS}`;
+export const STYLE = `${TOKENS}\n${BASE}\n${COMPONENTS}\n${FORMS}\n${TABLES}\n${SURFACES}\n${CLIENT_AND_MISC}\n${SHELL}\n${WIDTHS}`;
+
+// Canonical token block used by the standalone marketing output.
+export const DESIGN_TOKENS = TOKENS;
