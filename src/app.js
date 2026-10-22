@@ -98,6 +98,11 @@ const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024;
 const DEFAULT_MAX_REQUEST_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_REQUEST_FILES = 500;
 
+/** Bearer credentials carried in route paths must not become access-log fields. */
+function logPath(pathname) {
+  return pathname.replace(/^\/(r|invite|reset|verify)\/[^/]+/i, '/$1/[redacted]');
+}
+
 /** The browser-side scripts, served by name. An allowlist, so no request can name a path. */
 const ASSETS = new Map([
   ['tickmark-crypto.js', 'application/javascript; charset=utf-8'],
@@ -384,6 +389,13 @@ export function createApp(db, {
   // the only credential store. The SaaS entry injects the mirror that keeps the platform account in
   // step — same seam, same reason as `onLinkIssued`.
   onCredentialChanged = null,
+  onInviteIssued = null,
+  prepareHostedInvite = null,
+  completeHostedInvite = null,
+  reconcileHostedInvite = null,
+  hostedInviteEmail = null,
+  revokeHostedInvite = null,
+  removeHostedMembership = null,
   // What /healthz counts. The process's own database in single-tenant mode; injected by the SaaS
   // entry, whose process database is the registry and holds no `practitioner` table at all.
   healthCheck = null,
@@ -402,7 +414,7 @@ export function createApp(db, {
       const started = Date.now();
       response.on('finish', () => log('info', 'request', {
         method: request.method,
-        path: url.pathname,
+        path: logPath(url.pathname),
         status: response.statusCode,
         ms: Date.now() - started,
       }));
@@ -500,6 +512,13 @@ export function createApp(db, {
           clientLimiter,
           onLinkIssued: scoped.onLinkIssued,
           onCredentialChanged,
+          onInviteIssued,
+          prepareHostedInvite,
+          completeHostedInvite,
+          reconcileHostedInvite,
+          onInviteEmail: hostedInviteEmail,
+          revokeHostedInvite,
+          removeHostedMembership,
         });
         return;
       }
@@ -510,7 +529,7 @@ export function createApp(db, {
       }
       // The operator gets the detail; the browser gets a sentence. And the failure is one structured
       // line too, so a hosted install can alert on `request.failed` without reading prose.
-      log('error', 'request.failed', { method: request.method, path: url.pathname, error: error.message, stack: error.stack });
+      log('error', 'request.failed', { method: request.method, path: logPath(url.pathname), error: error.message, stack: error.stack });
       return fail(response, 500, 'Something went wrong on the server. The operator can find the detail in its log.');
     }
   });

@@ -16,13 +16,14 @@ import { join } from 'node:path';
 
 import { createSaasServer } from '../src/tenancy/entry.js';
 import { setTenantBilling } from '../src/tenancy/registry.js';
+import { createAttemptLimiter } from '../src/ratelimit.js';
 import { agent } from './helpers.js';
 
 const PASSWORD = 'a long enough password';
 const WEBHOOK_SECRET = 'whsec_test_secret';
 
 /** The server the way `MULTI_TENANT=1` starts it, on a port nobody chose. */
-async function withSaas(run, { env = {} } = {}) {
+async function withSaas(run, { env = {}, loginLimiter, sourceLoginLimiter, log, now } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'tickmark-gateway-'));
   let saas = null;
   try {
@@ -30,6 +31,10 @@ async function withSaas(run, { env = {} } = {}) {
       registryFile: join(directory, 'saas.db'),
       tenantsRoot: join(directory, 'tenants'),
       env,
+      loginLimiter,
+      sourceLoginLimiter,
+      log,
+      now,
     });
     await new Promise((resolve) => saas.server.listen(0, resolve));
     const base = `http://127.0.0.1:${saas.server.address().port}`;
@@ -82,16 +87,16 @@ const tenantRow = (registry, slug = 'acme-accounting') =>
   registry.prepare('SELECT id, slug, name, plan, status FROM tenant WHERE slug = ?').get(slug);
 
 /** One request with a Host header of our choosing — `fetch` will not send one. */
-function askWithHost(base, path, host, { method = 'GET', form = null, cookie = null } = {}) {
+function askWithHost(base, path, host, { method = 'GET', form = null, cookie = null, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const body = form ? new URLSearchParams(form).toString() : null;
-    const headers = { host };
-    if (cookie) headers.cookie = cookie;
+    const requestHeaders = { host, ...headers };
+    if (cookie) requestHeaders.cookie = cookie;
     if (body !== null) {
-      headers['content-type'] = 'application/x-www-form-urlencoded';
-      headers['content-length'] = Buffer.byteLength(body);
+      requestHeaders['content-type'] = 'application/x-www-form-urlencoded';
+      requestHeaders['content-length'] = Buffer.byteLength(body);
     }
-    const req = httpRequest(`${base}${path}`, { method, headers }, (response) => {
+    const req = httpRequest(`${base}${path}`, { method, headers: requestHeaders }, (response) => {
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
       response.on('end', () =>
@@ -436,6 +441,7 @@ test('the platform root sends you to signup or to your dashboard, and a practice
   });
 });
 test('a practice with a second factor cannot be entered through the platform', async () => {
+  let clock = new Date();
   await withSaas(async ({ base, registry, pool }) => {
     const client = agent(base);
     await signup(client);
@@ -445,7 +451,7 @@ test('a practice with a second factor cannot be entered through the platform', a
 
     // Arm the second factor inside the practice's own file, the way the practice would: a pending secret, then a
     // confirmation with a code the authenticator would have produced.
-    const { setPendingSecret, confirmTwoFactor, twoFactorState } = await import('../src/auth.js');
+    const { clearTwoFactor, setPendingSecret, confirmTwoFactor, twoFactorState } = await import('../src/auth.js');
     const { codeAt, counterAt, generateSecret, generateRecoveryCodes } = await import('../src/totp.js');
     const tenantDb = pool.get(row.id);
     const member = tenantDb.prepare('SELECT id FROM practitioner').get();
@@ -454,8 +460,7 @@ test('a practice with a second factor cannot be entered through the platform', a
     confirmTwoFactor(tenantDb, member.id, generateRecoveryCodes());
     assert.equal(twoFactorState(tenantDb, member.id).state, 'on', 'the practice really has a second factor armed');
 
-    // Now sign in at the *platform*. This is the attack: the password is right, and before this was fixed the gateway
-    // minted a workspace session anyway — so two-factor could be walked around by using the front door.
+    // The platform login authenticates only to the platform dashboard. It does not mint a session in the tenant file.
     const platformHost = new URL(base).host;
     const signedIn = await askWithHost(base, '/login', platformHost, {
       method: 'POST',
@@ -463,11 +468,7 @@ test('a practice with a second factor cannot be entered through the platform', a
     });
 
     assert.equal(signedIn.status, 303);
-    assert.equal(
-      signedIn.location,
-      '/dashboard?second-factor=1',
-      'they are sent to the dashboard rather than into the workspace',
-    );
+    assert.equal(signedIn.location, '/dashboard?second-factor=1');
     assert.ok(
       !signedIn.cookies.some((cookie) => cookie.startsWith('tickmark_session=')),
       'and NO workspace session is minted, which is the whole point',
@@ -477,15 +478,107 @@ test('a practice with a second factor cannot be entered through the platform', a
       'the platform session still exists — the dashboard and billing need it',
     );
 
-    // And the dashboard — at the address the redirect pointed to — explains the one remaining step, rather than
-    // leaving them to open their workspace and discover it.
+    // The dashboard has no document access. The tenant host requires its own complete TOTP flow.
     const dashboard = await askWithHost(base, signedIn.location, platformHost, {
       cookie: signedIn.cookies.map((value) => value.split(';')[0]).join('; '),
     });
     assert.equal(dashboard.status, 200, 'the dashboard opens');
-    assert.match(dashboard.body, /asks for a code/, 'and it says why, and what to do');
-    assert.match(dashboard.body, /class="warning"/, 'in the tone of a thing to do rather than a thing done');
-  });
+    assert.match(dashboard.body, /asks for a code/);
+
+    const workspacePassword = await askWithHost(base, '/t/acme-accounting/signin', platformHost, {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    assert.equal(workspacePassword.status, 303);
+    assert.equal(workspacePassword.location, '/t/acme-accounting/signin/code', 'the tenant challenge preserves the slug route');
+    assert.ok(workspacePassword.cookies.some((cookie) => cookie.startsWith('tickmark_challenge=')));
+    assert.ok(!workspacePassword.cookies.some((cookie) => cookie.startsWith('tickmark_session=') && !cookie.startsWith('tickmark_session=;')));
+    assert.ok(!workspacePassword.cookies.some((cookie) => cookie.startsWith('tickmark_saas_session=') && !cookie.startsWith('tickmark_saas_session=;')));
+
+    const challengeJar = workspacePassword.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    const codePage = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, { cookie: challengeJar });
+    assert.equal(codePage.status, 200);
+    assert.match(codePage.body, /authenticator app/);
+
+    const wrongCode = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+      method: 'POST', form: { code: 'not-a-code' }, cookie: challengeJar,
+    });
+    assert.equal(wrongCode.status, 401, 'an incorrect code does not create a session');
+    assert.ok(!wrongCode.cookies.some((cookie) => cookie.startsWith('tickmark_session=') && !cookie.startsWith('tickmark_session=;')));
+
+    const code = codeAt(secret, counterAt(new Date()));
+    const completed = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+      method: 'POST', form: { code }, cookie: challengeJar,
+    });
+    assert.equal(completed.status, 303);
+    assert.equal(completed.location, '/t/acme-accounting/requests');
+    assert.ok(completed.cookies.some((cookie) => cookie.startsWith('tickmark_session=')));
+    assert.ok(completed.cookies.some((cookie) => cookie.startsWith('tickmark_saas_session=')));
+
+    const workspaceJar = completed.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    const workspace = await askWithHost(base, '/t/acme-accounting/requests', platformHost, { cookie: workspaceJar });
+    assert.equal(workspace.status, 200, 'both factors produce the tenant-local session the core accepts');
+
+    const replay = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+      method: 'POST', form: { code }, cookie: challengeJar,
+    });
+    assert.equal(replay.status, 410, 'a spent challenge cannot mint another session');
+
+    const guessingLogin = await askWithHost(base, '/t/acme-accounting/signin', platformHost, {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    const guessingJar = guessingLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const guess = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+        method: 'POST', form: { code: 'not-a-code' }, cookie: guessingJar,
+      });
+      assert.equal(guess.status, 401);
+      if (attempt === 4) assert.match(guess.body, /last attempt/);
+    }
+    const afterGuessBudget = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+      method: 'POST', form: { code }, cookie: guessingJar,
+    });
+    assert.equal(afterGuessBudget.status, 410, 'a correct code cannot rescue an exhausted challenge');
+
+    const expiringLogin = await askWithHost(base, '/t/acme-accounting/signin', platformHost, {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    const expiringJar = expiringLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    clock = new Date(clock.getTime() + 11 * 60 * 1000);
+    const expired = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, { cookie: expiringJar });
+    assert.equal(expired.status, 410, 'a challenge expires without minting a session');
+
+    const logoutLogin = await askWithHost(base, '/t/acme-accounting/signin', platformHost, {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    const logoutJar = logoutLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    await askWithHost(base, '/t/acme-accounting/logout', platformHost, { method: 'POST', cookie: logoutJar });
+    const afterLogout = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, { cookie: logoutJar });
+    assert.equal(afterLogout.status, 410, 'logout during a challenge invalidates it');
+
+    const changedFactorLogin = await askWithHost(base, '/t/acme-accounting/signin', platformHost, {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    const changedFactorJar = changedFactorLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    clearTwoFactor(tenantDb, member.id);
+    const changedFactor = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+      method: 'POST', form: { code: codeAt(secret, counterAt(clock)) }, cookie: changedFactorJar,
+    });
+    assert.equal(changedFactor.status, 410, 'a changed factor setting invalidates an outstanding challenge');
+    setPendingSecret(tenantDb, member.id, secret);
+    confirmTwoFactor(tenantDb, member.id, generateRecoveryCodes(), clock);
+
+    const removedLogin = await askWithHost(base, '/t/acme-accounting/signin', platformHost, {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    const removedJar = removedLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    registry.prepare('DELETE FROM tenant_member WHERE tenant_id = ? AND account_id = (SELECT id FROM account WHERE email = ?)')
+      .run(row.id, 'sam@acme.example');
+    const removed = await askWithHost(base, '/t/acme-accounting/signin/code', platformHost, {
+      method: 'POST', form: { code: codeAt(secret, counterAt(clock)) }, cookie: removedJar,
+    });
+    assert.ok([403, 410].includes(removed.status), 'membership removal while challenged blocks completion');
+    assert.ok(!removed.cookies.some((cookie) => cookie.startsWith('tickmark_session=') && !cookie.startsWith('tickmark_session=;')));
+  }, { now: () => clock });
 });
 
 
@@ -534,4 +627,230 @@ test('the core sign-in path and the gateway sign-in are the same door', async ()
     assert.equal(workspace.status, 200, 'which the workspace accepts');
     assert.match(workspace.body, /Requests/, 'and it is the practice\u2019s own board');
   });
+});
+
+test('hosted login throttles failures before scrypt, expires them, and allows the legitimate account back in', async () => {
+  let now = 1_000_000;
+  const loginLimiter = createAttemptLimiter({ limit: 2, windowMs: 60_000, now: () => now });
+  const sourceLoginLimiter = createAttemptLimiter({ limit: 20, windowMs: 60_000, now: () => now });
+  const events = [];
+  await withSaas(async ({ base }) => {
+    const client = agent(base);
+    await signup(client);
+    const host = new URL(base).host;
+    const attempt = (password) => askWithHost(base, '/login', host, {
+      method: 'POST', form: { email: 'sam@acme.example', password },
+    });
+
+    const wrongOne = await attempt('wrong password');
+    const wrongTwo = await attempt('wrong password');
+    assert.equal(wrongOne.status, 401);
+    assert.equal(wrongTwo.status, 401);
+    assert.match(wrongOne.body, /do not match an account/);
+    assert.match(wrongTwo.body, /do not match an account/);
+
+    const held = await attempt(PASSWORD);
+    assert.equal(held.status, 429, 'even the right password waits until the bounded window expires');
+    assert.match(held.body, /Too many sign-in attempts/);
+
+    now += 60_001;
+    const recovered = await attempt(PASSWORD);
+    assert.equal(recovered.status, 303, 'expiry restores sign-in without operator intervention');
+    assert.ok(recovered.cookies.some((cookie) => cookie.startsWith('tickmark_session=')));
+  }, { loginLimiter, sourceLoginLimiter, log: (level, event, fields) => events.push({ level, event, fields }) });
+
+  const logText = JSON.stringify(events);
+  assert.ok(!logText.includes('wrong password'));
+  assert.ok(!logText.includes(PASSWORD));
+});
+
+test('the source bucket catches changing email addresses without disclosing account existence', async () => {
+  const loginLimiter = createAttemptLimiter({ limit: 20 });
+  const sourceLoginLimiter = createAttemptLimiter({ limit: 2 });
+  await withSaas(async ({ base, registry }) => {
+    await signup(agent(base));
+    const { createAccount } = await import('../src/tenancy/registry.js');
+    await createAccount(registry, { email: 'lee@example.test', password: PASSWORD });
+    const host = new URL(base).host;
+    const fail = (email) => askWithHost(base, '/login', host, {
+      method: 'POST', form: { email, password: 'wrong password' },
+    });
+
+    assert.equal((await fail('sam@acme.example')).status, 401);
+    assert.equal((await fail('lee@example.test')).status, 401);
+    const rotated = await fail('unknown@example.test');
+    assert.equal(rotated.status, 429, 'rotating identifiers does not reset the source budget');
+    assert.match(rotated.body, /Too many sign-in attempts/);
+  }, { loginLimiter, sourceLoginLimiter });
+});
+
+test('the account bucket spans trusted proxy source addresses', async () => {
+  const loginLimiter = createAttemptLimiter({ limit: 2 });
+  const sourceLoginLimiter = createAttemptLimiter({ limit: 20 });
+  await withSaas(async ({ base }) => {
+    const client = agent(base);
+    await signup(client);
+    const host = new URL(base).host;
+    const failFrom = (address) => askWithHost(base, '/login', host, {
+      method: 'POST',
+      form: { email: 'sam@acme.example', password: 'wrong password' },
+      headers: { 'x-forwarded-for': address },
+    });
+
+    assert.equal((await failFrom('198.51.100.1')).status, 401);
+    assert.equal((await failFrom('198.51.100.2')).status, 401);
+    const distributed = await failFrom('198.51.100.3');
+    assert.equal(distributed.status, 429, 'changing trusted client addresses does not reset the account budget');
+  }, { loginLimiter, sourceLoginLimiter, env: { TICKMARK_TRUSTED_PROXIES: '127.0.0.1,::1' } });
+});
+
+test('hosted staff invitations create repeatable accounts, enforce tenant membership, and revoke access', async () => {
+  const logged = [];
+  await withSaas(async ({ base, registry, pool }) => {
+    const platformHost = new URL(base).host;
+    const ownerSignup = await agent(base).post('/signup', {
+      practice_name: 'Acme Accounting', email: 'sam@acme.example', password: PASSWORD,
+    });
+    assert.equal(ownerSignup.status, 303);
+    const ownerTenant = tenantRow(registry);
+    setTenantBilling(registry, ownerTenant.id, { status: 'active' });
+    registry.prepare('INSERT INTO tenant_host (host, tenant_id) VALUES (?, ?)').run('acme.example', ownerTenant.id);
+    const ownerDb = pool.get(ownerTenant.id);
+    const ownerPractice = ownerDb.prepare('SELECT id FROM practice').get().id;
+
+    const ownerLogin = await askWithHost(base, '/signin', 'acme.example', {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    assert.equal(ownerLogin.location, '/requests');
+    const ownerJar = ownerLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+
+    const escalation = await askWithHost(base, '/members/invite', 'acme.example', {
+      method: 'POST', cookie: ownerJar,
+      form: { email: 'attacker@acme.example', role: 'owner' },
+    });
+    assert.equal(escalation.status, 400, 'a submitted owner role cannot be granted through an invitation');
+
+    const made = await askWithHost(base, '/members/invite', 'acme.example', {
+      method: 'POST', cookie: ownerJar,
+      form: { email: 'lee@acme.example', role: 'assistant' },
+    });
+    assert.equal(made.status, 201, made.body);
+    const invitation = JSON.parse(made.body);
+    assert.ok(invitation.token);
+    assert.equal(ownerDb.prepare('SELECT role FROM invite WHERE token_hash = ?').get(
+      (await import('../src/crypto.js')).hashToken(invitation.token),
+    ).role, 'assistant');
+
+    const landing = await askWithHost(base, `/invite/${invitation.token}`, platformHost);
+    assert.equal(landing.status, 200);
+    assert.match(landing.body, /readonly/);
+    assert.match(landing.body, /lee@acme\.example/);
+    const accepted = await askWithHost(base, `/invite/${invitation.token}`, platformHost, {
+      method: 'POST', form: { email: 'lee@acme.example', password: 'another long enough password' },
+    });
+    assert.equal(accepted.status, 303, accepted.body);
+    assert.ok(accepted.cookies.some((cookie) => cookie.startsWith('tickmark_saas_session=') && !cookie.startsWith('tickmark_saas_session=;')));
+    assert.ok(accepted.cookies.some((cookie) => cookie.startsWith('tickmark_session=') && !cookie.startsWith('tickmark_session=;')));
+
+    const inviteHash = (await import('../src/crypto.js')).hashToken(invitation.token);
+    assert.equal(registry.prepare('SELECT state FROM hosted_invite WHERE token_hash = ?').get(inviteHash).state, 'accepted');
+    const localMember = ownerDb.prepare('SELECT id, role FROM practitioner WHERE email = ?').get('lee@acme.example');
+    assert.equal(localMember.role, 'assistant');
+    assert.equal(ownerDb.prepare('SELECT COUNT(*) AS n FROM key_wrapping WHERE practitioner_id = ?').get(localMember.id).n, 0);
+    assert.equal(registry.prepare('SELECT COUNT(*) AS n FROM tenant_member WHERE account_id = (SELECT id FROM account WHERE email = ?) AND tenant_id = ?')
+      .get('lee@acme.example', ownerTenant.id).n, 1);
+
+    const memberJar = accepted.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    const signedOut = await askWithHost(base, '/logout', 'acme.example', { method: 'POST', cookie: memberJar });
+    assert.equal(signedOut.status, 303);
+    const repeatLogin = await askWithHost(base, '/signin', 'acme.example', {
+      method: 'POST', form: { email: 'lee@acme.example', password: 'another long enough password' },
+    });
+    assert.equal(repeatLogin.location, '/requests', 'an accepted invite is now a durable hosted login');
+    const repeatJar = repeatLogin.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    const memberPage = await askWithHost(base, '/members', 'acme.example', { cookie: repeatJar });
+    assert.equal(memberPage.status, 403, 'assistant role stays enforced after sign-in');
+
+    const removed = await askWithHost(base, `/members/${localMember.id}/remove`, 'acme.example', {
+      method: 'POST', cookie: ownerJar,
+    });
+    assert.equal(removed.status, 303);
+    assert.equal(registry.prepare('SELECT COUNT(*) AS n FROM tenant_member WHERE account_id = (SELECT id FROM account WHERE email = ?) AND tenant_id = ?')
+      .get('lee@acme.example', ownerTenant.id).n, 0);
+    const stale = await askWithHost(base, '/requests', 'acme.example', { cookie: repeatJar });
+    assert.equal(stale.status, 303, 'the old tenant session is rejected on its next request');
+    const denied = await askWithHost(base, '/signin', 'acme.example', {
+      method: 'POST', form: { email: 'lee@acme.example', password: 'another long enough password' },
+    });
+    assert.equal(denied.status, 401, 'removed membership cannot be bridged back into the practice');
+
+    // A valid account invited to another practice uses its existing password and gains only that
+    // second membership. This checks registry account reuse without weakening tenant scoping.
+    const secondSignup = await agent(base).post('/signup', {
+      practice_name: 'Second Practice', email: 'owner@second.example', password: PASSWORD,
+    });
+    assert.equal(secondSignup.status, 303);
+    const secondTenant = registry.prepare("SELECT id, slug FROM tenant WHERE slug = 'second-practice'").get();
+    setTenantBilling(registry, secondTenant.id, { status: 'active' });
+    registry.prepare('INSERT INTO tenant_host (host, tenant_id) VALUES (?, ?)').run('second.example', secondTenant.id);
+    const secondDb = pool.get(secondTenant.id);
+    const secondOwner = await askWithHost(base, '/signin', 'second.example', {
+      method: 'POST', form: { email: 'owner@second.example', password: PASSWORD },
+    });
+    const secondOwnerJar = secondOwner.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    const existingInvite = await askWithHost(base, '/members/invite', 'second.example', {
+      method: 'POST', cookie: secondOwnerJar, form: { email: 'lee@acme.example', role: 'assistant' },
+    });
+    assert.equal(existingInvite.status, 201, existingInvite.body);
+    const existingToken = JSON.parse(existingInvite.body).token;
+    const wrongPassword = await askWithHost(base, `/invite/${existingToken}`, platformHost, {
+      method: 'POST', form: { email: 'lee@acme.example', password: 'wrong password that is long enough' },
+    });
+    assert.equal(wrongPassword.status, 200);
+    assert.match(wrongPassword.body, /current password/);
+    const existingAccepted = await askWithHost(base, `/invite/${existingToken}`, platformHost, {
+      method: 'POST', form: { email: 'lee@acme.example', password: 'another long enough password' },
+    });
+    assert.equal(existingAccepted.status, 303, existingAccepted.body);
+    const leeAccount = registry.prepare('SELECT id FROM account WHERE email = ?').get('lee@acme.example');
+    assert.equal(registry.prepare('SELECT COUNT(*) AS n FROM tenant_member WHERE account_id = ?').get(leeAccount.id).n, 1,
+      'membership in the first tenant remains revoked while acceptance joins the second');
+    assert.ok(secondDb.prepare('SELECT id FROM practitioner WHERE email = ?').get('lee@acme.example'));
+    assert.equal(registry.prepare('SELECT COUNT(*) AS n FROM tenant_member WHERE account_id = ? AND tenant_id = ?')
+      .get(leeAccount.id, secondTenant.id).n, 1);
+    assert.equal(ownerPractice, ownerDb.prepare('SELECT id FROM practice').get().id);
+
+    const revokeMade = await askWithHost(base, '/members/invite', 'acme.example', {
+      method: 'POST', cookie: ownerJar, form: { email: 'revoked@acme.example', role: 'assistant' },
+    });
+    assert.equal(revokeMade.status, 201);
+    const revokedToken = JSON.parse(revokeMade.body).token;
+    const revokedHash = (await import('../src/crypto.js')).hashToken(revokedToken);
+    const localInvite = ownerDb.prepare('SELECT id FROM invite WHERE token_hash = ?').get(revokedHash);
+    const revoked = await askWithHost(base, `/members/invite/${localInvite.id}/revoke`, 'acme.example', {
+      method: 'POST', cookie: ownerJar,
+    });
+    assert.equal(revoked.status, 303);
+    assert.equal(registry.prepare('SELECT state FROM hosted_invite WHERE token_hash = ?').get(revokedHash).state, 'revoked');
+    const revokedPage = await askWithHost(base, `/invite/${revokedToken}`, platformHost);
+    assert.equal(revokedPage.status, 410, 'the retained public token index resolves the revoked invitation state');
+    assert.match(revokedPage.body, /taken back by the practice/);
+
+    const expiredMade = await askWithHost(base, '/members/invite', 'acme.example', {
+      method: 'POST', cookie: ownerJar, form: { email: 'expired@acme.example', role: 'assistant' },
+    });
+    assert.equal(expiredMade.status, 201);
+    const expiredToken = JSON.parse(expiredMade.body).token;
+    const expiredHash = (await import('../src/crypto.js')).hashToken(expiredToken);
+    ownerDb.prepare('UPDATE invite SET expires_at = ? WHERE token_hash = ?').run('2000-01-01T00:00:00.000Z', expiredHash);
+    registry.prepare('UPDATE hosted_invite SET expires_at = ? WHERE token_hash = ?').run('2000-01-01T00:00:00.000Z', expiredHash);
+    const expiredPage = await askWithHost(base, `/invite/${expiredToken}`, 'acme.example');
+    assert.equal(expiredPage.status, 410, 'an expired hosted invite cannot be accepted');
+    const logText = JSON.stringify(logged);
+    assert.ok(!logText.includes(invitation.token), 'bearer invitation tokens are redacted from request logs');
+    assert.ok(!logText.includes(existingToken), 'existing-account invite tokens are redacted too');
+    assert.ok(!logText.includes(revokedToken) && !logText.includes(expiredToken), 'revoked and expired bearer tokens are redacted too');
+    assert.ok(!logText.includes('another long enough password'), 'passwords are not recorded in request logs');
+    assert.match(logText, /\/invite\/\[redacted\]/);
+  }, { log: (...entry) => logged.push(entry) });
 });

@@ -24,7 +24,7 @@ import { randomBytes } from 'node:crypto';
 
 import { DatabaseSync } from 'node:sqlite';
 
-import { hashPassword, hashToken, newToken } from '../crypto.js';
+import { hashPassword, hashToken, newToken, verifyPassword } from '../crypto.js';
 import { newId, now } from '../db.js';
 import { createPractice, createPractitioner } from '../store.js';
 
@@ -86,6 +86,23 @@ CREATE TABLE IF NOT EXISTS link_index (
   tenant_id    TEXT NOT NULL REFERENCES tenant(id),
   created_at   TEXT NOT NULL
 );
+
+-- Hosted invitations mirror only identity/lifecycle metadata. The sealed practice-key blob stays in
+-- the tenant file, and the URL token is stored only as a digest here and in that file.
+CREATE TABLE IF NOT EXISTS hosted_invite (
+  token_hash TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenant(id),
+  email TEXT NOT NULL,
+  role TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'accepting', 'accepted', 'revoked')),
+  account_id TEXT REFERENCES account(id),
+  created_account INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  accepted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS hosted_invite_tenant ON hosted_invite(tenant_id, state);
 
 -- The SaaS session: an account, not a practice.
 CREATE TABLE IF NOT EXISTS saas_session (
@@ -550,6 +567,153 @@ export function tenantForLink(registry, token) {
       )
       .get(linkPrefixOf(token)) ?? null
   );
+}
+
+/** Add the registry index and lifecycle row for an invitation after its tenant record exists. */
+export function recordHostedInvite(registry, { tenantId, token, email, role, expiresAt, at = new Date() }) {
+  const tokenHash = hashToken(token);
+  registry.exec('BEGIN IMMEDIATE');
+  try {
+    registry.prepare(
+      `INSERT INTO hosted_invite (token_hash, tenant_id, email, role, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(tokenHash, tenantId, String(email).toLowerCase(), role, expiresAt, at.toISOString());
+    registry.prepare(
+      'INSERT OR IGNORE INTO link_index (token_prefix, tenant_id, created_at) VALUES (?, ?, ?)',
+    ).run(tokenHash.slice(0, LINK_PREFIX_LENGTH), tenantId, at.toISOString());
+    registry.exec('COMMIT');
+    return true;
+  } catch (error) {
+    registry.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Invitation metadata by bearer token. No sealed key or raw token is returned. */
+export function hostedInviteByToken(registry, token) {
+  if (typeof token !== 'string' || token.length === 0) return null;
+  return registry.prepare('SELECT token_hash, tenant_id, email, role, expires_at, state, account_id FROM hosted_invite WHERE token_hash = ?')
+    .get(hashToken(token)) ?? null;
+}
+
+/**
+ * Prepare cross-database acceptance. The account is created or authenticated first; membership remains
+ * pending until the tenant database has atomically claimed its invitation and created the practitioner/key copy.
+ */
+export async function prepareHostedInviteAcceptance(registry, {
+  tenantId, token, email, password, passwordHash, role, expiresAt, at = new Date(),
+}) {
+  const tokenHash = hashToken(token);
+  const invited = registry.prepare('SELECT * FROM hosted_invite WHERE token_hash = ?').get(tokenHash);
+  if (invited && invited.tenant_id !== tenantId) return { state: 'wrong-tenant' };
+  if (invited && (invited.state === 'accepted' || invited.state === 'revoked')) return { state: invited.state };
+  if (invited && invited.expires_at <= at.toISOString()) return { state: 'expired' };
+  if (invited && invited.email !== String(email).toLowerCase()) return { state: 'wrong-email' };
+  if (invited && invited.role !== role) return { state: 'wrong-role' };
+
+  const account = accountByEmail(registry, email);
+  if (account && !(await verifyPassword(password, account.password_hash))) return { state: 'bad-password' };
+  const accountId = account?.id ?? newId();
+  const acceptedHash = account?.password_hash ?? passwordHash;
+
+  registry.exec('BEGIN IMMEDIATE');
+  try {
+    // Compatibility for invitations issued before the registry mirror existed. The core has already
+    // checked the live tenant invitation; bind this token to the first valid acceptance attempt.
+    if (!invited) {
+      registry.prepare(
+        `INSERT INTO hosted_invite
+          (token_hash, tenant_id, email, role, expires_at, state, created_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      ).run(tokenHash, tenantId, String(email).toLowerCase(), role, expiresAt, at.toISOString());
+      registry.prepare(
+        'INSERT OR IGNORE INTO link_index (token_prefix, tenant_id, created_at) VALUES (?, ?, ?)',
+      ).run(tokenHash.slice(0, LINK_PREFIX_LENGTH), tenantId, at.toISOString());
+    }
+
+    const current = registry.prepare('SELECT state, account_id FROM hosted_invite WHERE token_hash = ?').get(tokenHash);
+    if (current.state === 'accepted' || current.state === 'revoked') {
+      registry.exec('COMMIT');
+      return { state: current.state };
+    }
+    if (current.account_id && current.account_id !== accountId) {
+      registry.exec('COMMIT');
+      return { state: 'acceptance-in-progress' };
+    }
+    if (!account) {
+      registry.prepare('INSERT INTO account (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
+        .run(accountId, String(email).toLowerCase(), acceptedHash, at.toISOString());
+    }
+    registry.prepare(
+      `UPDATE hosted_invite SET state = 'accepting', account_id = ?, created_account = ?
+        WHERE token_hash = ? AND state IN ('pending', 'accepting')`,
+    ).run(accountId, account ? 0 : 1, tokenHash);
+    registry.exec('COMMIT');
+  } catch (error) {
+    registry.exec('ROLLBACK');
+    if (/UNIQUE constraint failed: account\.email/i.test(error.message ?? '')) return { state: 'account-race' };
+    throw error;
+  }
+  return { state: 'ready', accountId, passwordHash: acceptedHash };
+}
+
+/** Finalize registry membership only after the tenant-side claim committed. Idempotent for recovery. */
+export function completeHostedInviteAcceptance(registry, { token, tenantId, accountId, at = new Date(), issueSession = true }) {
+  const tokenHash = hashToken(token);
+  registry.exec('BEGIN IMMEDIATE');
+  try {
+    const invite = registry.prepare('SELECT tenant_id, state, account_id FROM hosted_invite WHERE token_hash = ?')
+      .get(tokenHash);
+    if (!invite || invite.tenant_id !== tenantId || invite.account_id !== accountId ||
+        !['accepting', 'accepted'].includes(invite.state)) {
+      registry.exec('ROLLBACK');
+      return null;
+    }
+    registry.prepare(
+      'INSERT INTO tenant_member (tenant_id, account_id, created_at) VALUES (?, ?, ?) ON CONFLICT(tenant_id, account_id) DO NOTHING',
+    ).run(tenantId, accountId, at.toISOString());
+    registry.prepare(
+      `UPDATE hosted_invite SET state = 'accepted', accepted_at = COALESCE(accepted_at, ?)
+        WHERE token_hash = ?`,
+    ).run(at.toISOString(), tokenHash);
+    const session = issueSession ? createSaasSession(registry, accountId, at) : null;
+    registry.exec('COMMIT');
+    return session;
+  } catch (error) {
+    registry.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Finish a registry write interrupted after the tenant transaction committed. */
+export function reconcileHostedInvite(registry, pool, token, at = new Date()) {
+  const invite = hostedInviteByToken(registry, token);
+  if (!invite || invite.state !== 'accepting' || !invite.account_id) return false;
+  const db = pool.get(invite.tenant_id);
+  const row = db.prepare(
+    `SELECT p.email, p.removed_at
+       FROM invite i JOIN practitioner p ON p.id = i.used_by
+      WHERE i.token_hash = ? AND i.used_at IS NOT NULL`,
+  ).get(invite.token_hash);
+  if (!row || row.email !== invite.email || row.removed_at !== null) return false;
+  return Boolean(completeHostedInviteAcceptance(registry, {
+    token, tenantId: invite.tenant_id, accountId: invite.account_id, at, issueSession: false,
+  }));
+}
+
+export function revokeHostedInvite(registry, tokenHash, tenantId) {
+  registry.prepare("UPDATE hosted_invite SET state = 'revoked' WHERE token_hash = ? AND tenant_id = ? AND state IN ('pending', 'accepting')")
+    .run(tokenHash, tenantId);
+}
+
+/** Drop one tenant membership; the tenant file remains the final authority for already issued sessions. */
+export function removeTenantMembership(registry, practiceId, email) {
+  const tenant = tenantForPractice(registry, practiceId);
+  if (!tenant) return false;
+  const account = accountByEmail(registry, email);
+  if (!account) return false;
+  return registry.prepare('DELETE FROM tenant_member WHERE tenant_id = ? AND account_id = ?')
+    .run(tenant.id, account.id).changes === 1;
 }
 
 /** An operator-facing count, for /healthz and for nobody else. */

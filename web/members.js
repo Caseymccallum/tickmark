@@ -25,6 +25,7 @@ if (element && form) {
   const link = document.getElementById('invite-link');
   const passphraseField = form.querySelector('#passphrase');
   const roleField = form.querySelector('#invite-role');
+  const emailField = form.querySelector('#invite-email');
   const passphraseRow = form.querySelector('#passphrase-row');
 
   // The passphrase is only needed to hand over a key, so it stops being asked for the moment the choice is
@@ -45,6 +46,7 @@ if (element && form) {
 
     try {
       const fields = { role };
+      if (emailField) fields.email = emailField.value.trim().toLowerCase();
 
       // The secret that opens the invitation. It is **posted to nobody**: the server stores the sealed blob and
       // hashes the token, and the whole claim is that the part of a link after the `#` never reaches a server. It
@@ -86,8 +88,8 @@ if (element && form) {
       if (passphraseField) passphraseField.value = '';
 
       status.textContent = body.keyed
-        ? `Ready. They will be able to open what clients send. It works once, and it stops working after ${body.days} days.`
-        : `Ready. They will be able to chase documents but not open them. It works once, and it stops working after ${body.days} days.`;
+        ? `Ready for ${emailField?.value || 'your colleague'}. They will be able to open what clients send. It works once, and it stops working after ${body.days} days.`
+        : `Ready for ${emailField?.value || 'your colleague'}. They will be able to chase documents but not open them. It works once, and it stops working after ${body.days} days.`;
       link.hidden = false;
       link.textContent = '';
       const code = document.createElement('code');

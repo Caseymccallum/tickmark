@@ -74,7 +74,7 @@ const MAX_PRACTICE_NAME = 120;
  * returns a token rather than by a form post that returns a page — the secret has to stay in the page
  * that generated it, and a navigation would throw it away.
  */
-export function membersPage({ db, response, practitioner, practiceId, url, mailer }) {
+export function membersPage({ db, response, practitioner, practiceId, url, mailer, onInviteIssued = null }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const members = membersOf(db, practiceId);
@@ -225,6 +225,10 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
               a particular person, it works once, and it stops working after ${INVITE_DAYS} days. Send it
               the way you would send a password, not the way you would send a link.</p>
             <form id="invite-form" class="inline">
+              ${onInviteIssued
+                ? html`<label for="invite-email">Colleague’s email</label>
+                    <input id="invite-email" name="email" type="email" required autocomplete="email">`
+                : ''}
               <label for="invite-role">What will they do? <span class="note">you can change it later</span></label>
               <select id="invite-role" name="role">
                 <option value="accountant" selected>Accountant — the client work, and can open what clients send</option>
@@ -279,7 +283,7 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
  * carrying something they cannot read — and the blob itself is whatever was posted, so it has to be
  * tied to a key the practice actually has.
  */
-export async function createInvitePage({ db, request, response, practitioner, practiceId }) {
+export async function createInvitePage({ db, request, response, practitioner, practiceId, onInviteIssued = null }) {
   if (!requireSignIn({ practitioner, response })) return;
   const fields = formFields(await readBody(request));
 
@@ -290,7 +294,25 @@ export async function createInvitePage({ db, request, response, practitioner, pr
   // over a key and therefore made a member who could do the client work — so that is what it still makes,
   // rather than the *owner* a null role reads as. The difference matters: null-as-owner is the honest
   // reading of a row that predates roles, and the wrong reading of a form that simply forgot to ask.
-  const role = ROLES.includes(field(fields, 'role')) ? field(fields, 'role') : 'accountant';
+  const postedRole = field(fields, 'role');
+  if (postedRole && (!ROLES.includes(postedRole) || postedRole === 'owner')) {
+    return sendJson(response, 400, { error: 'choose Accountant or Assistant for an invitation' });
+  }
+  const role = postedRole ?? 'accountant';
+  const email = field(fields, 'email')?.trim().toLowerCase() ?? '';
+  if (onInviteIssued && (!EMAIL_SHAPE.test(email) || email.length > 254)) {
+    return sendJson(response, 400, { error: 'enter the colleague’s email address for this hosted invitation' });
+  }
+
+  const publish = async (inviteId, token, expiresAt, keyed) => {
+    try {
+      if (onInviteIssued) await onInviteIssued({ practiceId, token, email, role, expiresAt });
+    } catch {
+      revokeInvite(db, practiceId, inviteId);
+      return sendJson(response, 503, { error: 'the invitation could not be connected to the hosted account registry; nothing was sent' });
+    }
+    return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS, keyed });
+  };
 
   // **An assistant's invitation carries no key, and that is the whole point.** The key is sealed in the
   // inviter's browser, so "no key" is not something the server could do on its own — it is the browser being
@@ -301,7 +323,7 @@ export async function createInvitePage({ db, request, response, practitioner, pr
     }
     const token = newToken();
     const expiresAt = new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    createInvite(db, {
+    const inviteId = createInvite(db, {
       practiceId,
       createdBy: practitioner.id,
       sealedKey: null,
@@ -310,7 +332,7 @@ export async function createInvitePage({ db, request, response, practitioner, pr
       tokenHash: hashToken(token),
       expiresAt,
     });
-    return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS, keyed: false });
+    return publish(inviteId, token, expiresAt, false);
   }
 
   if (!/^invite\$sha-256\$/.test(sealedKey ?? '')) {
@@ -326,7 +348,7 @@ export async function createInvitePage({ db, request, response, practitioner, pr
 
   const token = newToken();
   const expiresAt = new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  createInvite(db, {
+  const inviteId = createInvite(db, {
     practiceId,
     createdBy: practitioner.id,
     keyId,
@@ -336,7 +358,7 @@ export async function createInvitePage({ db, request, response, practitioner, pr
     expiresAt,
   });
 
-  return sendJson(response, 201, { token, expiresAt, days: INVITE_DAYS, keyed: true });
+  return publish(inviteId, token, expiresAt, true);
 }
 
 /**
@@ -354,7 +376,8 @@ export async function createInvitePage({ db, request, response, practitioner, pr
  * hands the browser the sealed blob to try. If the fragment is missing or wrong, the browser finds out when
  * the blob refuses to open, which is the only place that can find out.
  */
-export async function invitePage({ db, response, params, error = null }) {
+export async function invitePage({ db, response, params, error = null, onInviteEmail = null, onInviteReconcile = null }) {
+  if (onInviteReconcile) await onInviteReconcile({ token: params[0] });
   const found = inviteByToken(db, params[0]);
 
   if (found.state !== 'open') {
@@ -374,6 +397,9 @@ export async function invitePage({ db, response, params, error = null }) {
   // Whether this invitation carries a key is read from the invitation rather than from its role: the
   // database has a `CHECK` that the two go together, and the thing the page actually depends on is the blob.
   const keyed = found.invite.sealed_key !== null;
+  const invitedEmail = onInviteEmail
+    ? await onInviteEmail({ token: params[0], practiceId: found.invite.practice_id })
+    : null;
 
   return sendPage(response, 200, page({
     title: `Join ${found.invite.practice_name}`,
@@ -391,8 +417,12 @@ export async function invitePage({ db, response, params, error = null }) {
       ${error ? html`<p class="error">${error}</p>` : ''}
       <form method="post" action="/invite/${params[0]}" id="accept-form">
         <label for="email">Email</label>
-        <input id="email" name="email" type="email" required autocomplete="username" spellcheck="false">
-        <label for="password">Password <span class="note">for signing in</span></label>
+        <input id="email" name="email" type="email" required autocomplete="username" spellcheck="false"
+          value="${invitedEmail ?? ''}"${invitedEmail ? ' readonly' : ''}>
+        ${invitedEmail
+          ? html`<p class="note">This invitation is for ${invitedEmail}. An existing account must use its current password.</p>`
+          : ''}
+        <label for="password">Password <span class="note">for signing in, or your current password if you already have a Tickmark account</span></label>
         <input id="password" name="password" type="password" required minlength="${MIN_PASSWORD}"
           autocomplete="new-password">
         ${keyed
@@ -421,16 +451,20 @@ export async function invitePage({ db, response, params, error = null }) {
  * handler cannot check that the record it is given is any good: it can only check that it *looks* like a
  * record, which is the same position the server is in when a key is first made, and for the same reason.
  */
-export async function acceptInvite({ db, request, response, params }) {
+export async function acceptInvite({
+  db, request, response, params, prepareHostedInvite = null, completeHostedInvite = null,
+  onInviteEmail = null, onInviteReconcile = null,
+}) {
   const found = inviteByToken(db, params[0]);
-  if (found.state !== 'open') return invitePage({ db, response, params });
+  const showInvite = (error = null) => invitePage({ db, response, params, error, onInviteEmail, onInviteReconcile });
+  if (found.state !== 'open') return showInvite();
 
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
   const password = typeof fields.password === 'string' ? fields.password : '';
   const wrapped = field(fields, 'wrapped_private_key');
 
-  const refuse = (problem) => invitePage({ db, response, params, error: problem });
+  const refuse = (problem) => showInvite(problem);
   const keyed = found.invite.sealed_key !== null;
 
   if (keyed && (field(fields, 'passphrase') || field(fields, 'again'))) {
@@ -443,6 +477,13 @@ export async function acceptInvite({ db, request, response, params }) {
 
   const problem = validateCredentials(email, password);
   if (problem) return refuse(problem);
+
+  if (onInviteEmail) {
+    const invitedEmail = await onInviteEmail({ token: params[0], practiceId: found.invite.practice_id });
+    if (invitedEmail && invitedEmail !== email) {
+      return refuse('This invitation is for a different email address. Use the address it was sent to.');
+    }
+  }
 
   // The one shape check the server can make: a keyed invitation must arrive with a sealed copy, and a
   // keyless one must not be given one. `claimInvite` would ignore a key on a keyless invitation anyway,
@@ -465,10 +506,30 @@ export async function acceptInvite({ db, request, response, params }) {
   }
 
   const passwordHash = await hashPassword(password);
+  let hosted = null;
+  if (prepareHostedInvite) {
+    hosted = await prepareHostedInvite({
+      token: params[0],
+      practiceId: found.invite.practice_id,
+      email,
+      password,
+      passwordHash,
+      role: found.invite.role ?? 'owner',
+      expiresAt: found.invite.expires_at,
+    });
+    if (hosted?.state !== 'ready') {
+      const error = hosted?.state === 'bad-password'
+        ? 'That is not the current password for this hosted account. Nothing was joined.'
+        : hosted?.state === 'wrong-email'
+          ? 'This invitation is for a different email address. Use the address it was sent to.'
+          : 'This invitation could not be joined to the hosted account. Ask the practice owner to issue a fresh invitation.';
+      return refuse(error);
+    }
+  }
   const claimed = claimInvite(db, {
     token: params[0],
     email,
-    passwordHash,
+    passwordHash: hosted?.passwordHash ?? passwordHash,
     wrappedPrivateKey: wrapped,
   });
 
@@ -478,10 +539,32 @@ export async function acceptInvite({ db, request, response, params }) {
   if (claimed.state === 'email-taken') {
     return refuse('There is already an account for that email address. Sign in instead — an invitation is not needed to join a practice you are already in.');
   }
-  if (claimed.state !== 'joined' && claimed.state !== 'rejoined') return invitePage({ db, response, params });
+  if (claimed.state !== 'joined' && claimed.state !== 'rejoined') return showInvite();
+
+  let hostedCookies = [];
+  if (completeHostedInvite) {
+    try {
+      const result = await completeHostedInvite({
+        token: params[0],
+        practiceId: found.invite.practice_id,
+        email,
+        accountId: hosted.accountId,
+        practitionerId: claimed.practitionerId,
+      });
+      if (!result) throw new Error('hosted invite reconciliation needed');
+      hostedCookies = result.cookies ?? [];
+    } catch {
+      return sendPage(response, 503, page({
+        title: 'Your practice invitation is being finished',
+        body: html`<h1>Your invitation was accepted</h1>
+          <p>Your practice membership is being connected to your hosted account. No access is granted until
+          that finishes. Reload this page in a moment or ask the practice owner for help.</p>`,
+      }));
+    }
+  }
 
   const { token } = createSession(db, claimed.practitionerId);
-  return redirect(response, '/requests', [sessionCookie(token)]);
+  return redirect(response, '/requests', [sessionCookie(token), ...hostedCookies]);
 }
 
 /**
@@ -620,7 +703,7 @@ export function removeMemberPage({ db, response, practitioner, practiceId, param
   }));
 }
 
-export async function removeMemberAction({ db, response, practitioner, practiceId, params, mailer }) {
+export async function removeMemberAction({ db, response, practitioner, practiceId, params, mailer, removeHostedMembership = null }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   // Yourself is a request about your own membership rather than about somebody who has left. Refusing
@@ -635,6 +718,17 @@ export async function removeMemberAction({ db, response, practitioner, practiceI
   }
   if (result.state === 'last-member') {
     return fail(response, 400, 'That is the only person in this practice. A practice with nobody in it could never be signed in to again, so this is refused.', practitioner);
+  }
+
+  if (removeHostedMembership) {
+    try {
+      await removeHostedMembership({ practiceId, email: result.email });
+    } catch {
+      // The tenant transaction already ended the member's sessions and marks them removed. The
+      // gateway also checks that tenant-side state before bridging, so registry cleanup failure
+      // cannot restore access to this practice.
+      return fail(response, 503, 'Access to this practice is removed. The hosted membership record needs operator reconciliation.', practitioner);
+    }
   }
 
   redirect(response, `/members?removed=${encodeURIComponent(result.email)}`);
@@ -710,8 +804,9 @@ export async function renamePracticePage({ db, request, response, practitioner, 
 }
 
 /** Take an invitation back before it was used. Owner-gated, like everything under /members. */
-export function revokeInviteAction({ db, response, practitioner, practiceId, params }) {
+export async function revokeInviteAction({ db, response, practitioner, practiceId, params, revokeHostedInvite = null }) {
   if (!requireSignIn({ practitioner, response })) return;
+  const tokenHash = db.prepare('SELECT token_hash FROM invite WHERE id = ? AND practice_id = ?').get(params[0], practiceId)?.token_hash;
   if (!revokeInvite(db, practiceId, params[0])) {
     return fail(
       response,
@@ -720,5 +815,6 @@ export function revokeInviteAction({ db, response, practitioner, practiceId, par
       practitioner,
     );
   }
+  if (revokeHostedInvite && tokenHash) await revokeHostedInvite({ practiceId, tokenHash });
   return redirect(response, '/members?revoked=1');
 }

@@ -18,10 +18,28 @@ import { sendPage } from '../views.js';
 
 import { createGateway } from './gateway.js';
 import { createPool } from './pool.js';
-import { accountForRequest, countTenants, openRegistry, recordLink, tenantForPractice, updateAccountEmail, updateAccountPassword } from './registry.js';
+import {
+  accountForRequest,
+  completeHostedInviteAcceptance,
+  countTenants,
+  hostedInviteByToken,
+  openRegistry,
+  prepareHostedInviteAcceptance,
+  reconcileHostedInvite,
+  recordHostedInvite,
+  recordLink,
+  removeTenantMembership,
+  revokeHostedInvite,
+  saasSessionCookie,
+  tenantForPractice,
+  updateAccountEmail,
+  updateAccountPassword,
+} from './registry.js';
 import { createResolver } from './resolve.js';
 import { stripeFromEnvironment } from './stripe.js';
 import { billingWallPage } from './views.js';
+import { secureCookies } from '../auth.js';
+import { hashToken } from '../crypto.js';
 
 export function createSaasServer({
   dataDir = process.env.TICKMARK_DATA ?? 'data',
@@ -29,11 +47,23 @@ export function createSaasServer({
   tenantsRoot = process.env.TICKMARK_TENANTS ?? join(dataDir, 'tenants'),
   maxUploadBytes = Number(process.env.TICKMARK_MAX_UPLOAD ?? 25 * 1024 * 1024),
   env = process.env,
+  loginLimiter,
+  sourceLoginLimiter,
+  log,
+  now,
 } = {}) {
   const registry = openRegistry(registryFile);
   const pool = createPool({ root: tenantsRoot });
   const stripe = stripeFromEnvironment(env);
-  const gateway = createGateway({ registry, pool, stripe });
+  const gateway = createGateway({
+    registry,
+    pool,
+    stripe,
+    ...(loginLimiter ? { loginLimiter } : {}),
+    ...(sourceLoginLimiter ? { sourceLoginLimiter } : {}),
+    ...(now ? { now } : {}),
+    trustedProxies: String(env.TICKMARK_TRUSTED_PROXIES ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+  });
 
   // A practice with a closed subscription gets the billing wall from the resolver, before its own
   // database is opened — and the wall offers the gateway's own buttons, which is why it is drawn
@@ -65,6 +95,7 @@ export function createSaasServer({
     maxUploadBytes,
     resolveTenant,
     preHandle: gateway.handle,
+    ...(log ? { log } : {}),
     healthCheck: () => countTenants(registry),
     onLinkIssued: ({ practiceId, token }) => {
       // The core hands back the practice id; the registry indexes by tenant id. One lookup joins
@@ -85,6 +116,44 @@ export function createSaasServer({
         );
       }
     },
+    onInviteIssued: ({ practiceId, token, email, role, expiresAt }) => {
+      const tenant = tenantForPractice(registry, practiceId);
+      if (!tenant) throw new Error('hosted tenant not found for invitation');
+      recordHostedInvite(registry, { tenantId: tenant.id, token, email, role, expiresAt });
+    },
+    prepareHostedInvite: (invite) => {
+      const tenant = tenantForPractice(registry, invite.practiceId);
+      if (!tenant) return { state: 'wrong-tenant' };
+      return prepareHostedInviteAcceptance(registry, { ...invite, tenantId: tenant.id });
+    },
+    completeHostedInvite: ({ token, practiceId, email, accountId, practitionerId }) => {
+      const tenant = tenantForPractice(registry, practiceId);
+      if (!tenant) return null;
+      const tenantDb = pool.get(tenant.id);
+      const accepted = tenantDb.prepare(
+        `SELECT i.practice_id, p.email, p.removed_at
+           FROM invite i JOIN practitioner p ON p.id = i.used_by
+          WHERE i.token_hash = ? AND i.used_at IS NOT NULL AND p.id = ?`,
+      ).get(hashToken(token), practitionerId);
+      if (!accepted || accepted.practice_id !== practiceId || accepted.email !== email || accepted.removed_at !== null) {
+        return null;
+      }
+      const session = completeHostedInviteAcceptance(registry, {
+        token, tenantId: tenant.id, accountId,
+      });
+      return session ? { cookies: [saasSessionCookie(session.token, secureCookies())] } : null;
+    },
+    reconcileHostedInvite: ({ token }) => reconcileHostedInvite(registry, pool, token),
+    hostedInviteEmail: ({ token, practiceId }) => {
+      const tenant = tenantForPractice(registry, practiceId);
+      const invite = hostedInviteByToken(registry, token);
+      return tenant && invite?.tenant_id === tenant.id ? invite.email : null;
+    },
+    revokeHostedInvite: ({ practiceId, tokenHash }) => {
+      const tenant = tenantForPractice(registry, practiceId);
+      if (tenant) revokeHostedInvite(registry, tokenHash, tenant.id);
+    },
+    removeHostedMembership: ({ practiceId, email }) => removeTenantMembership(registry, practiceId, email),
     mailer,
   });
 

@@ -84,7 +84,7 @@ test('an invitation that carries a key seals it to a secret the server is never 
   assert.deepEqual(Array.from(opened), Array.from(expected), 'the fragment opens the invitation to the practice key');
   assert.ok(!shown.includes(PASSPHRASE), 'and the passphrase is not in the link');
 
-  assert.match(status.textContent, /Ready\. They will be able to open what clients send\./, 'the page says what was made');
+  assert.match(status.textContent, /Ready for your colleague\. They will be able to open what clients send\./, 'the page says what was made');
   assert.match(status.textContent, /7 days/, 'including how long it lasts');
 });
 

@@ -109,7 +109,7 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
 }
 
 
-export function loginPage({ values = {}, problem = null }) {
+export function loginPage({ values = {}, problem = null, loginPath = '/login', signupPath = '/signup' }) {
   return gatewayPage(
     'Sign in',
     html`
@@ -122,7 +122,7 @@ export function loginPage({ values = {}, problem = null }) {
 
         ${problem ? html`<p class="error">${problem}</p>` : ''}
 
-        <form method="post" action="/login" class="card">
+        <form method="post" action="${loginPath}" class="card">
           <label for="email">Your email</label>
           <input id="email" name="email" type="email" required value="${values.email ?? ''}" spellcheck="false"
             autocomplete="username" autofocus>
@@ -131,7 +131,7 @@ export function loginPage({ values = {}, problem = null }) {
           <button type="submit" class="primary">Sign in</button>
         </form>
 
-        <p class="aside">No workspace yet? <a href="/signup">Start one</a>.</p>
+        <p class="aside">No workspace yet? <a href="${signupPath}">Start one</a>.</p>
         <p class="aside">${icon('key')} Your passphrase is not asked for here. It opens the documents, in your
         browser, and the server never sees it.</p>
       </div>`,
@@ -139,6 +139,26 @@ export function loginPage({ values = {}, problem = null }) {
     // is noise. On `/signup` it stays, where it is a genuine shortcut for somebody who came to the wrong page.
     { signIn: false },
   );
+}
+
+/** Hosted TOTP is completed on the same tenant host that issued the password challenge. */
+export function loginCodePage({ problem = null, expired = false, codePath = '/signin/code', loginPath = '/login', logoutPath = '/logout' } = {}) {
+  return gatewayPage(expired ? 'Sign-in expired' : 'Your code', html`
+    <div class="center"><div class="card narrow">
+      <h1>${expired ? 'That sign-in has expired' : 'Your code'}</h1>
+      ${expired
+        ? html`<p>${problem ?? 'Nothing was signed in. Start again with your password.'}</p>
+            <p><a class="btn" href="${loginPath}">Sign in again</a></p>`
+        : html`<p>Enter the code from your authenticator app, or use one of your recovery codes.</p>
+            ${problem ? html`<p class="error">${problem}</p>` : ''}
+            <form method="post" action="${codePath}" class="stack">
+              <label for="code">Code</label>
+              <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required
+                maxlength="20" spellcheck="false" autocapitalize="none" autofocus>
+              <button type="submit" class="primary">Continue</button>
+            </form>
+            <p class="note">A recovery code works once. If this was not you, <a href="${logoutPath}">cancel this sign-in</a>.</p>`}
+    </div></div>`, { signIn: false });
 }
 
 /**

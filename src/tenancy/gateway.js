@@ -15,10 +15,29 @@
  *    second practice in its database — it sends the visitor to sign in, because the way into an
  *    existing firm is an invitation. Account creation is a platform act, at the platform's address.
  */
-import { clearSessionCookie, createSession, secureCookies, sessionCookie, twoFactorState } from '../auth.js';
+import {
+  CHALLENGE_COOKIE,
+  challengeCookie,
+  challengeFor,
+  clearChallengeCookie,
+  clearSessionCookie,
+  createSession,
+  endChallenge,
+  endSession,
+  parseCookies,
+  recordAcceptedStep,
+  secureCookies,
+  sessionCookie,
+  spendAttemptOn,
+  spendRecoveryCode,
+  startChallenge,
+  twoFactorState,
+} from '../auth.js';
 import { verifyPassword } from '../crypto.js';
 import { field, formFields, readBody } from '../http.js';
 import { createAttemptLimiter } from '../ratelimit.js';
+import { codeStepFor } from '../totp.js';
+import { clientAddress } from './client-address.js';
 import { redirect, sendPage } from '../views.js';
 
 import { applyStripeEvent } from './billing.js';
@@ -39,6 +58,7 @@ import {
   tenantForHost,
   tenantForSlug,
   tenantForToken,
+  UNVERIFIABLE_PASSWORD_HASH,
 } from './registry.js';
 import {
   createBillingPortalSession,
@@ -46,7 +66,7 @@ import {
   parseEvent,
   verifyWebhookSignature,
 } from './stripe.js';
-import { dashboardPage, loginPage, signupPage, simplePage } from './views.js';
+import { dashboardPage, loginCodePage, loginPage, signupPage, simplePage } from './views.js';
 
 /** The minimum password, the same number the core's own signup uses. */
 export const MIN_PASSWORD = 12;
@@ -60,6 +80,8 @@ export const GATEWAY_PATHS = new Set([
   // every core redirect lands on. In SaaS mode there is one way in — the gateway's — so this is an
   // alias for it rather than a second, parallel sign-in that writes a different kind of session.
   '/signin',
+  '/signin/code',
+  '/signout',
   '/logout',
   '/dashboard',
   '/billing/checkout',
@@ -68,7 +90,21 @@ export const GATEWAY_PATHS = new Set([
   '/webhooks/stripe',
 ]);
 
-export function createGateway({ registry, pool, stripe = null, secure = secureCookies(), signUpLimiter = createAttemptLimiter() }) {
+// Slug-path mode shares one host across every practice. Only its login lifecycle is intercepted;
+// billing and dashboard routes remain platform-host operations scoped by the platform session.
+const SLUG_GATEWAY_PATHS = new Set(['/', '/signup', '/login', '/signin', '/signin/code', '/logout', '/signout']);
+
+export function createGateway({
+  registry,
+  pool,
+  stripe = null,
+  secure = secureCookies(),
+  signUpLimiter = createAttemptLimiter(),
+  loginLimiter = createAttemptLimiter(),
+  sourceLoginLimiter = createAttemptLimiter({ limit: 30 }),
+  trustedProxies = [],
+  now = () => new Date(),
+}) {
   /** The address a practice's workspace answers at: its host, or its slug path. */
   function tenantUrlFor(tenant) {
     const mapped = registry
@@ -119,12 +155,40 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
    */
   function bridgeIntoTenant(tenant, email) {
     const found = practitionerForAccount(pool, tenant, email);
-    if (!found) return null;
-    if (twoFactorState(found.db, found.practitioner.id).state === 'on') {
-      return { secondFactor: true, cookie: null };
+    return found;
+  }
+
+  function registryMembership(tenant, accountId) {
+    return Boolean(registry.prepare('SELECT 1 FROM tenant_member WHERE tenant_id = ? AND account_id = ?')
+      .get(tenant.id, accountId));
+  }
+
+  /** A challenge is useful only on its issuing tenant host and while its account is still a member. */
+  function hostedChallenge(tenant, request) {
+    if (!tenant) return null;
+    const db = pool.get(tenant.id);
+    const jar = parseCookies(request.headers.cookie);
+    const challenge = challengeFor(db, jar[CHALLENGE_COOKIE], now());
+    if (!challenge) return null;
+    const practitioner = db.prepare('SELECT id, email FROM practitioner WHERE id = ? AND removed_at IS NULL')
+      .get(challenge.practitionerId);
+    const account = practitioner ? accountByEmail(registry, practitioner.email) : null;
+    if (!practitioner || !account || !registryMembership(tenant, account.id)) {
+      endChallenge(db, challenge.id);
+      return null;
     }
-    const session = createSession(found.db, found.practitioner.id);
-    return { cookie: sessionCookie(session.token, secure), secondFactor: false };
+    return { db, challenge, practitioner, account, token: jar[CHALLENGE_COOKIE] };
+  }
+
+  function replacePresentedSessions(request, db = null) {
+    endSaasSession(registry, sessionTokenFrom(request));
+    const jar = parseCookies(request.headers.cookie);
+    if (db && jar.tickmark_session) endSession(db, jar.tickmark_session);
+    if (db && jar[CHALLENGE_COOKIE]) {
+      const pending = challengeFor(db, jar[CHALLENGE_COOKIE], now());
+      if (pending) endChallenge(db, pending.id);
+    }
+    // The tenant file scopes core tokens: a token from another practice cannot resolve in this file.
   }
 
   /** The Stripe customer for a tenant, or null — the dashboard and the portal both ask. */
@@ -148,7 +212,21 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
   // --- the dispatcher --------------------------------------------------------------------------
 
   function handle(request, response, url) {
-    if (!GATEWAY_PATHS.has(url.pathname)) return false;
+    const originalPath = url.pathname;
+    const slugMatch = /^\/t\/([a-z0-9-]+)(\/|$)/i.exec(originalPath);
+    const pathTenant = slugMatch ? tenantForSlug(registry, slugMatch[1]) : null;
+    const pathPrefix = pathTenant ? `/t/${pathTenant.slug}` : '';
+    if (pathTenant) {
+      const hostTenant = tenantForHost(registry, request.headers.host);
+      if (hostTenant && hostTenant.id !== pathTenant.id) return false;
+      const normalizedPath = originalPath.slice(pathPrefix.length) || '/';
+      if (!SLUG_GATEWAY_PATHS.has(normalizedPath)) return false;
+      url.pathname = normalizedPath;
+    } else if (!GATEWAY_PATHS.has(originalPath)) {
+      return false;
+    }
+    const route = (path) => `${pathPrefix}${path}`;
+    const restorePath = () => { url.pathname = originalPath; };
 
     // Stripe has no cookie and no host of ours; its signature is the credential.
     if (url.pathname === '/webhooks/stripe') {
@@ -156,7 +234,7 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
       return true;
     }
 
-    const tenant = tenantOfHost(url, request);
+    const tenant = pathTenant ?? tenantOfHost(url, request);
     const token = sessionTokenFrom(request);
     const session = token ? tenantForToken(registry, token) : null;
     const method = request.method;
@@ -164,7 +242,10 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
     // The platform's own front door. A practice's host falls through to the core, which has a home
     // page of its own; the bare platform has none, so it sends you where you were going anyway.
     if (url.pathname === '/') {
-      if (tenant) return false;
+      if (tenant) {
+        restorePath();
+        return false;
+      }
       redirect(response, session ? '/dashboard' : '/signup');
       return true;
     }
@@ -172,7 +253,7 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
     if (url.pathname === '/signup') {
       // A practice's own address does not create a second practice; the way in is an invitation.
       if (tenant) {
-        redirect(response, '/login');
+        redirect(response, route('/login'));
         return true;
       }
       if (method === 'GET') {
@@ -188,25 +269,40 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
         // The core's page is not shown in SaaS mode: one sign-in, one session, one answer to
         // "which practice am I in?".
         if (url.pathname === '/signin') {
-          redirect(response, '/login');
+          redirect(response, route('/login'));
           return true;
         }
-        sendPage(response, 200, loginPage({}));
+        sendPage(response, 200, loginPage({ loginPath: route('/login'), signupPath: route('/signup') }));
         return true;
       }
-      handleLogin(request, response, tenant);
+      handleLogin(request, response, tenant, route);
+      return true;
+    }
+
+    if (url.pathname === '/signin/code') {
+      if (method === 'GET') {
+        const pending = hostedChallenge(tenant, request);
+        sendPage(response, pending ? 200 : 410, loginCodePage({
+          expired: !pending,
+          problem: pending ? null : 'Nothing was signed in. Start again with your password.',
+          codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+        }));
+        return true;
+      }
+      if (method === 'POST') {
+        handleLoginCode(request, response, tenant, route);
+        return true;
+      }
+    }
+
+    if (url.pathname === '/logout' || url.pathname === '/signout') {
+      handleLogout(request, response, tenant, route);
       return true;
     }
 
     // Everything below needs a signed-in account.
     if (!session) {
-      redirect(response, '/login');
-      return true;
-    }
-
-    if (url.pathname === '/logout') {
-      endSaasSession(registry, token);
-      redirect(response, '/login', [clearSaasSessionCookie(secure), clearSessionCookie(secure)]);
+      redirect(response, route('/login'));
       return true;
     }
 
@@ -243,6 +339,7 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
       return true;
     }
 
+    restorePath();
     return false;
   }
 
@@ -332,65 +429,213 @@ export function createGateway({ registry, pool, stripe = null, secure = secureCo
 
   // --- signing in ------------------------------------------------------------------------------
 
-  async function handleLogin(request, response, onTenantHost) {
+  async function handleLogin(request, response, onTenantHost, route = (path) => path) {
     const fields = formFields(await readBody(request));
     const email = field(fields, 'email')?.toLowerCase() ?? null;
     const password = typeof fields.password === 'string' ? fields.password : '';
 
+    // The identifier bucket catches distributed guessing at one account; the source bucket catches
+    // one caller rotating through identifiers. Both are checked before scrypt. Forwarded addresses
+    // are used only when the immediate peer is an explicitly trusted proxy.
+    const keys = [`login-account:${email ?? ''}`, `login-source:${clientAddress(request, trustedProxies)}`];
+    const blockedFor = Math.max(
+      loginLimiter?.blockedFor(keys[0]) ?? 0,
+      sourceLoginLimiter?.blockedFor(keys[1]) ?? 0,
+    );
+    if (blockedFor > 0) {
+      const minutes = Math.ceil(blockedFor / 60000);
+      sendPage(response, 429, loginPage({
+        values: { email: email ?? '' },
+        problem: `Too many sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        loginPath: route('/login'), signupPath: route('/signup'),
+      }));
+      return;
+    }
+
     const account = email ? accountByEmail(registry, email) : null;
     // One sentence for both kinds of failure: "no such account" tells a stranger which addresses
-    // exist, and the core's own sign-in page takes the same line about the same question.
-    if (!account || !(await verifyPassword(password, account.password_hash))) {
+    // exist, and the core's own sign-in page takes the same line about the same question. The dummy
+    // hash also makes unknown-account failures pay the same password-verification cost.
+    const accepted = await verifyPassword(password, account?.password_hash ?? UNVERIFIABLE_PASSWORD_HASH);
+    if (!account || !accepted) {
+      loginLimiter?.failed(keys[0]);
+      sourceLoginLimiter?.failed(keys[1]);
       sendPage(
         response,
         401,
         loginPage({
           values: { email: email ?? '' },
           problem: 'That email and password do not match an account.',
+          loginPath: route('/login'), signupPath: route('/signup'),
         }),
       );
       return;
     }
 
-    const session = createSaasSession(registry, account.id);
-    const cookies = [saasSessionCookie(session.token, secure)];
-
-    const tenant = registry
-      .prepare(
+    loginLimiter?.succeeded(keys[0]);
+    // The platform dashboard is not a tenant session. It may show billing and a workspace link, but
+    // a single-practice account may also receive the same tenant-local session the old flow used.
+    // TOTP remains a hard stop: when it is armed, only the tenant host can complete the challenge.
+    if (!onTenantHost) {
+      replacePresentedSessions(request);
+      const platform = createSaasSession(registry, account.id, now());
+      const tenant = registry.prepare(
         `SELECT t.id, t.slug, t.name, t.plan, t.status
            FROM tenant_member m JOIN tenant t ON t.id = m.tenant_id
-          WHERE m.account_id = ?
-          ORDER BY t.created_at LIMIT 1`,
-      )
-      .get(account.id);
-
-    if (!tenant) {
-      redirect(response, '/dashboard', cookies);
+          WHERE m.account_id = ? ORDER BY t.created_at LIMIT 1`,
+      ).get(account.id);
+      const found = tenant ? bridgeIntoTenant(tenant, account.email) : null;
+      const cookies = [saasSessionCookie(platform.token, secure)];
+      if (found && twoFactorState(found.db, found.practitioner.id).state !== 'on') {
+        const workspace = createSession(found.db, found.practitioner.id, now());
+        cookies.push(sessionCookie(workspace.token, secure));
+        redirect(response, route('/dashboard'), cookies);
+        return;
+      }
+      redirect(response, found ? `${route('/dashboard')}?second-factor=1` : route('/dashboard'), cookies);
       return;
     }
 
-    // The bridge: a session inside the practice's file, in the core's own cookie, so every page the
-    // core serves finds the person it expects to find.
-    //
-    // A member with a second factor gets no session here — see `bridgeIntoTenant`. They are sent to the dashboard with
-    // a sentence explaining why, because "signed in but the workspace does not know you" is exactly the failure this
-    // bridge exists to prevent, and leaving them to discover it by opening their workspace would be worse.
-    const bridged = bridgeIntoTenant(tenant, account.email);
-    if (bridged?.cookie) cookies.push(bridged.cookie);
-    if (bridged?.secondFactor) {
-      redirect(response, '/dashboard?second-factor=1', cookies);
+    if (!registryMembership(onTenantHost, account.id)) {
+      loginLimiter?.failed(keys[0]);
+      sourceLoginLimiter?.failed(keys[1]);
+      sendPage(response, 401, loginPage({
+        values: { email: email ?? '' },
+        problem: 'That email and password do not match an account.',
+        loginPath: route('/login'), signupPath: route('/signup'),
+      }));
       return;
     }
 
-    // On a practice's own address a signed-in person goes straight into their workspace — unless
-    // the subscription is closed, in which case the dashboard is where the billing button is.
-    //
-    // On the platform's own address there is no workspace to enter: one account can be a member of
-    // a practice whose address this is not, so the dashboard — which names that address and links
-    // to it — is the only honest destination. This is also why `/signin` needs no special case: it
-    // arrives with the same `onTenantHost` as `/login`.
-    const intoWorkspace = Boolean(onTenantHost) && statusFor(tenant).allowed;
-    redirect(response, intoWorkspace ? '/requests' : '/dashboard', cookies);
+    const found = bridgeIntoTenant(onTenantHost, account.email);
+    if (!found) {
+      // Registry membership alone is never enough: the tenant file must still contain an active
+      // practitioner. A removed or partially provisioned member is denied at the boundary.
+      loginLimiter?.failed(keys[0]);
+      sourceLoginLimiter?.failed(keys[1]);
+      sendPage(response, 401, loginPage({
+        values: { email: email ?? '' },
+        problem: 'That email and password do not match an account.',
+        loginPath: route('/login'), signupPath: route('/signup'),
+      }));
+      return;
+    }
+
+    replacePresentedSessions(request, found.db);
+    const factor = twoFactorState(found.db, found.practitioner.id);
+    if (factor.state === 'on') {
+      const pending = startChallenge(found.db, found.practitioner.id, now());
+      redirect(response, route('/signin/code'), [
+        clearSaasSessionCookie(secure),
+        clearSessionCookie(secure),
+        challengeCookie(pending.token, secure),
+      ]);
+      return;
+    }
+
+    const platform = createSaasSession(registry, account.id, now());
+    const workspace = createSession(found.db, found.practitioner.id, now());
+    redirect(response, route('/requests'), [
+      saasSessionCookie(platform.token, secure),
+      sessionCookie(workspace.token, secure),
+      clearChallengeCookie(secure),
+    ]);
+  }
+
+  async function handleLoginCode(request, response, tenant, route = (path) => path) {
+    const pending = hostedChallenge(tenant, request);
+    if (!pending) {
+      sendPage(response, 410, loginCodePage({ expired: true, problem: 'Nothing was signed in. Start again with your password.',
+        codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+      }), {
+        'Set-Cookie': clearChallengeCookie(secure),
+      });
+      return;
+    }
+
+    const key = `login-totp:${tenant.id}:${pending.practitioner.id}`;
+    const sourceKey = `login-totp-source:${clientAddress(request, trustedProxies)}`;
+    const blockedFor = Math.max(loginLimiter?.blockedFor(key) ?? 0, sourceLoginLimiter?.blockedFor(sourceKey) ?? 0);
+    if (blockedFor > 0) {
+      const minutes = Math.ceil(blockedFor / 60000);
+      sendPage(response, 429, loginCodePage({
+        problem: `Too many sign-in attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+      }));
+      return;
+    }
+
+    const fields = formFields(await readBody(request));
+    const code = field(fields, 'code') ?? '';
+    const factor = twoFactorState(pending.db, pending.practitioner.id);
+    if (factor.state !== 'on') {
+      endChallenge(pending.db, pending.challenge.id);
+      sendPage(response, 410, loginCodePage({ expired: true, problem: 'The second-factor setting changed. Start again with your password.',
+        codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+      }), {
+        'Set-Cookie': clearChallengeCookie(secure),
+      });
+      return;
+    } else {
+      const step = codeStepFor(factor.secret, code);
+      const fresh = step !== null && step !== factor.lastStep;
+      if (!fresh && !spendRecoveryCode(pending.db, pending.practitioner.id, code, now())) {
+        loginLimiter?.failed(key);
+        sourceLoginLimiter?.failed(sourceKey);
+        if (spendAttemptOn(pending.db, pending.challenge.id)) {
+          endChallenge(pending.db, pending.challenge.id);
+          sendPage(response, 401, loginCodePage({
+            problem: 'That was the last attempt for this sign-in. Start again with your password and a current code.',
+            codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+          }), { 'Set-Cookie': clearChallengeCookie(secure) });
+          return;
+        }
+        sendPage(response, 401, loginCodePage({ problem: 'That code was not right. Try the current code, or use a recovery code.',
+          codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+        }));
+        return;
+      }
+      if (fresh) recordAcceptedStep(pending.db, pending.practitioner.id, step);
+      loginLimiter?.succeeded(key);
+      sourceLoginLimiter?.succeeded(sourceKey);
+      endChallenge(pending.db, pending.challenge.id);
+    }
+
+    // Re-check membership immediately before minting either session. A removal while the challenge
+    // was open ends the flow even if the code is correct.
+    if (!registryMembership(tenant, pending.account.id) ||
+        !pending.db.prepare('SELECT 1 FROM practitioner WHERE id = ? AND removed_at IS NULL')
+          .get(pending.practitioner.id)) {
+      sendPage(response, 403, loginCodePage({ problem: 'Your membership has changed. Ask a practice owner to invite you again.',
+        codePath: route('/signin/code'), loginPath: route('/login'), logoutPath: route('/logout'),
+      }), {
+        'Set-Cookie': clearChallengeCookie(secure),
+      });
+      return;
+    }
+    const platform = createSaasSession(registry, pending.account.id, now());
+    const workspace = createSession(pending.db, pending.practitioner.id, now());
+    redirect(response, route('/requests'), [
+      saasSessionCookie(platform.token, secure),
+      sessionCookie(workspace.token, secure),
+      clearChallengeCookie(secure),
+    ]);
+  }
+
+  function handleLogout(request, response, tenant, route = (path) => path) {
+    endSaasSession(registry, sessionTokenFrom(request));
+    const jar = parseCookies(request.headers.cookie);
+    if (tenant) {
+      const db = pool.get(tenant.id);
+      if (jar.tickmark_session) endSession(db, jar.tickmark_session);
+      const pending = challengeFor(db, jar[CHALLENGE_COOKIE], now());
+      if (pending) endChallenge(db, pending.id);
+    }
+    redirect(response, route('/login'), [
+      clearSaasSessionCookie(secure),
+      clearSessionCookie(secure),
+      clearChallengeCookie(secure),
+    ]);
   }
 
 
