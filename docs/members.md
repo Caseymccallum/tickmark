@@ -143,3 +143,18 @@ page carries the button), a member manages their own account (password and addre
 costing the current password, and a page for where they are signed in), and the owners are told by
 email when a key is added or a membership changes — the change that silently decides who can read what
 arrives next.
+
+## Hosted accounts
+
+Hosted mode adds an operator account and current `tenant_member` record alongside each tenant-local
+practitioner. Invitation tokens bind the recipient email and role. A new recipient creates an account;
+an existing hosted account must prove its current password. Once accepted, the invite is single-use and
+the person can sign out and sign back in without repeating it. Accountant invitations continue to use
+the existing browser-sealed key handoff; assistant invitations carry no key. The registry stores no
+practice key material.
+
+Removal ends tenant sessions and removes the corresponding hosted membership. A still-valid platform
+session for that account can continue to reach other memberships, but cannot bridge into the removed
+practice. This cannot revoke any key or document already downloaded or decrypted by the former member.
+See [`phase-1-hosted-identity.md`](phase-1-hosted-identity.md) for the cross-database retry and migration
+details.

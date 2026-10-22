@@ -326,12 +326,11 @@ and finally prints the two `stripe` CLI commands that finish the proof with a we
 It is the thing that turns `2k` from *built, unproven* into *driven*.
 
 
-One limitation, stated rather than discovered: **slug paths (`/t/<slug>/…`) do not rewrite the
-core's own redirects** — after a form posts under a slug prefix, the core redirects to `/requests/…`
-without the prefix, which only matters on a deployment with no tenant host mapped. Slug paths are
-the development and preview surface; production deployments map hosts (`tenant_host`), where the
-prefix problem does not exist. Fixing it properly means threading the prefix through `redirect()`,
-and that is a change to the core this sprint did not need.
+One limitation, stated rather than discovered: **some core pages still redirect without the slug
+prefix** — for example, a core form under `/t/<slug>/…` may redirect to `/requests/…`, which only
+matters when no tenant host is mapped. The hosted sign-in and TOTP challenge paths preserve the slug
+prefix, but this does not rewrite every core redirect. Slug paths remain the development and preview
+surface; production deployments should map hosts (`tenant_host`).
 
 ---
 
@@ -385,8 +384,8 @@ bridged into the practice's own file, and the browser is sent to `/requests`.
 
 **Hosts.** Chrome and Firefox resolve any `*.localhost` to loopback, so `acme.localhost:3000` works
 with no configuration. Other clients need a hosts-file entry
-(`127.0.0.1 acme.localhost`), or the slug path `/t/acme/…` — which works, with the redirect
-limitation recorded in §2.8.
+(`127.0.0.1 acme.localhost`), or the slug path `/t/acme/…` — the hosted sign-in and TOTP paths work
+there too; some other core redirects still omit the prefix, as §2.8 explains.
 
 **Cookies over plain HTTP.** Browsers refuse `Secure` cookies on a plain-HTTP host that is not
 localhost, so a local trial on `acme.localhost` needs `TICKMARK_INSECURE_COOKIES=1`. It is a real
@@ -424,10 +423,20 @@ while client links (`/r/<token>`) keep working.
 | `STRIPE_WEBHOOK_SECRET` | unset | without it the webhook endpoint refuses every event |
 | `TICKMARK_MAX_UPLOAD` | 25 MB | the per-file ceiling for the *process*; a plan overrides it per tenant |
 | `TICKMARK_INSECURE_COOKIES` | unset | `1` drops `Secure` from cookies — local plain-HTTP trials only |
+| `TICKMARK_TRUSTED_PROXIES` | empty | comma-separated proxy peer IPs allowed to supply `X-Forwarded-For` for login throttling |
 | `TICKMARK_SMTP_URL` / `TICKMARK_MAIL_FROM` | unset | one relay for the process (per-tenant relays are not built yet) |
 
 Backing up a hosted install is `cp -r data`, exactly as it is self-hosted: the registry is one file
 and every practice is a directory inside it.
+
+## Phase 1 hosted identity
+
+Hosted authentication, TOTP, membership and invitation lifecycle are documented in
+[`phase-1-hosted-identity.md`](phase-1-hosted-identity.md). The registry addition is additive; back up
+`saas.db` and all tenant directories together before upgrading. Login limiting is process-local, so
+deployments must use one app process or place a shared limiter at the gateway seam before scaling
+horizontally. The trusted-proxy variable must list only immediate proxy peers that replace forwarded
+client headers.
 
 ### 3.6 What is not ready, honestly
 
@@ -438,10 +447,9 @@ the reasons, in the order they would bite:
    pages (it costs the current one), and an operator can replace a lost one with
    `tools/reset-password.mjs` — but there is still no emailed "forgot password" link and no email
    verification of a new account. `docs/security.md` keeps both on the list.
-2. **Sign-up is rate limited now — platform sign-in is not.** Both sign-up doors (the core's and
-   this one) cap attempts by address and by caller, and the two-factor actions have a guess budget.
-   `/login` here still has no limit of its own, and a public endpoint makes it worth closing before
-   charging anybody.
+2. **Password reset by email and email verification are not built.** A member can change their own
+   password from the account pages (it costs the current one), and an operator can replace a lost one
+   with `tools/reset-password.mjs`, but there is no emailed recovery link or verification step yet.
 3. **Webhook events are not deduplicated.** Every handler sets state rather than appending to it, so
    a repeated event is harmless — but nothing records which event ids have been seen, so a replay
    inside the five-minute window would be executed twice.

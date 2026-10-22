@@ -31,7 +31,11 @@ const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
 const PASSPHRASE = 'a passphrase long enough for the container check';
 const FRESH = 'a second passphrase, also long enough';
 
-const ACCOUNT = { email: 'office@example.com', password: 'a long enough password' };
+const ACCOUNT = {
+  practice_name: 'Container Check Practice',
+  email: 'office@example.com',
+  password: 'a long enough password',
+};
 
 let cookie = '';
 const jar = (response) => {
@@ -101,7 +105,14 @@ async function fresh() {
   const body = await script.text();
   say('the re-encryption script is served', `${script.status}, ${body.length} bytes, ${/unwrapPracticeKey/.test(body) ? 'the real file' : 'NOT THE FILE'}`);
 
-  say('sign up', `${(await post('/signup', ACCOUNT)).status}`);
+  const signup = await post('/signup', ACCOUNT);
+  const signupPage = await signup.text();
+  const verifyUrl = /href="([^"]*\/verify\/[A-Za-z0-9_-]{20,})"/.exec(signupPage)?.[1];
+  const verifyPath = verifyUrl ? new URL(verifyUrl, BASE).pathname : null;
+  say('request sign-up', `${signup.status}`);
+  if (!verifyPath) throw new Error('sign-up did not provide its no-mail verification link');
+  say('open sign-up link', `${(await get(verifyPath)).status}`);
+  say('verify account', `${(await post(verifyPath, {})).status}`);
 
   const keys = await generatePracticeKey(PASSPHRASE);
   say('store the encryption key', `${(await post('/setup', { public_key: JSON.stringify(keys.publicKey), wrapped_private_key: keys.wrappedPrivateKey })).status}`);
