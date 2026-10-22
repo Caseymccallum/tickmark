@@ -143,7 +143,7 @@ async function spendTheSameTimeAsARealCheck(password) {
   await verifyPassword(password, dummyHash);
 }
 
-export async function signUp({ db, request, response, mailer, signUpLimiter }) {
+export async function signUp({ db, request, response, mailer, signUpLimiter, log }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
   const password = typeof fields.password === 'string' ? fields.password : '';
@@ -186,7 +186,7 @@ export async function signUp({ db, request, response, mailer, signUpLimiter }) {
   // oracle for the same question the page refuses to answer. Both paths spend the hash first, so both
   // take the same time — and the hash is the thing `finishByEmail` then waits on.
   const passwordHash = await hashPassword(password);
-  return finishByEmail({ db, request, response, mailer, email, kind: 'verify', passwordHash, resend: { email, for: 'verify' } });
+  return finishByEmail({ db, request, response, mailer, log, email, kind: 'verify', passwordHash, resend: { email, for: 'verify' } });
 }
 
 /** How long a sign-up link waits to be opened, and how long a reset link does. */
@@ -261,7 +261,7 @@ function linkOutro(kind, email) {
  * new or not. If it is taken, the link is spent for nothing later and says so to whoever opened it —
  * which is only ever the mailbox's owner.
  */
-function sendSignupLink(db, request, mailer, email, passwordHash) {
+function sendSignupLink(db, request, mailer, email, passwordHash, log) {
   const taken = Boolean(practitionerByEmail(db, email));
   const token = newToken();
   createSignupToken(db, {
@@ -277,13 +277,15 @@ function sendSignupLink(db, request, mailer, email, passwordHash) {
   if (mailer) {
     // A send that fails must not become a 500 that says "that address is taken": the answer is the
     // same whatever the relay did, and the person can ask for another link.
-    sendMail(mailer, { to: email, subject: message.subject, body: message.body }).catch(() => {});
+    sendMail(mailer, { to: email, subject: message.subject, body: message.body }).catch((error) => {
+      log?.('error', 'mail.delivery.failed', { kind: 'signup-verification', errorKind: error.step ?? error.name ?? 'unknown' });
+    });
   }
   return { link };
 }
 
 /** Mint a reset link for an address and send it — only if there is a practice here to reset. */
-function sendResetLink(db, request, mailer, email) {
+function sendResetLink(db, request, mailer, email, log) {
   const record = email && email.length <= 254 ? practitionerByEmail(db, email) : null;
   if (!mailer || !record) return;
   const token = newToken();
@@ -293,7 +295,9 @@ function sendResetLink(db, request, mailer, email) {
     expiresAt: new Date(Date.now() + RESET_TOKEN_MINUTES * 60000).toISOString(),
   });
   const message = resetDraft({ link: `${originOf(request)}/reset/${token}` });
-  sendMail(mailer, { to: email, subject: message.subject, body: message.body }).catch(() => {});
+  sendMail(mailer, { to: email, subject: message.subject, body: message.body }).catch((error) => {
+    log?.('error', 'mail.delivery.failed', { kind: 'password-reset', errorKind: error.step ?? error.name ?? 'unknown' });
+  });
 }
 
 /**
@@ -303,7 +307,7 @@ function sendResetLink(db, request, mailer, email) {
  * pending row (see `pendingSignupFor`): the raw link is never stored, so a new one is minted carrying
  * the same waiting password. `resend`/`resent` keep the "Send it again" button on the page that follows.
  */
-function finishByEmail({ db, request, response, mailer, email, kind, passwordHash = null, resend = null, resent = false }) {
+function finishByEmail({ db, request, response, mailer, log, email, kind, passwordHash = null, resend = null, resent = false }) {
   const { intro, note } = linkOutro(kind, email);
   const show = (link) => checkYourEmail({ response, link, intro, note, resend, resent });
 
@@ -311,11 +315,11 @@ function finishByEmail({ db, request, response, mailer, email, kind, passwordHas
     // A reset link is never shown here — handing it to whoever asked would be a reset for everybody —
     // so with no mail server the answer names the operator's tool instead of showing anything at all.
     if (!mailer) return noMailResetPage(response);
-    sendResetLink(db, request, mailer, email);
+    sendResetLink(db, request, mailer, email, log);
     return show(null);
   }
 
-  const link = passwordHash ? sendSignupLink(db, request, mailer, email, passwordHash).link : null;
+  const link = passwordHash ? sendSignupLink(db, request, mailer, email, passwordHash, log).link : null;
   return show(mailer ? null : link);
 }
 
@@ -425,7 +429,7 @@ export function forgotForm({ response }) {
  * is *never* shown here, even with no mail server — a reset link handed to whoever asked is a password
  * reset for everybody, so the no-mail answer points at the operator's own tool instead.
  */
-export async function forgot({ db, request, response, mailer, signInLimiter }) {
+export async function forgot({ db, request, response, mailer, signInLimiter, log }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
 
@@ -445,7 +449,7 @@ export async function forgot({ db, request, response, mailer, signInLimiter }) {
 
   // Whether or not there is a practice here, and whether or not the relay accepts it, the answer is the
   // same: the person at the keyboard cannot tell which happened, which is the point.
-  return finishByEmail({ db, request, response, mailer, email, kind: 'reset', resend: { email, for: 'reset' } });
+  return finishByEmail({ db, request, response, mailer, log, email, kind: 'reset', resend: { email, for: 'reset' } });
 }
 
 /**
@@ -457,7 +461,7 @@ export async function forgot({ db, request, response, mailer, signInLimiter }) {
  * new one carrying the same password. Non-enumerating, like the ask it repeats: the answer does not
  * depend on whether the address is here, and the button is on the page for everyone.
  */
-export async function resend({ db, request, response, mailer, signInLimiter }) {
+export async function resend({ db, request, response, mailer, signInLimiter, log }) {
   const fields = formFields(await readBody(request));
   const email = field(fields, 'email')?.toLowerCase() ?? null;
   const kind = field(fields, 'for') === 'reset' ? 'reset' : 'verify';
@@ -477,7 +481,7 @@ export async function resend({ db, request, response, mailer, signInLimiter }) {
   for (const key of buckets) signInLimiter?.failed(key);
 
   const passwordHash = kind === 'verify' ? (pendingSignupFor(db, email)?.password_hash ?? null) : null;
-  return finishByEmail({ db, request, response, mailer, email, kind, passwordHash, resend: { email, for: kind }, resent: true });
+  return finishByEmail({ db, request, response, mailer, log, email, kind, passwordHash, resend: { email, for: kind }, resent: true });
 }
 
 /** The form where a new password is chosen, behind a link that proves the mailbox. */

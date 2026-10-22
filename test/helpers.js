@@ -116,7 +116,7 @@ export function linkFromSent(path) {
  */
 const ACCOUNT_LETTER = /Finish creating your Tickmark practice|You already have a Tickmark practice|Set a new password for Tickmark/;
 
-export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes, minFreeBytes, mailer, sms, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter, webDir } = {}) {
+export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes, minFreeBytes, mailer, sms, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter, webDir, log, passAccountMail = false } = {}) {
   sent.length = 0;
   const directory = mkdtempSync(join(tmpdir(), 'tickmark-test-'));
   const blobDir = join(directory, 'blobs');
@@ -133,7 +133,7 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
           ...mailer,
           onOutgoing: (message) => {
             sent.push(message);
-            return ACCOUNT_LETTER.test(String(message.subject ?? '')) ? false : undefined;
+            return ACCOUNT_LETTER.test(String(message.subject ?? '')) && !passAccountMail ? false : undefined;
           },
         }
       : null,
@@ -143,7 +143,7 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
     signUpLimiter,
     clientLimiter,
     webDir,
-    log: NULL_LOG,
+    log: log ?? NULL_LOG,
   });
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://127.0.0.1:${server.address().port}`;

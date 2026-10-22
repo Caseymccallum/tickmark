@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { NULL_LOG, log } from '../src/log.js';
+import { NULL_LOG, log, redactSensitiveText } from '../src/log.js';
 
 /** Run `fn` with one of the console streams swapped for a capture, and put it back afterwards. */
 function capture(stream, fn) {
@@ -41,6 +41,28 @@ test('a failure goes to the error stream, carrying its detail', () => {
   assert.equal(line.level, 'error');
   assert.equal(line.event, 'request.failed');
   assert.equal(line.error, 'boom', 'the message travels with it, so the line stands alone');
+});
+
+test('bearer paths, secret query values, and credential fields never reach structured logs', () => {
+  const token = 'this-is-a-bearer-link-token-1234567890';
+  const written = capture('error', () => log('error', 'request.failed', {
+    path: `/r/${token}/items/123?key=private-value&access_token=oauth-secret`,
+    error: `failed at /invite/${token}?code=verification-secret`,
+    cookie: 'session-cookie-value',
+    note: 'https://tickmark.test/reset/password-reset-token-1234567890',
+  }));
+  const serialized = written[0];
+  for (const secret of [token, 'private-value', 'oauth-secret', 'verification-secret', 'session-cookie-value', 'password-reset-token-1234567890']) {
+    assert.equal(serialized.includes(secret), false, `${secret} must not be logged`);
+  }
+  const line = JSON.parse(serialized);
+  assert.equal(line.cookie, '[redacted]');
+  assert.match(line.path, /\/r\/\[redacted\]/);
+});
+
+test('text redaction covers token-bearing paths embedded in error details', () => {
+  const token = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  assert.equal(redactSensitiveText(`GET /verify/${token} failed`), 'GET /verify/[redacted] failed');
 });
 
 test('the null log writes nothing', () => {

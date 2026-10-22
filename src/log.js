@@ -13,8 +13,27 @@
 
 /** A single event. `level` is `info` or `error`; `event` is a stable dotted name, not a sentence. */
 export function log(level, event, fields = {}) {
-  const line = { ts: new Date().toISOString(), level, event, ...fields };
+  const line = { ts: new Date().toISOString(), level, event, ...sanitize(fields) };
   (level === 'error' ? console.error : console.log)(JSON.stringify(line));
+}
+
+const PRIVATE_FIELD = /password|token|secret|cookie|authorization|recovery|private.?key|bearer/i;
+
+/** Remove bearer credentials embedded in route paths or common secret query parameters. */
+export function redactSensitiveText(value) {
+  return String(value)
+    .replace(/(\/(?:r|invite|reset|verify)\/)[A-Za-z0-9_-]{12,}/gi, '$1[redacted]')
+    .replace(/([?&](?:access_token|refresh_token|token|code|secret|key|recovery|password|authorization|auth|signature|sig|api_key|session)=)[^&#\s]*/gi, '$1[redacted]');
+}
+
+function sanitize(value, key = '') {
+  if (PRIVATE_FIELD.test(key)) return '[redacted]';
+  if (typeof value === 'string') return redactSensitiveText(value);
+  if (Array.isArray(value)) return value.map((item) => sanitize(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, sanitize(child, childKey)]));
+  }
+  return value;
 }
 
 /** A log that records nothing — for tests and for deployments that keep their access log elsewhere. */

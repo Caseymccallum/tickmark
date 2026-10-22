@@ -81,6 +81,22 @@ test('with a mail server the link is sent and not shown', async () => {
   }, { mailer });
 });
 
+test('an account-mail delivery failure is logged without its address or bearer link', async () => {
+  const lines = [];
+  const address = 'casey-private@example.test';
+  await withServer(async ({ agent }) => {
+    const response = await agent().post('/signup', { email: address, password: PASSWORD });
+    assert.equal(response.status, 200, 'delivery failure does not disclose account state or break the response');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }, { mailer: { ...mailer, host: '127.0.0.1', port: 1 }, passAccountMail: true, log: (_level, _event, fields) => lines.push(fields) });
+
+  const failure = lines.find((fields) => fields.kind === 'signup-verification');
+  assert.ok(failure, 'mail relay failure creates an operational signal');
+  const serialized = JSON.stringify(lines);
+  assert.equal(serialized.includes(address), false);
+  assert.equal(serialized.includes(linkFromSent('verify')), false);
+});
+
 test('a taken address is told so in its own mailbox, and the form-filler is told nothing', async () => {
   await withServer(async ({ agent }) => {
     await signUp(agent(), 'taken@practice.example');

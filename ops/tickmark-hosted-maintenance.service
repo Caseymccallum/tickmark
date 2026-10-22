@@ -1,0 +1,14 @@
+[Unit]
+Description=Conservative Tickmark hosted maintenance
+After=tickmark-hosted-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/tickmark/ops/tickmark-hosted-maintenance.sh
+TimeoutStartSec=2h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/tickmark /run/lock
