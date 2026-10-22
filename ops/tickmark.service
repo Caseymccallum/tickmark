@@ -1,0 +1,24 @@
+[Unit]
+Description=Tickmark hosted application
+After=network.target
+
+[Service]
+Type=simple
+User=tickmark
+Group=tickmark
+WorkingDirectory=/opt/tickmark
+EnvironmentFile=/etc/tickmark/tickmark.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tickmark
+
+[Install]
+WantedBy=multi-user.target

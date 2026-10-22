@@ -29,4 +29,7 @@ VOLUME /data
 USER node
 EXPOSE 3000
 
+# The application writes only to its persistent data volume and standard output.
+# Keep the image filesystem read-only at runtime; compose provides a temporary /tmp.
+
 CMD ["node", "src/server.js"]

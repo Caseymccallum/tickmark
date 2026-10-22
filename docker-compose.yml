@@ -10,10 +10,13 @@ services:
     build: .
     image: tickmark:dev
     ports:
-      - "${PORT:-3000}:3000"
+      - "127.0.0.1:${PORT:-3000}:3000"
     environment:
       PORT: "3000"
-      TICKMARK_DATA: /data/tickmark.db
+      # For MULTI_TENANT=1 set TICKMARK_DATA=/data in the local .env file; hosted mode
+      # stores saas.db and tenants/ beneath this directory. The self-hosted default is a file.
+      TICKMARK_DATA: "${TICKMARK_DATA:-/data/tickmark.db}"
+      MULTI_TENANT: "${MULTI_TENANT:-0}"
       # Sending reminders is optional. Uncomment these and Tickmark sends the reminder
       # itself rather than drafting it for you to copy. `docs/mail.md` explains what to
       # point them at, and why a relay rather than sending directly.
@@ -26,6 +29,15 @@ services:
       # TICKMARK_SMTP_CA_FILE: "/etc/tickmark/my-relay-ca.pem"
     volumes:
       - tickmark-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    stop_grace_period: 30s
     # /healthz touches the database, so "healthy" here means the process can serve and read its own
     # schema — not merely that the port is open.
     healthcheck:
