@@ -23,6 +23,15 @@ import { raw, withServer } from './helpers.js';
 
 const SCRIPT = '/assets/upload.js';
 
+test('the upload preflight module is served to the client before encrypted submission', async () => {
+  await withServer(async ({ base }) => {
+    const response = await raw(base, '/assets/preflight.js');
+    assert.equal(response.status, 200);
+    assert.match(response.headers['content-type'], /application\/javascript/);
+    assert.match(response.body.toString('utf8'), /looksTruncatedPdf/);
+  });
+});
+
 test('a repeat visit costs a 304, and a validator that does not match costs a download', async () => {
   await withServer(async ({ base }) => {
     const first = await raw(base, SCRIPT, { headers: { 'accept-encoding': 'gzip' } });

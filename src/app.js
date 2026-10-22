@@ -107,6 +107,7 @@ function logPath(pathname) {
 const ASSETS = new Map([
   ['tickmark-crypto.js', 'application/javascript; charset=utf-8'],
   ['upload.js', 'application/javascript; charset=utf-8'],
+  ['preflight.js', 'application/javascript; charset=utf-8'],
   ['setup.js', 'application/javascript; charset=utf-8'],
   ['download.js', 'application/javascript; charset=utf-8'],
   ['zip.js', 'application/javascript; charset=utf-8'],
