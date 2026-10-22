@@ -392,20 +392,40 @@ localhost, so a local trial on `acme.localhost` needs `TICKMARK_INSECURE_COOKIES
 security setting, not a dev flag to leave on: unset it (and unset it before running the test suite,
 which checks that sign-in sets `Secure`).
 
-### 3.4 With Stripe in test mode
+### 3.4 Billing state and test-mode verification
 
-1. Stripe dashboard → **Test mode** → *Developers → API keys* → `STRIPE_SECRET_KEY=sk_test_…`.
-2. *Products* → a recurring price → `STRIPE_PRICE_ID=price_…`.
-3. `stripe login`, then `stripe listen --forward-to localhost:3000/webhooks/stripe` — it prints a
-   signing secret for this session; put it in `STRIPE_WEBHOOK_SECRET=whsec_…`.
-4. `TICKMARK_PUBLIC_URL=http://localhost:3000` — where Stripe returns the browser after checkout.
-5. Sign up at `/signup`; pay with `4242 4242 4242 4242`, any future expiry, any CVC. The CLI
-   forwards `checkout.session.completed`, the tenant flips to `active`, and the dashboard says so.
+The hosted offer is £49 per practice per month in GBP. Checkout requires a card and the first payment is due
+immediately. The current subscription is configured without a free trial; the former public 14-day no-card
+claim was not supported by Checkout and has been removed. The catalogue lives in `src/tenancy/commercial-config.js`.
+Before every Checkout session, the server fetches the configured Stripe Price and fails closed unless it is an
+active recurring GBP 4,900 pence/month price. This verifies the price configured in Stripe, not tax treatment,
+account ownership, or an end-to-end payment.
 
-To watch the failure paths, use the decline card `4000 0000 0000 0341`, or send events directly:
-`stripe trigger invoice.payment_failed`, `stripe trigger customer.subscription.deleted`. Both should
-move the practice to `past_due` / `cancelled` and put the billing wall in front of its pages —
-while client links (`/r/<token>`) keep working.
+Checkout completion records customer/subscription identifiers and leaves access pending. A signed
+`customer.subscription.created` or `.updated` snapshot is the authority that opens or closes practice access.
+`customer.subscription.deleted` closes it. Invoice events are durably observed but cannot reopen a cancelled
+practice; recovery follows the subscription update snapshot. A payment failure reported by that snapshot starts
+the configured grace period (14 days by default); it does not delete the tenant or its documents. The Stripe
+event id, type, creation time and outcome are persisted in the platform registry in the same SQLite transaction
+as the state update. Replays return the recorded result; older subscription snapshots are recorded stale and
+ignored. If the database update fails, the transaction rolls back and the endpoint returns 500 so Stripe retries.
+
+For test-mode work only:
+
+1. Use a Stripe **test-mode** key, an active recurring £49 GBP/month Price and the test mode webhook secret.
+2. Run `stripe listen --forward-to localhost:3000/webhooks/stripe`; set the printed secret as
+   `STRIPE_WEBHOOK_SECRET` and set `TICKMARK_PUBLIC_URL=http://localhost:3000`.
+3. Set `STRIPE_PRICE_ID` to the test Price. Signup should redirect to Checkout only when the server has all
+   required settings and the retrieved Price matches the catalogue.
+4. Complete a test payment. The signed subscription snapshot should move the tenant from pending to active.
+   Re-send the same event; the durable receipt should report a duplicate and leave the row unchanged.
+5. Use Stripe's test mode to cause a payment failure, recover the test payment, and cancel. Confirm the
+   subscription snapshots move to `past_due`, `active`, then `cancelled` and that the configured grace period
+   is applied. Invoice events by themselves do not change access.
+
+The repository tests use synthetic signed webhook fixtures and stubbed Price/Checkout HTTP responses. No Stripe
+test account or Stripe CLI lifecycle has been independently verified here. Never use live keys or a real card in
+the checklist below.
 
 ### 3.5 The environment, in one table
 
