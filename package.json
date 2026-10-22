@@ -15,6 +15,8 @@
     "check:pages": "node tools/check-pages.mjs",
     "check:gateway": "node tools/preview-gateway.mjs tmp-gateway && node tools/check-pages.mjs tmp-gateway",
     "demo:synthetic": "node tools/demo-synthetic.mjs",
+    "demo": "node tools/demo-local.mjs",
+    "demo:reset": "node tools/demo-reset.mjs",
     "build:site": "node tools/build-marketing.mjs",
     "check:site": "node tools/check-site.mjs",
     "snapshot": "node tools/snapshot.mjs",

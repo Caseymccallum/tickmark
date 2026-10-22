@@ -24,16 +24,13 @@ Additional tests cover expired session cleanup, foreign session revocation, unkn
 
 ## Synthetic demonstration
 
-Use Node 24 or newer. In PowerShell, create a new, disposable data directory and seed it:
+The seed-only setup from this report has been superseded by the private loopback launcher. Use Node 24 or newer and run:
 
-```powershell
-$demoDir = Join-Path $env:TEMP ('tickmark-synthetic-' + [guid]::NewGuid().ToString('N'))
-npm run demo:synthetic -- $demoDir
-$env:TICKMARK_DATA = Join-Path $demoDir 'tickmark.db'
-npm start
+```sh
+npm run demo
 ```
 
-The setup prints generated owner/staff passwords, a generated practice-key passphrase, a client link, and the request route. Use `http://localhost:3000` for the printed routes. The fictional practice, owner, assistant, client, checklist, and sample PDF text are visibly labelled synthetic; two PDF files are encrypted through the same browser crypto module used by the product, and a third item remains outstanding after review. The data stays in the selected local directory. Remove only that disposable directory after stopping the app if you want to reset the demo. The app is not connected to Stripe or an external mail relay by this procedure.
+The command generates fresh owner/staff credentials and a practice-key passphrase, creates four fictional request states, and launches only on IPv4 loopback with mail and SMS disabled. The terminal prints the client upload link and three fictional PDF paths. Stop with Ctrl+C, then reset only the exact printed directory with `npm run demo:reset -- "<demo data path>"`. See [interactive-demo.md](interactive-demo.md) for the guided journey, public-demo decision, and verification limits. Never use real customer information or real documents in this demonstration.
 
 ## Verification results
 
