@@ -25,7 +25,7 @@
 | First request and client upload | Core workflow supports client records, checklists and a link that a client can open without a Tickmark account; uploads are encrypted in the client browser. | A link is a bearer capability. Client-device and browser integrity remain part of the protection. Mobile upload and browser compatibility require the selected-host test pass. |
 | Staff | Invited practice members have their own membership and authentication; membership remains per tenant. | TOTP-protected users must complete the tenant-side second factor. Subscription state does not change membership or encryption keys. |
 | Renewal / payment failure | Stripe subscription snapshots provide the canonical state. `past_due` has a 14-day grace period by default. | The period is read from `TICKMARK_PAST_DUE_GRACE_DAYS`; publish the operator's actual configured value. Invoice events alone do not reopen or close access. |
-| Cancellation | Stripe subscription deletion closes practice access. A cancellation scheduled for period end stays active until Stripe sends the ending state. | Failed payments and cancellation do not delete the tenant or encrypted files. Public client links can remain live while the tenant is retained. |
+| Cancellation | Stripe subscription deletion closes practice access. A cancellation scheduled for period end stays active until Stripe sends the ending state. | Phase 4 left public client links active; Phase 5 closes that gap by suspending links outside the paid/grace window, retaining prior ciphertext, and allowing only unexpired/unrevoked links to resume after re-subscription. |
 | Export / deletion | Operator-run ciphertext-preserving export, verification, restoration and offboarding tools exist. The deletion helper defaults to 30 days and Phase 3 backup retention is designed for 35 days. | There is no customer-facing export button on the billing wall. A support route, requester verification, delivery procedure, final retention window and backup deletion exceptions must be established before launch. |
 
 ## Claims-to-implementation review
@@ -78,7 +78,7 @@ If a registry operation is uncertain, the processing transaction either committe
 - Re-subscription under the same Stripe customer accepts a newly created subscription id and reuses the retained practice row. Its documents and keys remain in the same tenant file.
 - The billing wall links to account/billing recovery but has no self-serve export control. A trained operator can use the existing export and verification commands; after access ends, the customer will require a published support contact and verified identity process.
 - Refunds, disputes and manual corrections should be handled in Stripe by an authorised operator with a matching local registry correction documented. Do not alter rows by matching email or return URL. Customer support must not access document plaintext or ask for keys, passphrases, recovery codes, card data, session tokens or webhook secrets.
-- A failed payment starts grace when the signed subscription snapshot reports `past_due`/`unpaid`. Access pauses after the configured window. Client links continue during retained tenant state; customer cancellation or access pause does not itself revoke links.
+- Phase 4 observation, superseded by the Phase 5 change: public links used to continue during retained tenant state. They now follow paid/grace access, pause on cancellation or after grace, and retain prior ciphertext. Re-subscription resumes only valid, unrevoked links.
 
 ## First use and commercial positioning
 

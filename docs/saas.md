@@ -305,8 +305,10 @@ to the core app untouched. The pieces:
 - **The billing wall lives in the resolver** (`§2.4`, step 4): a tenant whose subscription does not open
   the documents is answered *before* `pool.get`, so a locked-out practice's database is never opened for a
   request that cannot be served. `active` opens them; `pending_payment` and `cancelled` do not; and
-  `past_due` stays open for a grace window first. Client links (`/r/<token>`) are deliberately **not**
-  blocked — a client mid-collection must not be stranded by their accountant's billing.
+  `past_due` stays open for a grace window first. Client links (`/r/<token>`) use that same access window:
+  a client mid-collection can finish during payment grace, but links pause after grace or immediate cancellation
+  so an inaccessible practice cannot keep accumulating uploads. Existing ciphertext remains stored. Re-subscription
+  resumes only links that are still unexpired and unrevoked in the tenant database; tenant deletion revokes them.
 - **A failed card is a mistake to fix, not a lockout.** `past_due` keeps the documents open for
   `TICKMARK_PAST_DUE_GRACE_DAYS` (fourteen by default, zero for the old instant lockout) while Stripe
   chases the card. `past_due_since` records when it *first* failed, so a card that fails, is retried, and
