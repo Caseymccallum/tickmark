@@ -2,7 +2,9 @@
 
 ## Phase A: architecture and migration plan
 
-Starting main: `dca09fe8ec027f17e8f45e45214caefa048676e3`. Branch: `codex/tickmark-visual-evolution`. Final implementation SHA and verification are recorded at completion. The original audit checkout and its dirty `docs/go-succeed-prep.md` remain separate.
+Starting main: `dca09fe8ec027f17e8f45e45214caefa048676e3`. Branch: `codex/tickmark-visual-evolution`. Final implementation commit: `431da9ed7566cb8d144b3e71eecb850a829b2276`; this report-only commit follows it, and the delivery HEAD is recorded in the handoff. The original audit checkout and its dirty `docs/go-succeed-prep.md` remain separate.
+
+Reviewable phases: A `95daa2f` (contract/tokens); B `dcd5dbb` (marketing/build); C `ed8a6d8` (gateway); D `b7a5e48` (workspace); E `293194c` (client checklist); F `431da9e` (accessibility, compatibility and evidence).
 
 The app renders tagged/escaped HTML from `src/views.js`; `page()` owns the shared shell, CSP-nonced inline stylesheet, skip link, theme metadata, footer and small selection handler. `src/style.js` contains semantic tokens and component sections. `src/app.js` owns the core route table. Hosted gateway rendering is in `src/tenancy/views.js`; `entry.js`, `gateway.js` and `resolve.js` retain host/path, membership and billing semantics. `web/*.js` attach to existing forms and IDs for browser encryption and interaction. Marketing is the independent `site/index.html`, currently never served at hosted platform root.
 
