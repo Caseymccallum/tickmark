@@ -150,6 +150,22 @@ CREATE TABLE IF NOT EXISTS stripe_event (
   applied_at TEXT
 );
 CREATE INDEX IF NOT EXISTS stripe_event_received ON stripe_event(received_at);
+
+-- Reviewable operator reconciliation. Store the verified Stripe identifiers and state only; never
+-- store API responses, secrets, payment methods, or raw event bodies. Removed with the tenant.
+CREATE TABLE IF NOT EXISTS stripe_reconciliation (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  customer_id TEXT NOT NULL,
+  subscription_id TEXT NOT NULL,
+  stripe_status TEXT NOT NULL,
+  previous_status TEXT NOT NULL,
+  resulting_status TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('corrected', 'confirmed')),
+  operator TEXT NOT NULL,
+  reconciled_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stripe_reconciliation_tenant ON stripe_reconciliation(tenant_id, reconciled_at);
 `;
 
 const SESSION_DAYS = 14;
@@ -618,7 +634,8 @@ export function tenantForLink(registry, token) {
   return (
     registry
       .prepare(
-        `SELECT t.id, t.slug, t.name, t.plan, t.lifecycle_state, t.storage_quota_bytes
+        `SELECT t.id, t.slug, t.name, t.plan, t.status, t.lifecycle_state,
+                t.past_due_since, t.storage_quota_bytes
            FROM link_index l JOIN tenant t ON t.id = l.tenant_id
           WHERE l.token_prefix = ?`,
       )

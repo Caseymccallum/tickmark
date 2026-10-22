@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createSaasServer } from '../src/tenancy/entry.js';
 import { setTenantBilling } from '../src/tenancy/registry.js';
 import { createAttemptLimiter } from '../src/ratelimit.js';
-import { agent } from './helpers.js';
+import { agent, upload } from './helpers.js';
 
 const PASSWORD = 'a long enough password';
 const WEBHOOK_SECRET = 'whsec_test_secret';
@@ -225,18 +225,20 @@ test('the webhook refuses a forged signature, and one that is too old to trust',
   );
 });
 
-test('a paid checkout opens the practice, and a cancelled subscription closes it again', async () => {
+test('client links follow billing access and keep revoked links and submitted ciphertext closed', async () => {
   await withSaas(
-    async ({ agent, registry, base }) => {
+    async ({ agent, registry, base, pool }) => {
       const client = agent();
       await signup(client);
       const tenant = tenantRow(registry);
+      const eventTime = Math.floor(Date.now() / 1000);
 
       // What Stripe sends when the hosted page finishes successfully.
       const paid = await postWebhook(
         client,
         signedWebhook({
           id: 'evt_paid',
+          created: eventTime,
           type: 'checkout.session.completed',
           data: {
             object: {
@@ -251,7 +253,7 @@ test('a paid checkout opens the practice, and a cancelled subscription closes it
       assert.equal(paid.status, 200);
       assert.equal(tenantRow(registry).status, 'pending_payment', 'checkout completion alone cannot grant access');
       await postWebhook(client, signedWebhook({
-        id: 'evt_subscription_created', type: 'customer.subscription.created',
+        id: 'evt_subscription_created', created: eventTime + 1, type: 'customer.subscription.created',
         data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } },
       }));
       assert.equal(tenantRow(registry).status, 'active', 'Stripe subscription state opens the practice');
@@ -283,8 +285,7 @@ test('a paid checkout opens the practice, and a cancelled subscription closes it
         wrapped_private_key: wrappedPrivateKey,
       });
 
-      // A client link, so the "clients are not locked out" promise can be checked below.
-      // On a platform host the practice's pages are reached through its slug prefix.
+      // A client link on the same real hosted app path used by the practice.
       const created = await client.post('/t/acme-accounting/requests', {
         client: 'Northwind Ltd',
         client_email: 'accounts@northwind.example',
@@ -297,11 +298,44 @@ test('a paid checkout opens the practice, and a cancelled subscription closes it
       const token = /\/r\/([A-Za-z0-9_-]+)/.exec(await linked.text())?.[1];
       assert.ok(token, 'a link was issued');
 
-      // The subscription ends.
+      // Put a real encrypted synthetic file behind the link. Pausing access must not remove it.
+      const itemId = pool.get(tenant.id).prepare('SELECT id FROM request_item WHERE request_id = ? ORDER BY position LIMIT 1').get(requestId).id;
+      const sent = await upload({ base, token, itemId, publicKey, plaintext: Buffer.from('synthetic client document'), filename: 'sample.txt' });
+      assert.equal(sent.response.status, 201, 'the client flow stores a browser-encrypted synthetic file');
+
+      // Revocation is durable in the tenant DB and must remain so after re-subscription.
+      const revokedLink = await client.post(`/t/acme-accounting/requests/${requestId}/link`, { days: '30' });
+      const revokedToken = /\/r\/([A-Za-z0-9_-]+)/.exec(await revokedLink.text())?.[1];
+      assert.ok(revokedToken, 'a second link was issued for an explicit revocation check');
+      const revokedId = pool.get(tenant.id).prepare('SELECT id FROM access_token ORDER BY rowid DESC LIMIT 1').get().id;
+      const revoke = await client.post(`/t/acme-accounting/requests/${requestId}/revoke`, { token_id: revokedId });
+      assert.equal(revoke.status, 303);
+
+      // Scheduling cancellation does not close a still-active paid period.
+      await postWebhook(client, signedWebhook({
+        id: 'evt_scheduled_cancel', created: eventTime + 2, type: 'customer.subscription.updated',
+        data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: true, metadata: { tenant_id: tenant.id } } },
+      }));
+      assert.equal(tenantRow(registry).status, 'active');
+      assert.equal((await agent(base).get(`/r/${token}`)).status, 200, 'a scheduled end remains available through the paid period');
+
+      // Past due remains usable during the configured grace period.
+      await postWebhook(client, signedWebhook({
+        id: 'evt_link_past_due', created: eventTime + 3, type: 'customer.subscription.updated',
+        data: { object: { id: 'sub_1', customer: 'cus_1', status: 'past_due', metadata: { tenant_id: tenant.id } } },
+      }));
+      assert.equal((await agent(base).get(`/r/${token}`)).status, 200, 'client collection continues during payment grace');
+      await postWebhook(client, signedWebhook({
+        id: 'evt_link_recovered', created: eventTime + 4, type: 'customer.subscription.updated',
+        data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } },
+      }));
+
+      // The subscription ends immediately.
       const deleted = await postWebhook(
         client,
         signedWebhook({
           id: 'evt_deleted',
+          created: eventTime + 5,
           type: 'customer.subscription.deleted',
           data: { object: { id: 'sub_1', customer: 'cus_1', metadata: { tenant_id: tenant.id } } },
         }),
@@ -313,9 +347,22 @@ test('a paid checkout opens the practice, and a cancelled subscription closes it
       assert.equal(locked.status, 402);
       assert.match(await locked.text(), /The subscription has ended/);
 
-      // But the client mid-upload is not stranded by the practice's billing.
+      // New access is paused, while the previously submitted ciphertext remains untouched.
       const clientPage = await agent(base).get(`/r/${token}`);
-      assert.equal(clientPage.status, 200, 'a client link still opens');
+      assert.equal(clientPage.status, 403, 'a cancellation stops additional client activity');
+      assert.match(await clientPage.text(), /temporarily unavailable/);
+      assert.equal(clientPage.headers.get('cache-control'), 'no-store');
+      const uploadAfterPause = pool.get(tenant.id).prepare('SELECT id, size_bytes FROM upload WHERE request_id = ?').get(requestId);
+      assert.ok(uploadAfterPause, 'the previously submitted file row is retained');
+      assert.equal(uploadAfterPause.size_bytes, sent.envelope.byteLength, 'the original encrypted bytes remain committed');
+
+      // An explicit renewal restores only the unrevoked link; the revoked token stays revoked.
+      await postWebhook(client, signedWebhook({
+        id: 'evt_link_resubscribe', created: eventTime + 6, type: 'customer.subscription.created',
+        data: { object: { id: 'sub_restarted', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } },
+      }));
+      assert.equal((await agent(base).get(`/r/${token}`)).status, 200, 'a still-valid unrevoked request resumes on resubscription');
+      assert.equal((await agent(base).get(`/r/${revokedToken}`)).status, 410, 'resubscription never revives a revoked token');
     },
     { env: { STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET } },
   );
@@ -405,6 +452,12 @@ test('webhook receipts survive replays, stale delivery and wrong-customer events
     };
     await postWebhook(client, signedWebhook(stale));
     assert.equal(tenantRow(registry).status, 'cancelled', 'an older active snapshot cannot undo cancellation');
+    const sameSecondActive = {
+      id: 'evt_durable_same_second_active', created: created + 2, type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_durable', customer: 'cus_durable', status: 'active', metadata: { tenant_id: tenant.id } } },
+    };
+    await postWebhook(client, signedWebhook(sameSecondActive));
+    assert.equal(tenantRow(registry).status, 'cancelled', 'an active event with the cancellation timestamp cannot reopen access');
 
     const wrongCustomer = {
       id: 'evt_wrong_customer', created: created + 3, type: 'customer.subscription.updated',
@@ -421,7 +474,7 @@ test('webhook receipts survive replays, stale delivery and wrong-customer events
     await postWebhook(client, signedWebhook(renewed));
     assert.equal(tenantRow(registry).status, 'active', 'a new subscription can reopen the same retained practice');
     assert.equal(registry.prepare('SELECT stripe_subscription_id FROM tenant WHERE id = ?').get(tenant.id).stripe_subscription_id, 'sub_restarted');
-    assert.equal(registry.prepare('SELECT count(*) AS n FROM stripe_event').get().n, 6);
+    assert.equal(registry.prepare('SELECT count(*) AS n FROM stripe_event').get().n, 7);
   }, { env: { STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET } });
 });
 
@@ -450,17 +503,30 @@ test('with the grace window set to zero, a failing card locks the practice at on
   process.env.TICKMARK_PAST_DUE_GRACE_DAYS = '0';
   try {
     await withSaas(
-      async ({ agent, registry }) => {
+      async ({ agent, registry, base }) => {
         const client = agent();
         await signup(client);
         const tenant = tenantRow(registry);
 
         await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'customer.subscription.created', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } } }));
+        await client.post('/login', { email: 'sam@acme.example', password: PASSWORD });
+        const { generatePracticeKey } = await import('../web/tickmark-crypto.js');
+        const keys = await generatePracticeKey(PASSWORD);
+        await client.post('/t/acme-accounting/setup', { public_key: JSON.stringify(keys.publicKey), wrapped_private_key: keys.wrappedPrivateKey });
+        const created = await client.post('/t/acme-accounting/requests', {
+          client: 'Northwind Ltd', client_email: 'client@example.test', title: 'test', items: 'Bank statement',
+        });
+        const requestId = created.headers.get('location').split('/').pop();
+        const linkPage = await client.post(`/t/acme-accounting/requests/${requestId}/link`, { days: '30' });
+        const token = /\/r\/([A-Za-z0-9_-]+)/.exec(await linkPage.text())?.[1];
+        assert.ok(token);
         await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'customer.subscription.updated', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'past_due', metadata: { tenant_id: tenant.id } } } }));
         assert.equal(tenantRow(registry).status, 'past_due');
 
         const locked = await client.get('/t/acme-accounting/requests');
         assert.equal(locked.status, 402, 'an operator who wants no slack sets the window to zero and gets the old behaviour');
+        const pausedLink = await agent(base).get(`/r/${token}`);
+        assert.equal(pausedLink.status, 403, 'existing client links pause once the payment grace window expires');
       },
       { env: { STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET } },
     );

@@ -23,8 +23,11 @@
  * without being repeated in every route, and the only place it can live without a locked-out
  * practice's pages half-working.
  *
- * Client links are deliberately **not** blocked. A client mid-collection must not be stranded by
- * the practice's billing, and the practice cannot read what arrives until they pay either way.
+ * Client links follow the same paid/grace access window as the practice. Past-due collection can
+ * continue during grace. When workspace access closes, a link gets a temporary denial before the
+ * tenant DB is opened: no new uploads accumulate in an inaccessible practice, and existing
+ * ciphertext stays intact. An active resubscription makes only still-valid, unrevoked links usable;
+ * token expiry/revocation remains authoritative inside the tenant DB.
  */
 import { join } from 'node:path';
 import { html, page, sendPage } from '../views.js';
@@ -51,6 +54,7 @@ export function createResolver({ registry, pool, defaults = {}, onBlocked = null
       const tenant = tenantForLink(registry, link[1]);
       if (tenant) {
         if (tenant.lifecycle_state && tenant.lifecycle_state !== 'active') return offboardingBlock(response);
+        if (LINK_PATH.test(url.pathname) && !tenantAllowsAccess(tenant)) return clientLinkBlock(response);
         return open(tenant);
       }
       // A link the index does not know falls through to the host check, then to null: the same
@@ -119,6 +123,20 @@ export function createResolver({ registry, pool, defaults = {}, onBlocked = null
         signIn: false,
         title: 'This practice is being closed',
         body: html`<h1>This practice is being closed</h1><p>Its workspace and client links are unavailable while its data is being retired.</p>`,
+      }));
+      return { handled: true };
+    }
+    return null;
+  }
+
+  function clientLinkBlock(response) {
+    if (response) {
+      response.setHeader('Cache-Control', 'no-store');
+      sendPage(response, 403, page({
+        signIn: false,
+        title: 'This request link is temporarily unavailable',
+        body: html`<h1>This request link is temporarily unavailable</h1>
+          <p>The practice has paused this request. Contact the practice for an update. Files already sent remain with the practice.</p>`,
       }));
       return { handled: true };
     }
