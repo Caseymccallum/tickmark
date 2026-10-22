@@ -6,7 +6,7 @@
 
 - Required starting branch: `codex/tickmark-launch-qualification`.
 - Starting commit: `f4694ffca8efe0063d2509e57a00ab4738b078ba`.
-- Final commit: recorded after the release-quality commits are pushed.
+- Final implementation commit: `0fd443817ca10f04bbbedc0febc1afac1883d244` (the release-evidence commit follows with this report and no software changes).
 - Delivery branch: `codex/tickmark-release-quality`.
 - `main` was not changed. No public deployment, real client information, or billing activation was performed.
 - Changed files: this report, the synthetic demo tool and package command, Phase 2/5 evidence corrections, the invite callback wiring, TOTP-aware owner verification, Stripe optimistic reconciliation, operator export/offboarding arguments, and regression tests for the reviewed behaviors. The exact names are listed by `git show --stat` on the final commit.
