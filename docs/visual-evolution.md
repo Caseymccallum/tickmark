@@ -31,3 +31,18 @@ All core endpoints/forms remain in the existing route table; no capability is ad
 A. Establish this inventory and DESIGN.md; refine tokens and reusable controls. B. Redesign static marketing and document configurable two-origin hosting. C. Apply hosted account layouts without altering field names/actions. D. Replace crowded workspace navigation with a shared shell and improve dense workflows through existing primitives. E. Render client checklist as responsive cards, retaining upload form selectors and cryptography. F. Run regression, structural, contrast and security checks; record unsupported browser/manual evidence.
 
 Browser automation initialization failed with `failed to write kernel assets ... path specified`. No before/after browser screenshots or visual inspection is claimed unless later evidence supersedes this limitation.
+
+## Phase B: public website and hosting
+
+The public page now presents the checklist, review, outstanding-item, upload and reminder workflows as labelled fictional illustrations. Six benefit blocks, four steps, encryption/metadata/recovery explanations, seven FAQs, truthful pricing and a self-hosted path share the application tokens. No hosted paid signup is active. `src/style.js` exports the canonical token block; `tools/build-marketing.mjs --sync` updates its committed copy in the standalone source. `check:site` rejects drift.
+
+### Recommended two-origin topology and operator procedure
+
+1. Choose domains you own: the apex or www host serves only the static output; an app host proxies the hosted server. No domain is selected or provisioned here.
+2. Set `TICKMARK_MARKETING_URL` to the HTTPS marketing origin and `TICKMARK_PUBLIC_URL` to the HTTPS app origin. Run `npm run build:site -- <new-output-directory>`. Publish only the generated `index.html` with the static host. Without configuration, sign-in goes to the on-page hosted-access explanation. The output adds canonical/OG URLs and app `/login` links, never a paid signup CTA.
+3. Run the application separately with its existing `MULTI_TENANT=1`, data roots, TLS reverse proxy, trusted proxies and secure-cookie settings. The optional marketing URL adds a public-website link only; it does not change cookie scope, route dispatch, authentication or redirects.
+4. With `TICKMARK_TENANT_DOMAIN` unset, retain `/t/<slug>` mode on the app origin. Host mode keeps the existing `<slug>.<tenant-domain>` resolver and requires owned DNS/TLS/host allowlisting. A switch between these modes or an existing origin requires operator planning for existing links, sessions, host maps and provider callbacks; this redesign performs no migration.
+5. Keep Stripe return/webhook and OAuth callback URLs on the configured app origin and existing paths. Check them in isolated test mode before any separately approved launch. Do not redirect `/r/*` or `/invite/*` to marketing: bearer URLs remain on the application, under `Referrer-Policy: no-referrer`. No token is interpolated into a public-origin URL.
+6. Marketing may be indexed; application pages emit `noindex, nofollow`. The static host should set appropriate CSP, `nosniff`, HTTPS/HSTS and no-referrer headers. The app retains its nonced CSP, same-origin form actions, CSRF checks and host-only secure cookies. Do not widen cookie Domain to connect marketing and app.
+
+Build configuration accepts HTTPS origins only, rejects credentials, paths, query strings and fragments, and never reads a request's return URL. Default standalone output performs no external resource fetches. No DNS, provider, billing, deployment or legal-publication action is included.

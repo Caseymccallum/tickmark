@@ -7,11 +7,14 @@
  * no page at all.
  */
 import { readFileSync } from 'node:fs';
+import { DESIGN_TOKENS } from '../src/style.js';
 import { COMMERCIAL_PRICE } from '../src/tenancy/commercial-config.js';
 
 const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
 const count = (pattern, text = html) => (text.match(pattern) ?? []).length;
+const tokenBlock = /\/\* TICKMARK TOKENS START \*\/([\s\S]*?)\/\* TICKMARK TOKENS END \*\//.exec(html)?.[1];
 const problems = [];
+if (tokenBlock?.trim() !== DESIGN_TOKENS.trim()) problems.push('marketing tokens differ from src/style.js; run node tools/build-marketing.mjs --sync');
 
 // Tags that must balance. Void elements (br, input, link, meta, img, hr) are excluded because they never close.
 for (const tag of ['html', 'head', 'body', 'header', 'nav', 'section', 'div', 'p', 'ul', 'li', 'details', 'form', 'footer', 'pre', 'code', 'svg', 'svg', 'strong', 'em', 'blockquote', 'cite', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'button', 'h1', 'h2', 'h3', 'h4']) {
@@ -90,7 +93,7 @@ if (unexpected.length > 0) problems.push(`third-party requests: ${unexpected.joi
 // been wrong once already: the page said MIT in three places while the repository said AGPL, which is two
 // different licences with two different businesses behind them. It was then briefly FSL-1.1-ALv2 and back,
 // which is why the assertion names one licence and fails on both of the others.
-for (const claim of ['£49', COMMERCIAL_PRICE.display, '5 GiB', '25 MB', 'AGPL-3.0']) {
+for (const claim of ['£49', COMMERCIAL_PRICE.display, '5 GiB', '25 MiB', 'AGPL-3.0']) {
   if (!html.includes(claim)) problems.push(`the page no longer says "${claim}"`);
 }
 for (const outdated of ['$59', '$35 a month', '14-day trial', 'No card for the trial', 'Unlimited clients', 'Unlimited storage']) {

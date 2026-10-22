@@ -1,1240 +1,282 @@
 <!doctype html>
-<!--
-  The page for the hosted service.
-
-  It lives in this repository on purpose: every claim it makes — that the server cannot read the files, that
-  a practice can run it themselves, that there is no per-client pricing — is checkable against the source
-  sitting beside it, in the same commit. A marketing page kept somewhere else is a page that drifts away from
-  what is true, and the whole argument here is that this one can be checked.
-
-  The stylesheet below is the application's own design system. The token block in the first style element is
-  copied from `src/style.js` — the same surfaces, the same four ink weights, the same five state families,
-  the same elevation tinted with the ink rather than with black. What is added on top is the type and rhythm a
-  marketing page needs and an application does not: a display size, a section rhythm, and a measure. Nothing
-  here invents a colour, and if one is ever needed, the rule in `src/style.js` applies: everything chromatic
-  is a *state*. A decorative colour would be a mistake.
-
-  One file. No fonts, no analytics, no cookie banner, because there are no cookies.
--->
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tickmark — collect documents from clients, and keep the files where you can point at them</title>
-<meta name="description" content="A checklist per client, a link clients open without an account, and browser-encrypted files. Hosted service £49 per month, billed from checkout; payment details required.">
+<title>Tickmark — stop chasing clients for paperwork</title>
+<meta name="description" content="One document checklist, a simple client link, and a clear view of what is missing. Browser-encrypted uploads for accounting and bookkeeping practices.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0a0e15" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23131c2b'/%3E%3Cpath d='M9 16.5l4.6 4.5L23 10.8' fill='none' stroke='%2335d39a' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-
-<!-- Open Graph: what a link to this looks like in a group or a message, which is where it will actually be seen. -->
+<meta name="theme-color" content="#f6f7f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d1513" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Tickmark — collect documents from clients, and keep the files where you can point at them">
-<meta property="og:description" content="Hosted document collection for £49 per month. Payment details required at checkout; the first payment is due immediately. Files are encrypted in the client's browser to a key the practice holds.">
-
+<meta property="og:title" content="Tickmark — stop chasing clients for paperwork">
+<meta property="og:description" content="Send one checklist. See what is missing. Let clients upload documents without creating an account.">
+<!-- Optional canonical metadata is added by tools/build-marketing.mjs. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23164e3c'/%3E%3Cpath d='M9 16.5l4.6 4.5L23 10.8' fill='none' stroke='%23d6f5e4' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
-/* ==== The application's design system. Copied from src/style.js, not paraphrased. ==== */
+/* TICKMARK TOKENS START */
 :root {
-  color-scheme: light;
+    color-scheme: light;
 
-  --canvas: #f7f8fa;
-  --surface: #ffffff;
-  --sunken: #f2f4f7;
-  --line: #e6e9ee;
-  --line-2: #d5dae2;
+    /* Surfaces: canvas, card, and the recessed fill used for table headers and inputs. */
+    --canvas: #f6f7f4;
+    --surface: #ffffff;
+    --sunken: #edf1ec;
+    --line: #dfe6de;
+    --line-2: #c9d3ca;
 
-  --ink: #131c2b;
-  --ink-2: #2b3644;
-  --soft: #5c6875;
-  /* The quietest ink, in step with src/style.js: lifted from #8b95a3, which measured 2.9:1 on the canvas.
-     A label nobody can read comfortably is a missing label, not a subtle one. */
-  --faint: #656e7b;
+    /* Ink, in four weights. Headings are a very dark navy rather than black: it reads as
+       considered rather than default, and it is what makes a white page feel expensive. */
+    --ink: #172d25;
+    --ink-2: #30443b;
+    --soft: #4e625a;
+    /* The quietest ink, and the only one whose whole job is small type: table headers, eyebrows, the footer.
+       It was #8b95a3, which measures 2.9:1 on the canvas — a label a person has to work to read is not a
+       subtle label, it is a missing one. #656e7b measures 4.9:1 on the canvas, 5.2 on a card and 4.7 on
+       the sunken fill, so the smallest type in the product clears AA on every surface it is actually used
+       on. Measured with the same formula the checkers would use, not chosen by eye. */
+    --faint: #58675f;
 
-  --link: #2a5bd7;
-  --brand: #0d9f6e;
-  --primary: #131c2b;
-  --primary-ink: #ffffff;
+    --link: #155e48;
+    --brand: #167052;
+    --primary: #164e3c;
+    --primary-ink: #ffffff;
 
-  --ok-bg: #ecfdf3;    --ok-ink: #05663e;    --ok-line: #b7ebc9;
-  --info-bg: #eff5ff;  --info-ink: #1849b8;  --info-line: #c8dafd;
-  --warn-bg: #fffaeb;  --warn-ink: #a35a06;  --warn-line: #f5e0ab;
-  --bad-bg: #fef3f2;   --bad-ink: #a92319;   --bad-line: #fbcdc8;
-  --off-bg: #f2f4f7;   --off-ink: #55606d;   --off-line: #e0e4ea;
+    /* State. Five families, five meanings, no other colour anywhere. */
+    --ok-bg: #ecfdf3;    --ok-ink: #05663e;    --ok-line: #b7ebc9;
+    --info-bg: #eff5ff;  --info-ink: #1849b8;  --info-line: #c8dafd;
+    --warn-bg: #fffaeb;  --warn-ink: #a35a06;  --warn-line: #f5e0ab;
+    --bad-bg: #fef3f2;   --bad-ink: #a92319;   --bad-line: #fbcdc8;
+    --off-bg: #f2f4f7;   --off-ink: #55606d;   --off-line: #e0e4ea;
 
-  --sh-1: 0 0 0 1px rgba(19, 28, 43, .05), 0 1px 2px rgba(19, 28, 43, .05);
-  --sh-2: 0 0 0 1px rgba(19, 28, 43, .06), 0 2px 4px -2px rgba(19, 28, 43, .08), 0 10px 24px -12px rgba(19, 28, 43, .12);
-  --sh-3: 0 0 0 1px rgba(19, 28, 43, .06), 0 18px 40px -16px rgba(19, 28, 43, .18);
-  --focus: 0 0 0 3px color-mix(in srgb, var(--link) 22%, transparent);
+    /* Elevation, tinted with the ink. A shadow coloured with black reads as a smudge; one tinted
+       with the page's own navy reads as light. Every layer carries a 1px ring so a card has an
+       edge even where the diffused shadow has faded to nothing. */
+    --sh-1: 0 0 0 1px rgba(19, 28, 43, .05), 0 1px 2px rgba(19, 28, 43, .05);
+    --sh-2: 0 0 0 1px rgba(19, 28, 43, .06), 0 2px 4px -2px rgba(19, 28, 43, .08), 0 10px 24px -12px rgba(19, 28, 43, .12);
+    --sh-3: 0 0 0 1px rgba(19, 28, 43, .06), 0 18px 40px -16px rgba(19, 28, 43, .18);
+    --focus: 0 0 0 3px color-mix(in srgb, var(--link) 22%, transparent);
 
-  --r-xs: 5px; --r-sm: 7px; --r-md: 9px; --r-lg: 12px; --r-xl: 18px; --r-pill: 999px;
-  --control: 34px; --control-sm: 28px;
+    --r-xs: 5px; --r-sm: 7px; --r-md: 9px; --r-lg: 12px; --r-pill: 999px;
+    --control: 44px; --control-sm: 36px;
+    /* The sticky header's height: the shell uses it, and so does the offset an anchor needs. */
+    --header: 4rem;
+    /* The page's side margin, and the notch. A client opens their page on a phone, often in landscape, and
+       the content must not run under the rounded corner of the screen. One gutter for the whole shell, so no
+       page invents its own — and two derived tokens, because one max() per rule would be four copies of
+       one fact. */
+    --gutter: 1.5rem;
+    --pad-l: max(var(--gutter), env(safe-area-inset-left));
+    --pad-r: max(var(--gutter), env(safe-area-inset-right));
 
-  --fs-xs: 11.5px; --fs-sm: 12.5px; --fs-md: 13.5px;
-  --fs-base: 15px; --fs-lg: 16.5px; --fs-xl: 19px; --fs-2xl: 23px; --fs-3xl: 28px;
+    --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px;
+    --fs-base: 16px; --fs-lg: 18px; --fs-xl: 21px; --fs-2xl: 28px; --fs-3xl: 34px;
 
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --canvas: #0a0e15;
-    --surface: #10151e;
-    --sunken: #0d121a;
-    --line: #1b2230;
-    --line-2: #2c3644;
-
-    --ink: #e9edf4;
-    --ink-2: #d2dae5;
-    --soft: #94a0b1;
-    --faint: #7a8491;
-
-    --link: #8ab0ff;
-    --brand: #35d39a;
-    --primary: #e9edf4;
-    --primary-ink: #0a0e15;
-
-    --ok-bg: #06271b;    --ok-ink: #6ee7b7;    --ok-line: #12543a;
-    --info-bg: #0c1a33;  --info-ink: #96b8ff;  --info-line: #1e3a6e;
-    --warn-bg: #271a04;  --warn-ink: #f7c948;  --warn-line: #5a400d;
-    --bad-bg: #280f0d;   --bad-ink: #f6a79e;   --bad-line: #5f221b;
-    --off-bg: #161c26;   --off-ink: #9aa6b5;   --off-line: #2a3341;
-
-    --sh-1: 0 0 0 1px rgba(255, 255, 255, .04), 0 1px 2px rgba(0, 0, 0, .5);
-    --sh-2: 0 0 0 1px rgba(255, 255, 255, .05), 0 10px 24px -12px rgba(0, 0, 0, .7);
-    --sh-3: 0 0 0 1px rgba(255, 255, 255, .06), 0 18px 40px -16px rgba(0, 0, 0, .8);
+    --sans: Aptos, "Segoe UI", "Helvetica Neue", sans-serif;
+    --display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --sidebar: 14.5rem; --content: 76rem;
+    --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem;
+    --space-6: 1.5rem; --space-8: 2rem; --space-12: 3rem;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   }
-}
 
-/* ==== What a marketing page needs and an application does not. ========================
-   A larger type scale, a section rhythm, and a measure. Everything is built from the tokens
-   above: no new colour, no new shadow, no new radius. */
-:root {
-  --fs-display: clamp(2.1rem, 5.4vw, 3.5rem);
-  --fs-section: clamp(1.4rem, 2.6vw, 2rem);
-  --fs-sub: clamp(1rem, 1.4vw, 1.15rem);
-  --gutter: 1.5rem;
-  --measure: 40rem;
-  --measure-wide: 62rem;
-  --section-y: clamp(3.5rem, 7vw, 6rem);
-  --header: 3.75rem;
-}
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --canvas: #0d1513;
+      --surface: #14201c;
+      --sunken: #101b17;
+      --line: #283c32;
+      --line-2: #42594b;
 
+      --ink: #e8f0eb;
+      --ink-2: #d0ded5;
+      --soft: #a0b3a8;
+      /* The same rule as the light faint — 5.1:1 on the canvas, 4.8 on a card — so a table header is as
+         readable in the dark as it is in the light. */
+      --faint: #9caaa1;
+
+      --link: #83d6b0;
+      --brand: #83d6b0;
+      --primary: #a5e6c7;
+      --primary-ink: #10241b;
+
+      --ok-bg: #06271b;    --ok-ink: #6ee7b7;    --ok-line: #12543a;
+      --info-bg: #0c1a33;  --info-ink: #96b8ff;  --info-line: #1e3a6e;
+      --warn-bg: #271a04;  --warn-ink: #f7c948;  --warn-line: #5a400d;
+      --bad-bg: #280f0d;   --bad-ink: #f6a79e;   --bad-line: #5f221b;
+      --off-bg: #161c26;   --off-ink: #9aa6b5;   --off-line: #2a3341;
+
+      --sh-1: 0 0 0 1px rgba(255, 255, 255, .04), 0 1px 2px rgba(0, 0, 0, .5);
+      --sh-2: 0 0 0 1px rgba(255, 255, 255, .05), 0 10px 24px -12px rgba(0, 0, 0, .7);
+      --sh-3: 0 0 0 1px rgba(255, 255, 255, .06), 0 18px 40px -16px rgba(0, 0, 0, .8);
+    }
+  }
+/* TICKMARK TOKENS END */
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scrollbar-gutter: stable; }
-body {
-  margin: 0;
-  font: var(--fs-base)/1.65 var(--sans);
-  color: var(--ink-2);
-  background: var(--canvas);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-::selection { background: color-mix(in srgb, var(--brand) 26%, transparent); }
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  * { transition: none !important; animation: none !important; }
-}
-a { color: var(--link); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+html { scroll-behavior: smooth; scroll-padding-top: 6rem; -webkit-text-size-adjust: 100%; }
+body { margin: 0; color: var(--ink-2); background: var(--canvas); font: var(--fs-base)/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--link); text-underline-offset: .2em; }
 a:hover { text-decoration-thickness: 2px; }
-:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-xs); }
-
-/* The application's sheet states these three, and this page is the same product: an anchor lands below the
-   sticky header, a tap is not held back by a double-tap that will never come, and the system's tap flash is
-   not a second, worse hover state on controls that already have one. */
-[id] { scroll-margin-top: calc(var(--header) + .9rem); }
-a, button, .btn, summary, label, input { touch-action: manipulation; }
-a, button, .btn, summary { -webkit-tap-highlight-color: transparent; }
-
-/* Invisible until it is focused, then the first thing on the page. Five nav links and a call to action stand
-   between a keyboard and the headline, and this is the shortest way past them. */
-.skip {
-  position: absolute; left: .75rem; top: .6rem; z-index: 60; padding: .45rem .7rem;
-  border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--line-2);
-  box-shadow: var(--sh-2); color: var(--ink); font-size: var(--fs-md); font-weight: 550;
-  text-decoration: none; transform: translateY(-250%); transition: transform .12s ease;
-}
+:focus-visible { outline: 2px solid var(--link); outline-offset: 4px; }
+::selection { background: var(--ok-bg); color: var(--ok-ink); }
+h1, h2, h3, p { margin: 0; }
+h1, h2 { font-family: var(--display); font-weight: 500; color: var(--ink); letter-spacing: -.04em; text-wrap: balance; }
+h1 { font-size: clamp(2.7rem, 5.8vw, 4.8rem); line-height: 1.04; }
+h2 { font-size: clamp(2rem, 3.5vw, 3.1rem); line-height: 1.15; }
+h3 { color: var(--ink); font-size: 1.1rem; line-height: 1.4; }
+p + p { margin-top: 1rem; }
+.wrap { max-width: 77rem; margin: auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+.eyebrow { color: var(--soft); font-size: .75rem; text-transform: uppercase; letter-spacing: .12em; font-weight: 650; margin-bottom: 1rem; }
+.lead { color: var(--soft); font-size: 1.15rem; line-height: 1.65; max-width: 35rem; margin-top: 1.5rem; }
+.note { font-size: .875rem; color: var(--soft); }
+.skip { position: absolute; z-index: 50; top: 1rem; left: 1rem; background: var(--surface); padding: .7rem 1rem; transform: translateY(-250%); }
 .skip:focus { transform: none; }
-
-/* --- frame --------------------------------------------------------------------------------- */
-.wrap { width: 100%; max-width: var(--measure-wide); margin: 0 auto; padding: 0 var(--gutter);
-  padding-left: max(var(--gutter), env(safe-area-inset-left));
-  padding-right: max(var(--gutter), env(safe-area-inset-right)); }
-.narrow { max-width: var(--measure); margin: 0 auto; }
-section.band { padding: var(--section-y) 0; border-top: 1px solid var(--line); }
-section.band.flush { border-top: 0; }
-.band-head { max-width: var(--measure); margin-bottom: 2.25rem; }
-.band-head .eyebrow { margin-bottom: .7rem; }
-
-/* --- type ---------------------------------------------------------------------------------- */
-h1, h2, h3, h4 { color: var(--ink); font-weight: 600; letter-spacing: -.02em; margin: 0; text-wrap: balance; }
-h1 { font-size: var(--fs-display); line-height: 1.06; letter-spacing: -.035em; }
-h2 { font-size: var(--fs-section); line-height: 1.18; letter-spacing: -.028em; }
-h3 { font-size: var(--fs-base); line-height: 1.4; }
-h4 { font-size: var(--fs-md); line-height: 1.4; letter-spacing: -.01em; }
-p { margin: .7rem 0; }
-p:first-child { margin-top: 0; }
-.lead { font-size: var(--fs-sub); color: var(--soft); line-height: 1.6; max-width: var(--measure); }
-.note { font-size: var(--fs-md); color: var(--soft); line-height: 1.65; }
-/* Break a sentence where it means to rather than where the column ends — the application's rule, and the
-   reason a paragraph does not finish on a single orphaned word. */
-.lead, .note, .card p, .tiny { text-wrap: pretty; }
-.tiny { font-size: var(--fs-sm); color: var(--faint); line-height: 1.6; }
-strong, b { font-weight: 600; color: var(--ink); }
-code, kbd, pre { font-family: var(--mono); }
-code { font-size: .86em; background: var(--sunken); border: 1px solid var(--line);
-       padding: .1rem .32rem; border-radius: var(--r-xs); color: var(--ink-2); }
-mark { background: color-mix(in srgb, var(--brand) 20%, transparent); color: inherit; padding: 0 .15em; border-radius: 3px; }
-.num { font-variant-numeric: tabular-nums; }
-
-/* An eyebrow: the label above a heading, in the smallest size the system has. */
-.eyebrow {
-  display: inline-flex; align-items: center; gap: .45rem;
-  font-size: var(--fs-xs); font-weight: 650; letter-spacing: .1em; text-transform: uppercase;
-  color: var(--faint);
-}
-.eyebrow::before { content: ""; width: .9rem; height: 2px; background: var(--brand); border-radius: 2px; }
-
-/* --- controls ------------------------------------------------------------------------------- */
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
-  height: 2.5rem; padding: 0 1.05rem; border-radius: var(--r-md);
-  font: 600 var(--fs-base)/1 var(--sans); letter-spacing: -.01em;
-  text-decoration: none; white-space: nowrap; cursor: pointer;
-  border: 1px solid transparent; transition: transform .12s ease, box-shadow .14s ease, background .14s ease;
-}
-.btn.primary { background: var(--primary); color: var(--primary-ink); box-shadow: var(--sh-2); }
-.btn.primary:hover { transform: translateY(-1px); box-shadow: var(--sh-3); }
-.btn.secondary { background: var(--surface); color: var(--ink); border-color: var(--line-2); box-shadow: var(--sh-1); }
-.btn.secondary:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
-.btn.ghost { background: transparent; color: var(--soft); }
-.btn.ghost:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
-.btn.lg { height: 2.9rem; padding: 0 1.35rem; font-size: var(--fs-lg); }
-.btn:focus-visible { box-shadow: var(--focus); }
-.cta-row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: 1.75rem; }
-input[type=email], input[type=text] {
-  height: 2.5rem; width: 100%; padding: 0 .8rem;
-  font: var(--fs-base)/1 var(--sans); color: var(--ink); background: var(--surface);
-  border: 1px solid var(--line-2); border-radius: var(--r-md);
-  transition: border-color .14s ease, box-shadow .14s ease;
-}
-input[type=email]:focus, input[type=text]:focus { outline: none; border-color: var(--link); box-shadow: var(--focus); }
-
-/* --- the top ------------------------------------------------------------------------------- */
-.top {
-  position: sticky; top: 0; z-index: 20; height: var(--header);
-  display: flex; align-items: center; gap: 1.25rem; padding: 0 var(--gutter);
-  /* A notch in landscape must not put the brand under the corner of the screen. */
-  padding-left: max(var(--gutter), env(safe-area-inset-left));
-  padding-right: max(var(--gutter), env(safe-area-inset-right));
-  background: color-mix(in srgb, var(--canvas) 82%, transparent);
-  backdrop-filter: saturate(180%) blur(12px);
-  border-bottom: 1px solid var(--line);
-}
-.top .brand { display: inline-flex; align-items: center; gap: .5rem; flex: none;
-  font-size: var(--fs-lg); font-weight: 600; letter-spacing: -.02em; color: var(--ink); text-decoration: none; }
-.top .brand .mark { display: block; flex: none; border-radius: 6px; box-shadow: var(--sh-1); }
-.top nav { margin-left: auto; display: flex; align-items: center; gap: .25rem; }
-.top nav a { padding: .3rem .6rem; border-radius: var(--r-sm); font-size: var(--fs-md); font-weight: 550;
-  color: var(--soft); text-decoration: none; transition: background .14s ease, color .14s ease; }
-.top nav a:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.top .cta { margin-left: .5rem; }
-@media (max-width: 46rem) {
-  .top { height: auto; flex-wrap: wrap; gap: .5rem .9rem; padding: .6rem 1rem; }
-  .top nav { margin-left: 0; width: 100%; overflow-x: auto; }
-  .top .cta { display: none; }
-}
-
-/* --- hero ---------------------------------------------------------------------------------- */
-.hero { position: relative; overflow: hidden; padding: clamp(3rem, 8vw, 6.5rem) 0 clamp(2.5rem, 5vw, 4rem); }
-/* One soft light source behind the headline, tinted with the brand green at a very low mix. It reads as
-   atmosphere rather than decoration, which is the only reason it is allowed. */
-.hero::before {
-  content: ""; position: absolute; inset: -30% 40% 40% -10%; z-index: 0; pointer-events: none;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--brand) 14%, transparent), transparent 70%);
-}
-.hero::after {
-  content: ""; position: absolute; inset: 30% -20% -20% 50%; z-index: 0; pointer-events: none;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--link) 9%, transparent), transparent 70%);
-}
-.hero .wrap { position: relative; z-index: 1; }
-.hero .eyebrow { margin-bottom: 1.1rem; }
-.hero h1 { max-width: 34rem; }
-.hero .lead { margin-top: 1.15rem; font-size: clamp(1.05rem, 1.6vw, 1.22rem); }
-.hero .reassure { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: .35rem 1.25rem;
-  font-size: var(--fs-md); color: var(--soft); }
-.hero .reassure span { display: inline-flex; align-items: center; gap: .4rem; }
-.hero .reassure svg { flex: none; color: var(--brand); }
-/* One orchestrated arrival for the first screen: five elements, 60ms apart, and nothing else on the page
-   animates beyond a hover state. Off for anybody who asked for less motion, which is what the media query
-   is for rather than a preference about taste. */
-@media (prefers-reduced-motion: no-preference) {
-  .hero .wrap > * { animation: rise .55s cubic-bezier(.22, .7, .3, 1) both; }
-  .hero .wrap > *:nth-child(2) { animation-delay: .06s; }
-  .hero .wrap > *:nth-child(3) { animation-delay: .12s; }
-  .hero .wrap > *:nth-child(4) { animation-delay: .18s; }
-  .hero .wrap > *:nth-child(5) { animation-delay: .24s; }
-}
-@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
-
-/* --- stat strip ---------------------------------------------------------------------------- */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  box-shadow: var(--sh-1); overflow: hidden; }
-.stats div { padding: 1.15rem 1.35rem; border-left: 1px solid var(--line); }
-.stats div:first-child { border-left: 0; }
-.stats .n { font-size: var(--fs-3xl); font-weight: 600; letter-spacing: -.04em; color: var(--ink);
-  line-height: 1; font-variant-numeric: tabular-nums; }
-.stats .k { margin-top: .35rem; font-size: var(--fs-sm); color: var(--soft); }
-@media (max-width: 40rem) {
-  .stats div { border-left: 0; border-top: 1px solid var(--line); }
-  .stats div:first-child { border-top: 0; }
-}
-
-/* --- interface previews --------------------------------------------------------------------
-   The product shown as itself. Every colour here is a *state* — the same five families the application
-   uses — so these panels stay inside the rule that nothing chromatic is decoration. The geometry, the
-   radii and the elevation are the application's too, which is why a preview and the real page look
-   alike rather than merely similar. */
-.preview {
-  border-radius: var(--r-xl); background: var(--surface);
-  border: 1px solid var(--line); box-shadow: var(--sh-3); overflow: hidden;
-}
-.preview .chrome { display: flex; align-items: center; gap: .4rem;
-  padding: .55rem .8rem; background: var(--sunken); border-bottom: 1px solid var(--line); }
-.preview .chrome i { display: block; width: .5rem; height: .5rem; border-radius: 50%; background: var(--line-2); }
-.preview .chrome .addr { margin-left: .55rem; padding: .12rem .6rem; border-radius: var(--r-pill);
-  background: var(--surface); border: 1px solid var(--line);
-  font-family: var(--mono); font-size: var(--fs-xs); color: var(--faint); }
-.preview .body { padding: 1.05rem 1.2rem 1.25rem; }
-
-/* The application's own chrome, at the size a marketing page reads at. */
-.appbar { display: flex; align-items: center; gap: .85rem; padding-bottom: .7rem;
-  border-bottom: 1px solid var(--line); font-size: var(--fs-xs); color: var(--soft); }
-.appbar .name { display: inline-flex; align-items: center; gap: .35rem; font-weight: 650;
-  color: var(--ink); letter-spacing: -.01em; }
-.appbar .nav { margin-left: auto; display: flex; gap: .85rem; }
-.appbar .nav b { font-weight: 600; color: var(--ink); }
-
-.apptiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; margin: .85rem 0 1rem; }
-.apptile { background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-sm); padding: .5rem .65rem; }
-.apptile b { display: block; font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.035em;
-  line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
-.apptile span { font-size: var(--fs-xs); color: var(--soft); }
-
-/* A badge is a state, so it takes a state's tokens. This is the one place colour is allowed. */
-.badge { display: inline-flex; align-items: center; padding: .1rem .45rem; border-radius: var(--r-pill);
-  font-size: var(--fs-xs); font-weight: 600; border: 1px solid; white-space: nowrap; }
-.badge.wait  { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn-ink); }
-.badge.todo  { background: var(--info-bg); border-color: var(--info-line); color: var(--info-ink); }
-.badge.done  { background: var(--ok-bg);   border-color: var(--ok-line);   color: var(--ok-ink); }
-.badge.quiet { background: var(--off-bg);  border-color: var(--off-line);  color: var(--off-ink); }
-
-.preview table { font-size: var(--fs-sm); }
-.preview th, .preview td { padding: .5rem .6rem; }
-.preview thead th { font-size: var(--fs-xs); }
-.preview td:first-child, .preview th:first-child { padding-left: 0; }
-.preview td:last-child, .preview th:last-child { padding-right: 0; }
-.preview .cell-t { display: block; color: var(--ink); font-weight: 550; }
-.preview .cell-s { display: block; color: var(--faint); font-size: var(--fs-xs); }
-.sent { display: flex; align-items: center; justify-content: space-between; gap: .75rem;
-  padding: .6rem 0; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
-.sent:last-of-type { border-bottom: 0; }
-.sent .what { color: var(--ink); font-weight: 550; }
-.sent .why { display: block; color: var(--warn-ink); font-size: var(--fs-xs); }
-.preview .send { display: inline-flex; align-items: center; height: 1.75rem; padding: 0 .6rem;
-  border-radius: var(--r-sm); border: 1px solid var(--line-2); background: var(--surface);
-  font-size: var(--fs-xs); font-weight: 600; color: var(--ink); }
-.preview .count { margin: 0 0 .9rem; font-size: var(--fs-xs); color: var(--soft); }
-
-/* --- the grid behind the hero --------------------------------------------------------------
-   A texture rather than a picture: one-pixel lines in the same token the borders use, masked so it fades
-   before it reaches anything that has to be read. It costs no request and no colour. */
-.hero .lines {
-  position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: .75;
-  background-image:
-    linear-gradient(to right, var(--line) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
-  background-size: 3rem 3rem;
-  -webkit-mask-image: radial-gradient(ellipse 78% 72% at 50% 22%, #000 18%, transparent 76%);
-  mask-image: radial-gradient(ellipse 78% 72% at 50% 22%, #000 18%, transparent 76%);
-}
-
-/* One band on the sunken surface, so the page has a rhythm instead of one long sheet of canvas. */
-section.band.sunken { background: var(--sunken); }
-
-/* --- cards --------------------------------------------------------------------------------- */
-.grid { display: grid; gap: 1rem; }
-.grid.three { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
-.grid.two { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); }
-.card {
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
-  padding: 1.35rem 1.4rem; box-shadow: var(--sh-1);
-  transition: transform .14s ease, box-shadow .14s ease;
-}
-.card.lift:hover { transform: translateY(-2px); box-shadow: var(--sh-2); }
-.card h3 { margin-bottom: .35rem; }
-.card p { margin: 0; font-size: var(--fs-md); color: var(--soft); line-height: 1.65; }
-/* Two blocks that would otherwise carry the spacing as a style attribute. The application refuses those on
-   purpose (its policy cannot bless one), and a page that is the same product should not need them either. */
-.stack > * + * { margin-top: 1rem; }
-.preview-hold { margin-top: 2.5rem; }
-.appbar svg { border-radius: 4px; }
-.card .ico { display: grid; place-items: center; width: 2rem; height: 2rem; margin-bottom: .9rem;
-  border-radius: var(--r-sm); background: var(--sunken); border: 1px solid var(--line); color: var(--ink); }
-
-/* --- quote --------------------------------------------------------------------------------- */
-.quote { border-left: 2px solid var(--brand); padding: .2rem 0 .2rem 1.15rem; margin: 1.5rem 0 0; }
-.quote blockquote { margin: 0; font-size: var(--fs-xl); line-height: 1.45; color: var(--ink); letter-spacing: -.015em; }
-.quote cite { display: block; margin-top: .6rem; font-size: var(--fs-sm); color: var(--faint); font-style: normal; }
-
-/* --- comparison table ---------------------------------------------------------------------- */
-.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-lg);
-  background: var(--surface); box-shadow: var(--sh-1); }
-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); }
-th, td { text-align: left; padding: .8rem 1.1rem; border-bottom: 1px solid var(--line); }
-thead th { background: var(--sunken); font-size: var(--fs-xs); font-weight: 650; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--faint); white-space: nowrap; }
-tbody tr:last-child td { border-bottom: 0; }
-tbody td:first-child { color: var(--ink); font-weight: 550; }
-td.yes { color: var(--ok-ink); font-weight: 600; white-space: nowrap; }
-td.no { color: var(--soft); white-space: nowrap; }
-th.ours, td.ours { background: color-mix(in srgb, var(--brand) 7%, transparent); }
-th.ours { color: var(--ok-ink); }
-
-/* --- notices ------------------------------------------------------------------------------- */
-.notice { border-radius: var(--r-lg); padding: 1.15rem 1.35rem; border: 1px solid; font-size: var(--fs-md); }
-.notice.warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn-ink); }
-.notice.warn strong, .notice.warn h3 { color: var(--warn-ink); }
-.notice.ok { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-ink); }
-.notice.ok strong { color: var(--ok-ink); }
-.notice p { margin: .45rem 0 0; }
-.notice p:first-child { margin-top: 0; }
-.notice strong { font-weight: 650; }
-
-/* --- price --------------------------------------------------------------------------------- */
-.plans { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); align-items: start; }
-.plan { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-xl);
-  padding: 1.6rem 1.6rem 1.75rem; box-shadow: var(--sh-1); }
-.plan.featured { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); box-shadow: var(--sh-3); }
-.plan .tag { position: absolute; top: -.7rem; left: 1.6rem; padding: .2rem .55rem; border-radius: var(--r-pill);
-  background: var(--brand); color: #fff; font-size: var(--fs-xs); font-weight: 650;
-  letter-spacing: .06em; text-transform: uppercase; }
-.plan .amount { display: flex; align-items: baseline; gap: .45rem; margin: .75rem 0 0; }
-.plan .amount .v { font-size: clamp(2.2rem, 4vw, 2.9rem); font-weight: 600; letter-spacing: -.045em;
-  color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
-.plan .amount .per { font-size: var(--fs-md); color: var(--soft); }
-.plan .alt { font-size: var(--fs-sm); color: var(--faint); margin-top: .35rem; }
-ul.ticks { list-style: none; margin: 1.15rem 0 0; padding: 0; }
-ul.ticks li { position: relative; padding-left: 1.5rem; margin: .5rem 0; font-size: var(--fs-md); color: var(--ink-2); }
-ul.ticks li::before { content: ""; position: absolute; left: 0; top: .42em; width: .8rem; height: .44rem;
-  border-left: 2.2px solid var(--brand); border-bottom: 2.2px solid var(--brand); transform: rotate(-45deg); }
-ul.ticks li.dim::before { border-color: var(--faint); }
-ul.ticks li.dim { color: var(--soft); }
-.plan .btn { width: 100%; margin-top: 1.35rem; }
-.plan .fine { margin-top: .9rem; font-size: var(--fs-sm); color: var(--faint); line-height: 1.6; }
-
-/* --- terminal ------------------------------------------------------------------------------ */
-.term { background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-lg);
-  padding: 1.05rem 1.2rem; overflow-x: auto; box-shadow: var(--sh-1); }
-.term pre { margin: 0; font-size: var(--fs-md); line-height: 1.9; color: var(--ink-2); }
-.term .c { color: var(--faint); }
-
-/* --- faq ----------------------------------------------------------------------------------- */
+.top { border-bottom: 1px solid var(--line); background: var(--canvas); }
+.top .wrap { min-height: 5rem; display: flex; align-items: center; gap: 2rem; }
+.brand { display: inline-flex; align-items: center; gap: .65rem; text-decoration: none; color: var(--ink); font-size: 1.3rem; font-weight: 650; letter-spacing: -.04em; }
+.brand svg { flex: none; }
+.top nav { display: flex; align-items: center; flex-wrap: wrap; gap: 1.5rem; margin-left: auto; }
+.top nav a { min-height: 44px; display: inline-flex; align-items: center; font-size: .875rem; color: var(--soft); text-decoration: none; }
+.top nav a:hover { color: var(--ink); }
+.btn { display: inline-flex; justify-content: center; align-items: center; min-height: 46px; padding: .65rem 1.2rem; border: 1px solid var(--line-2); border-radius: var(--r-sm); color: var(--ink); font-weight: 600; font-size: .875rem; background: var(--surface); text-decoration: none; transition: background .14s ease, transform .14s ease; }
+.btn.primary { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+.btn:hover { transform: translateY(-1px); text-decoration: none; box-shadow: var(--sh-1); }
+.actions { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 2rem; }
+.hero { padding: clamp(3rem, 7vw, 6rem) 0; }
+.hero-grid { display: grid; grid-template-columns: 1fr 1.05fr; gap: 3.5rem; align-items: center; }
+.hero .note { margin-top: 1rem; max-width: 33rem; }
+.preview { background: var(--surface); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: var(--sh-3); overflow: hidden; }
+.preview-bar { display: flex; align-items: center; gap: .65rem; padding: 1rem 1.3rem; border-bottom: 1px solid var(--line); font-size: .85rem; font-weight: 600; }
+.preview-bar .dot { height: 9px; width: 9px; border-radius: 50%; background: var(--brand); }
+.demo-label { margin-left: auto; font-size: .65rem; font-weight: 600; color: var(--soft); letter-spacing: .08em; text-transform: uppercase; }
+.preview-body { padding: 1.5rem; }
+.preview-title { display: flex; align-items: flex-start; gap: 1rem; justify-content: space-between; margin-bottom: 1.25rem; }
+.preview-title strong { color: var(--ink); font-size: 1.2rem; display: block; }
+.preview-title small { color: var(--soft); }
+.preview-action { display: inline-block; padding: .45rem .65rem; border-radius: var(--r-sm); background: var(--primary); color: var(--primary-ink); font-size: .75rem; font-weight: 600; }
+.preview-metrics { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--r-md); margin: 1rem 0; }
+.preview-metrics div { padding: .8rem; }
+.preview-metrics div + div { border-left: 1px solid var(--line); }
+.preview-metrics b { display: block; color: var(--ink); font-size: 1.5rem; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.preview-metrics span { font-size: .68rem; color: var(--soft); }
+.preview-row { display: flex; gap: .75rem; align-items: center; padding: .95rem 0; border-bottom: 1px solid var(--line); }
+.preview-row:last-child { border-bottom: 0; }
+.preview-row strong { color: var(--ink); font-size: .875rem; display: block; }
+.preview-row small { display: block; color: var(--soft); font-size: .75rem; }
+.preview-row .status { margin-left: auto; font-size: .7rem; white-space: nowrap; }
+.status { color: var(--soft); }
+.status.done { color: var(--ok-ink); }
+.status.review { color: var(--info-ink); }
+.check { width: 24px; height: 24px; flex: none; border: 1px solid var(--line-2); border-radius: 6px; color: var(--ok-ink); display: inline-flex; justify-content: center; align-items: center; font-size: .85rem; }
+.check.done { background: var(--ok-bg); border-color: var(--ok-line); }
+.preview-caption { font-size: .75rem; color: var(--soft); margin-top: 1rem; }
+.strip { display: flex; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; padding: 1.5rem 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: .875rem; color: var(--soft); }
+.strip span::before { content: '✓'; color: var(--brand); margin-right: .5rem; }
+.band { padding: clamp(3.5rem, 7vw, 6rem) 0; border-bottom: 1px solid var(--line); }
+.band-head { max-width: 43rem; margin-bottom: 2.5rem; }
+.grid { display: grid; gap: 1.5rem; }
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.card { border-top: 1px solid var(--line-2); padding: 1.5rem 0; }
+.card p { margin-top: .75rem; color: var(--soft); font-size: .95rem; }
+.card .number { display: block; color: var(--brand); font-family: var(--mono); font-size: .75rem; margin-bottom: 1rem; }
+.steps { counter-reset: step; list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem; }
+.steps li { counter-increment: step; border-top: 1px solid var(--line-2); padding-top: 1.25rem; }
+.steps li::before { content: '0' counter(step); display: block; margin-bottom: 1.5rem; color: var(--brand); font: .8rem var(--mono); }
+.steps p { color: var(--soft); font-size: .9rem; margin-top: .75rem; }
+.product-pair { display: grid; grid-template-columns: 1.15fr 1fr; gap: 4rem; align-items: center; }
+.product-pair .preview { box-shadow: var(--sh-2); }
+.product-copy p { margin-top: 1.25rem; color: var(--soft); }
+.product-copy ul { padding-left: 1.25rem; color: var(--soft); }
+.product-copy li { padding: .35rem 0; }
+.upload-preview { padding: 1rem; border: 1px dashed var(--line-2); background: var(--sunken); border-radius: var(--r-md); margin: 1rem 0; font-size: .85rem; }
+.upload-preview strong { display: block; color: var(--ink); margin-bottom: .5rem; }
+.progress-track { height: 6px; background: var(--sunken); border-radius: 4px; margin: .75rem 0; }
+.progress-track::before { content: ''; display: block; width: 66.666%; height: 100%; background: var(--brand); border-radius: inherit; }
+.security-note { padding: 1.5rem; border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-lg); margin-top: 2rem; }
+.security-note p { margin-top: .75rem; color: var(--soft); }
+.plan { border: 1px solid var(--line-2); border-radius: var(--r-lg); background: var(--surface); padding: 2rem; box-shadow: var(--sh-2); }
+.price-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 5rem; align-items: start; }
+.price { font-size: 3.5rem; line-height: 1; font-weight: 600; color: var(--ink); letter-spacing: -.06em; margin: 1.25rem 0 .5rem; }
+.price small { font-size: 1rem; font-weight: 400; letter-spacing: 0; color: var(--soft); }
+.ticks { list-style: none; padding: 0; margin: 1.5rem 0; }
+.ticks li { padding: .5rem 0; font-size: .95rem; border-bottom: 1px solid var(--line); }
+.ticks li::before { content: '✓'; margin-right: .6rem; color: var(--brand); }
+.callout { padding: 1rem; border-left: 3px solid var(--brand); background: var(--sunken); font-size: .875rem; margin-top: 1.5rem; }
 .faq { border-top: 1px solid var(--line); }
 details { border-bottom: 1px solid var(--line); }
-details summary { list-style: none; cursor: pointer; padding: 1.05rem 2rem 1.05rem 0; position: relative;
-  font-size: var(--fs-lg); font-weight: 550; color: var(--ink); letter-spacing: -.012em; }
-details summary::-webkit-details-marker { display: none; }
-details summary::after { content: ""; position: absolute; right: .35rem; top: 1.5rem; width: .5rem; height: .5rem;
-  border-right: 2px solid var(--faint); border-bottom: 2px solid var(--faint); transform: rotate(45deg);
-  transition: transform .16s ease; }
-details[open] summary::after { transform: rotate(-135deg); top: 1.7rem; }
-details summary:hover { color: var(--link); }
-details .answer { padding: 0 3rem 1.35rem 0; color: var(--soft); font-size: var(--fs-base); max-width: var(--measure); }
-details .answer p { margin: .6rem 0; }
-details .answer p:first-child { margin-top: 0; }
-details .answer p:last-child { margin-bottom: 0; }
-
-/* --- signup -------------------------------------------------------------------------------- */
-.signup { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.5rem; }
-.signup input { flex: 1 1 17rem; height: 2.9rem; }
-.signup .btn { flex: none; }
-
-/* --- footer -------------------------------------------------------------------------------- */
-.foot { border-top: 1px solid var(--line); padding: 3rem 0 4rem; }
-.foot .cols { display: grid; gap: 2rem; grid-template-columns: 1.5fr 1fr 1fr; }
-.foot h4 { font-size: var(--fs-xs); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); margin-bottom: .6rem; }
-.foot ul { list-style: none; margin: 0; padding: 0; }
-.foot li { margin: .35rem 0; }
-.foot a { color: var(--soft); text-decoration: none; font-size: var(--fs-md); }
-.foot a:hover { color: var(--ink); text-decoration: underline; }
-.foot .rule { border-top: 1px solid var(--line); margin: 2.25rem 0 1.25rem; }
-@media (max-width: 44rem) { .foot .cols { grid-template-columns: 1fr; gap: 1.5rem; } }
+summary { min-height: 56px; cursor: pointer; color: var(--ink); font-weight: 600; padding: 1.1rem 0; }
+details p { padding: 0 0 1.25rem; color: var(--soft); max-width: 48rem; }
+.foot { padding: 3rem 0; }
+.foot .cols { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 3rem; }
+.foot h3 { font-size: .85rem; margin-bottom: 1rem; }
+.foot ul { padding: 0; margin: 0; list-style: none; }
+.foot a:not(.brand) { display: inline-flex; align-items: center; min-height: 44px; font-size: .875rem; color: var(--soft); }
+.foot .note { max-width: 30rem; margin-top: 1rem; }
+@media (max-width: 60rem) { .hero-grid, .product-pair, .price-layout { grid-template-columns: 1fr; gap: 2.5rem; } .hero-grid .preview { max-width: 42rem; } .grid.three, .steps { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 40rem) { .top .wrap { flex-wrap: wrap; padding-top: 1rem; padding-bottom: .75rem; gap: .5rem; } .top nav { margin-left: 0; width: 100%; gap: 1.1rem; } .grid.two, .grid.three, .steps, .foot .cols { grid-template-columns: 1fr; gap: 1.25rem; } .hero { padding-top: 2.75rem; } .preview-body { padding: 1rem; } .preview-metrics span { font-size: .75rem; } .preview-row { flex-wrap: wrap; } .preview-row .status { margin-left: 2.25rem; width: 100%; } .preview-title { flex-wrap: wrap; } .plan { padding: 1.25rem; } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+@media (forced-colors: active) { .btn, .preview, .check, .plan { border: 1px solid CanvasText; } :focus-visible { outline-color: Highlight; } }
 </style>
 </head>
 <body>
-
-<a class="skip" href="#top">Skip to content</a>
-
-<header class="top">
-  <a class="brand" href="#top">
-    <svg class="mark" width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="#131c2b"/>
-      <path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#35d39a" stroke-width="3.4"
-            stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-    <span>Tickmark</span>
-  </a>
-  <nav>
-    <a href="#how">What it does</a>
-    <a href="#client">Your client</a>
-    <a href="#difference">The difference</a>
-    <a href="#price">Price</a>
-    <a href="#faq">Questions</a>
-  </nav>
-  <a class="btn primary cta" href="/signup">Start free</a>
-</header>
-
-<a id="top"></a>
-
-<section class="hero">
-  <div class="lines" aria-hidden="true"></div>
-  <div class="wrap">
-    <p class="eyebrow">Document collection for small practices</p>
-    <h1>Collect documents from clients. Keep the files where you can point at them.</h1>
-    <p class="lead">
-      A checklist for each client, a link they open without an account, and a tick as every document
-      arrives. Files are encrypted in your client&rsquo;s browser to a key only your practice holds &mdash;
-      so the server cannot decrypt stored document bytes from server-side data alone. It still handles workflow
-      and file metadata. This describes the application design, not a guarantee about a compromised browser.
-    </p>
-    <div class="cta-row">
-      <a class="btn primary lg" href="/signup">Create a workspace</a>
-      <a class="btn secondary lg" href="#yours">Run it yourself, free</a>
-    </div>
-    <p class="reassure">
-      <span>
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        £49 per month, billed at checkout
-      </span>
-      <span>
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        No demo call, no sales process
-      </span>
-      <span>
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        No per-client or per-seat charge
-      </span>
-    </p>
-  </div>
-</section>
-
-<div class="wrap">
-  <div class="stats">
-    <div>
-      <p class="n">150</p>
-      <p class="k">hours a season spent chasing documents, in the research this was built from</p>
-    </div>
-    <div>
-      <p class="n">1,300</p>
-      <p class="k">a workflow hypothesis to test with independent bookkeepers and small practices</p>
-    </div>
-    <div>
-      <p class="n">£49</p>
-      <p class="k">per month for one hosted practice; includes 5 GiB of document storage</p>
-    </div>
-    <div>
-      <p class="n">0</p>
-      <p class="k">runtime dependencies in the core; hosted email and billing use configured providers</p>
-    </div>
-  </div>
-</div>
-
-<!-- The product itself, at the size a reader can take it in. Everything inside is markup rather than a
-     picture: it costs no request, it is legible with the stylesheet off, and it cannot silently become a
-     screenshot of a version of the software that no longer exists. -->
-<div class="wrap preview-hold">
-  <div class="preview">
-    <div class="chrome">
-      <i></i><i></i><i></i>
-      <span class="addr">yourpractice.tickmarkpractice.com/requests</span>
-    </div>
-    <div class="body">
-      <div class="appbar">
-        <span class="name">
-          <svg width="15" height="15" viewBox="0 0 32 32" aria-hidden="true">
-            <rect width="32" height="32" rx="8" fill="#131c2b"/>
-            <path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#35d39a" stroke-width="3.4"
-                  stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Lodge &amp; Co
-        </span>
-        <span class="nav">
-          <b>Requests</b><span>Clients</span><span>Chase</span><span>Keys</span>
-        </span>
-      </div>
-
-      <div class="apptiles">
-        <div class="apptile"><b>3</b><span>with files to check</span></div>
-        <div class="apptile"><b>11</b><span>waiting on clients</span></div>
-        <div class="apptile"><b>4</b><span>ready to work on</span></div>
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th align="left">Client</th>
-            <th align="left">Request</th>
-            <th align="left">State</th>
-            <th align="left">Due</th>
-            <th align="right">Outstanding</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><span class="cell-t">Northwind Ltd</span></td>
-            <td><span class="cell-t">2025 return</span></td>
-            <td><span class="badge todo">files to check</span></td>
-            <td>31 Oct</td>
-            <td align="right" class="num">1</td>
-          </tr>
-          <tr>
-            <td><span class="cell-t">Halewood Trading</span></td>
-            <td><span class="cell-t">2025 accounts</span></td>
-            <td><span class="badge wait">waiting on the client</span></td>
-            <td><span class="badge wait">overdue</span> 12 Sep</td>
-            <td align="right" class="num">3</td>
-          </tr>
-          <tr>
-            <td><span class="cell-t">Bramble &amp; Sons</span>
-              <span class="cell-s">sent a replacement</span></td>
-            <td><span class="cell-t">2025 return</span></td>
-            <td><span class="badge wait">needs re-sending</span></td>
-            <td>15 Nov</td>
-            <td align="right" class="num">1</td>
-          </tr>
-          <tr>
-            <td><span class="cell-t">Kestrel Design</span></td>
-            <td><span class="cell-t">Quarterly bookkeeping</span></td>
-            <td><span class="badge done">ready to work on</span></td>
-            <td>30 Sep</td>
-            <td align="right" class="num">0</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<section class="band">
-  <div class="wrap">
-    <div class="band-head">
-      <p class="eyebrow">The problem</p>
-      <h2>It is not the sending. It is the remembering.</h2>
-      <p class="lead">
-        Who has not sent it yet. Whether the file that arrived is the one you asked for. Whether the deadline
-        is close enough to ring them. And then next year, the same forty documents, typed out again from
-        nothing.
-      </p>
-    </div>
-    <div class="grid two">
-      <div class="card">
-        <h3>What the first release is for</h3>
-        <p>
-          Independent bookkeepers and small accountancy practices can test whether a reusable checklist and a
-          clear outstanding-work view reduce the time they spend chasing clients. Pricing and demand still need
-          direct customer validation.
-        </p>
-      </div>
-      <div class="card">
-        <h3>Designed for a small practice</h3>
-        <p>
-          Tickmark is aimed at a small practice that does not already have a satisfactory client portal. It does
-          not claim to replace established suites with workflow or compliance features it does not provide.
-        </p>
-      </div>
-    </div>
-    <div class="quote">
-      <blockquote>
-        &ldquo;I have asked 20 million times &mdash; give me your last tax documents that was filed.&rdquo;
-      </blockquote>
-      <cite>A bookkeeper, describing the problem in a practitioner group, September 2026</cite>
-    </div>
-  </div>
-</section>
-
-<a id="how"></a>
-<section class="band">
-  <div class="wrap">
-    <div class="band-head">
-      <p class="eyebrow">What it does</p>
-      <h2>The whole job, and nothing else</h2>
-      <p class="lead">
-        One page for your practice, one link per client. No modules you will never open, no features that
-        exist to fill a pricing page.
-      </p>
-    </div>
-    <div class="grid three">
-
-      <div class="card lift">
-        <span class="ico">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-          </svg>
-        </span>
-        <h3>A checklist per client</h3>
-        <p>
-          Bank statements, ID, the signed engagement letter &mdash; one item each, so a utility bill cannot
-          satisfy the letter. Save the list as a template and use it again next year.
-        </p>
-      </div>
-
-      <div class="card lift">
-        <span class="ico">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M6.5 9.5a2.5 2.5 0 003.5 0l2-2a2.5 2.5 0 00-3.5-3.5l-.7.7M9.5 6.5a2.5 2.5 0 00-3.5 0l-2 2a2.5 2.5 0 003.5 3.5l.7-.7"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </span>
-        <h3>A link they open with no account</h3>
-        <p>
-          No app, no password, no sign-up. Your client opens it, sees who is asking and what is outstanding,
-          and sends. One unguessable address, with an expiry you choose.
-        </p>
-      </div>
-
-      <div class="card lift">
-        <span class="ico">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-          </svg>
-        </span>
-        <h3>Chase without being a nuisance</h3>
-        <p>
-          See who is outstanding, and the tool writes the reminder &mdash; including the reason, if you
-          rejected something. You set the cadence, and a phone call you log counts as being in touch, so nobody
-          gets rung and emailed on the same morning.
-        </p>
-      </div>
-
-      <div class="card lift">
-        <span class="ico">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </span>
-        <h3>Know when it is actually finished</h3>
-        <p>
-          A request stops being outstanding when every document has arrived <em>and</em> been checked, so
-          &ldquo;ready to work on&rdquo; means ready. And you are told when a client does their part, so you
-          are not the last to know about your own work.
-        </p>
-      </div>
-
-      <div class="card lift">
-        <span class="ico">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 2v5.5M8 11.2v.3M3.2 3.2h9.6a1 1 0 011 1v7.6a1 1 0 01-1 1H3.2a1 1 0 01-1-1V4.2a1 1 0 011-1z"
-                  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-          </svg>
-        </span>
-        <h3>A record of what was asked</h3>
-        <p>
-          Every ask, every file, every call, every rejection, with dates. So &ldquo;I asked you on the 3rd and
-          then again on the 10th&rdquo; is something you can read rather than remember &mdash; and something
-          you can show.
-        </p>
-      </div>
-
-      <div class="card lift">
-        <span class="ico">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 2.5l1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11.2 4.6 13l.7-3.8L2.5 6.5l3.8-.5z"
-                  stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-          </svg>
-        </span>
-        <h3>The client sees their own receipt</h3>
-        <p>
-          Their page says how many documents they have sent and names each file back to them, with the date. So
-          &ldquo;did you get it?&rdquo; is a question they can answer themselves rather than phoning to ask.
-        </p>
-      </div>
-
-    </div>
-  </div>
-</section>
-
-<a id="client"></a>
-<section class="band">
-  <div class="wrap">
-    <div class="band-head">
-      <p class="eyebrow">Your client&rsquo;s end</p>
-      <h2>One link, no account, and no excuses</h2>
-      <p class="lead">
-        This is the whole of what your client has to deal with. They open the link, see your name at the top
-        so they know who is asking, and work down the list. No app to install, no password to forget, and
-        nothing to sign up for.
-      </p>
-      <p class="lead">
-        It names the files back to them as they arrive, so &ldquo;did you get it?&rdquo; is a question they can
-        answer without ringing you &mdash; and if something you sent was not what was needed, your reason sits
-        beside the item rather than in an email they have lost.
-      </p>
-    </div>
-
-    <div class="grid two" style="margin-top:1.5rem">
-      <div class="preview">
-        <div class="chrome">
-          <i></i><i></i><i></i>
-          <span class="addr">tickmarkpractice.com/r/k7Qm2x&hellip;</span>
-        </div>
-        <div class="body">
-          <h3 style="font-size:var(--fs-xl); letter-spacing:-.03em">2025 return</h3>
-          <p class="count">Northwind Ltd &middot; needed by 31 October</p>
-          <p class="note" style="font-size:var(--fs-sm); margin-bottom:1rem">
-            Hi Sarah &mdash; here is the list for this year&rsquo;s filing. Two of these are the ones that held
-            us up last time, so thank you in advance.
-          </p>
-
-          <div class="sent">
-            <span><span class="what">Bank statements</span>
-              <span class="cell-s">you sent statements-oct.pdf on 12 September</span></span>
-            <span class="badge done">received</span>
-          </div>
-
-          <div class="sent">
-            <span><span class="what">Signed engagement letter</span>
-              <span class="why">that was the 2024 letter &mdash; please send this year&rsquo;s</span></span>
-            <span class="badge wait">send this again</span>
-          </div>
-
-          <div class="sent">
-            <span><span class="what">Photo ID</span></span>
-            <span class="send">Choose file</span>
-          </div>
-
-          <div class="sent">
-            <span><span class="what">Accounts for the group</span>
-              <span class="cell-s">you said: still with the previous accountant</span></span>
-            <span class="badge quiet">you told us</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="stack">
-        <div class="card">
-          <h3>Nothing here needs an account</h3>
-          <p>
-            The link is an unguessable address with an expiry you choose, not a login. It works once you send
-            it and stops working when you say so &mdash; and you can issue a new one at any time without
-            disturbing the files already there.
-          </p>
-        </div>
-        <div class="card">
-          <h3>They can tell you they cannot</h3>
-          <p>
-            Beside every item there are two buttons: <em>I do not have this</em> and <em>I will send it
-            later</em>. A client who is stuck says so instead of going quiet, which is the difference between
-            a request you can act on and one you keep chasing.
-          </p>
-        </div>
-        <div class="card">
-          <h3>And the file never leaves their machine in the clear</h3>
-          <p>
-            Their browser encrypts each document to your key before it is sent, so it is already sealed by
-            the time it reaches any server &mdash; including ours. They are not being asked to trust a
-            portal; they are handing you an envelope.
-          </p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<a id="difference"></a>
-<section class="band sunken">
-  <div class="wrap">
-    <div class="band-head">
-      <p class="eyebrow">The difference</p>
-      <h2>One checklist. A clear view of what is still missing.</h2>
-      <p class="lead">
-        Send each client one request checklist and a link they can open without creating an account. See what
-        has arrived and what is still outstanding. Uploaded files are encrypted in the browser to a key your
-        practice holds; the hosted server stores the encrypted files and workflow metadata.
-      </p>
-    </div>
-
-    <div class="scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Workflow</th>
-            <th class="ours">What Tickmark does today</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Who can read an uploaded file</td>
-            <td class="ours">The server does not receive the practice's private document key. Browser integrity and practice devices remain part of the protection.</td>
-          </tr>
-          <tr>
-            <td>What the server stores</td>
-            <td class="ours">Encrypted file bytes plus client, request and upload metadata.</td>
-          </tr>
-          <tr>
-            <td>How documents are requested</td>
-            <td class="ours">One checklist and a link clients can open without creating an account.</td>
-          </tr>
-          <tr>
-            <td>Hosted price and storage</td>
-            <td class="ours">£49 per month in GBP; 5 GiB hosted storage quota.</td>
-          </tr>
-          <tr>
-            <td>Checkout</td>
-            <td class="ours">Payment details required; the first monthly payment is due immediately. No free trial.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="grid two" style="margin-top:1.75rem">
-      <div class="notice ok">
-        <strong>What that buys you, concretely.</strong>
-        <p>
-          The server does not receive the practice's private document key. Browser integrity and the practice's
-          own devices remain part of the protection, and the server still handles client and request metadata.
-        </p>
-      </div>
-      <div class="notice warn">
-        <strong>And the honest limit, which we would rather you read here.</strong>
-        <p>
-          If you lose your passphrase, nobody can recover the documents &mdash; us included. That is what
-          &ldquo;we cannot read them&rdquo; means. The tool makes you save it somewhere safe before you can
-          send your first link, and you can add a colleague who holds their own copy. But it is a real
-          consequence, not a footnote.
-        </p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<a id="price"></a>
-<section class="band">
-  <div class="wrap">
-    <div class="band-head">
-      <p class="eyebrow">Price</p>
-      <h2>One price. No tiers, no per-client maths.</h2>
-      <p class="lead">
-        Your busiest month costs the same as your quietest. There is no plan to grow out of and no ceiling to
-        hit in March.
-      </p>
-    </div>
-
-    <div class="plans">
-
-      <div class="plan featured">
-        <span class="tag">Hosted</span>
-        <h3>Tickmark, run for you</h3>
-        <p class="amount"><span class="v">£49</span><span class="per">a month</span></p>
-        <p class="alt">Payment details are required at checkout. The first payment is due immediately. Cancel through your billing settings.</p>
-        <ul class="ticks">
-          <li>No per-client or per-seat charge</li>
-          <li>Client and staff counts are not separately metered</li>
-          <li><strong>5 GiB document storage</strong> for this hosted practice</li>
-          <li>Your own address and practice-held encryption key</li>
-          <li>No free trial is currently offered</li>
-        </ul>
-        <a class="btn primary" href="/signup">Create workspace and subscribe</a>
-        <p class="fine">
-          Each file is capped at <strong>25 MB</strong>, and the hosted practice has a 5 GiB storage quota.
-        </p>
-      </div>
-
-      <div class="plan">
-        <h3>Or run it yourself</h3>
-        <p class="amount"><span class="v">£0</span><span class="per">forever</span></p>
-        <p class="alt">Open source under the AGPL. The same software, on your own server.</p>
-        <ul class="ticks">
-          <li>One command: <code>docker compose up</code></li>
-          <li>No hosted subscription or hosted storage quota; file-size and host capacity limits still apply</li>
-          <li>Nothing leaves hardware you control</li>
-          <li>No account with us at all &mdash; no email, no signup, nothing</li>
-          <li class="dim">You are the one who updates it</li>
-          <li class="dim">You are the one on the phone when it breaks</li>
-        </ul>
-        <a class="btn secondary" href="#yours">How to install it</a>
-        <p class="fine">
-          If those last two lines are fine with you, this is the better option and it always will be.
-        </p>
-      </div>
-
-    </div>
-
-    <div class="notice ok" style="margin-top:1.75rem">
-      <strong>Pricing to validate with practices.</strong>
-      <p>
-        The current commercial hypothesis is £49 per practice per month, with no per-client charge and a 5 GiB
-        hosted storage quota. Validate willingness to pay, expected storage and support needs with bookkeepers
-        before treating this price or package as proven.
-      </p>
-    </div>
-  </div>
-</section>
-
-<a id="yours"></a>
-<section class="band">
-  <div class="wrap">
-    <div class="band-head">
-      <p class="eyebrow">Self-hosted</p>
-      <h2>Three commands, then it is yours</h2>
-      <p class="lead">
-        One container and one volume for the core workflow. No external database is required. Optional email and
-        accounting connections need the providers you choose to configure.
-      </p>
-    </div>
-
-    <div class="term">
-      <pre><span class="c"># needs Docker and nothing else</span>
-git clone https://github.com/Caseymccallum/tickmark
-cd tickmark
-docker compose up -d</pre>
-    </div>
-
-    <div class="grid two" style="margin-top:1.25rem">
-      <div class="card">
-        <h3>Then open <code>http://localhost:3000</code></h3>
-        <p>
-          Client links need HTTPS in anything but a local trial, so the documented path puts a reverse proxy in
-          front of it &mdash; one page in the README, rather than a certificate story invented here.
-        </p>
-      </div>
-
-      <div class="card">
-        <h3>Why we can say the install works</h3>
-        <p>
-          The repository includes a container definition and automated checks. The current Docker engine was not
-          available for a real image build, container run or volume-restart check; review the Phase 3 operations
-          report before choosing this deployment path.
-        </p>
-      </div>
-    </div>
-
-    <div class="cta-row">
-      <a class="btn secondary" href="https://github.com/Caseymccallum/tickmark">Read it on GitHub</a>
-    </div>
-  </div>
-</section>
-
-<a id="faq"></a>
-<section class="band">
-  <div class="wrap">
-    <!-- Both blocks take the same width, so the heading and the questions share a left edge and read as one
-         section. The first version put the heading in `.narrow` — which *centres* at 40rem — above a list
-         that stayed left at 52rem, so the two sat at different edges and looked like two sections. -->
-    <div class="band-head" style="max-width:52rem; margin-bottom:1.75rem">
-      <p class="eyebrow">Questions</p>
-      <h2>The ones people actually ask</h2>
-      <p class="lead">
-        Including the two that are awkward. If something here is wrong or missing, that is worth knowing
-        about &mdash; the source is public, and the design document lists what this deliberately does not do.
-      </p>
-    </div>
-
-    <div class="faq" style="max-width:52rem">
-      <details open>
-        <summary>If you cannot read the files, how do you make any money?</summary>
-        <div class="answer">
-          <p>
-            By running the server for practices that would rather not. That is the entire hosted product: the
-            same software, on a machine you do not have to look after. Nothing is sold back to you that we
-            could read, because we cannot read it.
-          </p>
-        </div>
-      </details>
-
-      <details>
-        <summary>What happens if I stop paying?</summary>
-        <div class="answer">
-          <p>
-            A failed payment starts a 14-day access grace period. After that, practice sign-in is paused until
-            billing is resolved. Client upload links continue to work while the workspace is retained.
-          </p>
-          <p>
-            Before cancellation, use the workspace export tools and verify your recovery key. After access ends,
-            request an operator-assisted export or deletion through <strong>[support contact to publish before launch]</strong>.
-            The current billing wall has no self-serve export button.
-          </p>
-        </div>
-      </details>
-
-      <details>
-        <summary>Can I move between hosted and self-hosted?</summary>
-        <div class="answer">
-          <p>
-            Yes. The repository has import and ciphertext-preserving export tools. Hosted export after access
-            ends is operator-assisted: use the support route that must be published before launch and verify that your practice has
-            the recovery key before restoring the export to a self-hosted installation.
-          </p>
-        </div>
-      </details>
-
-      <details>
-        <summary>Is there a free plan?</summary>
-        <div class="answer">
-          <p>
-            Running it yourself is the free plan, and it is not a cut-down version &mdash; it is the same
-            software with the same limits, which is to say none.
-          </p>
-          <p>
-            There is no free tier of the hosted service. A free tier is paid for by somebody, and we would
-            rather charge the people who use it than the people who do not.
-          </p>
-        </div>
-      </details>
-
-      <details>
-        <summary>What about GDPR, and where the data actually lives?</summary>
-        <div class="answer">
-          <p>
-            Whichever way you run it, documents are encrypted before they reach any server and the key stays
-            with your practice &mdash; so what a host holds is ciphertext.
-          </p>
-          <p>
-            On your own server, you choose the host and providers and assess the roles they play. Hosted privacy
-            and processing drafts are being prepared; operator details and legal review are still required before
-            they can be offered as final documents.
-          </p>
-        </div>
-      </details>
-
-      <details>
-        <summary>Does it integrate with my tax software?</summary>
-        <div class="answer">
-          <p>
-            No. Lacerte, ProSeries, Drake, UltraTax and the rest are a different product with a different
-            support burden, and building toward them would mean slowly becoming the thing this exists as an
-            alternative to.
-          </p>
-          <p>
-            What comes out is a CSV of the season &mdash; every client, every document, every date &mdash;
-            which is what most practices actually want when they say integration.
-          </p>
-        </div>
-      </details>
-
-      <details>
-        <summary>Is it really open source?</summary>
-        <div class="answer">
-          <p>
-            <strong>Yes &mdash; AGPL-3.0, which is an OSI-approved open-source licence.</strong> The repository is
-            public, you can read every line that matters &mdash; the encryption code, the checks that keep a
-            server from reading a document, the tests &mdash; and you can run the whole thing yourself for
-            nothing.
-          </p>
-          <p>
-            The one thing the licence asks of anybody offering it to others as a service is that they publish
-            the changes they made. That is deliberate: it means a competitor can host this, but not as a black
-            box, and improvements come back rather than disappearing into a closed fork.
-          </p>
-          <p>
-            <strong>What it does not do is stop somebody hosting this and charging for it</strong> &mdash; and
-            that is the honest position. The hosted offer is £49 per month, but customer demand and willingness
-            to pay are not validated. Hosting, provider-backed recovery and support arrangements still need
-            external verification before a controlled launch. If the workflow or price is not a fit, the source
-            remains available to run yourself.
-          </p>
-          <p>
-            Nothing on this page asks you to take on trust anything you cannot check in five minutes. That is
-            not a marketing position; it is the only way any of the claims above are worth reading.
-          </p>
-        </div>
-      </details>
-    </div>
-
-    <div class="cta-row">
-      <a class="btn ghost" href="https://github.com/Caseymccallum/tickmark/blob/main/docs/mvp.md">Read the design document</a>
-    </div>
-  </div>
-</section>
-
-
-<a id="start"></a>
-<section class="band">
-  <div class="wrap">
-    <div class="narrow" style="text-align:center">
-      <p class="eyebrow" style="margin-bottom:.7rem">Start</p>
-      <h2>Hosted access is £49 per month</h2>
-      <p class="lead" style="margin:1rem auto 0">
-        Create a workspace, complete Stripe Checkout with payment details, and the first £49 monthly payment is
-        due immediately. There is no free trial today. Manage cancellation in your account&rsquo;s billing settings.
-      </p>
-
-      <p><a class="btn primary lg" href="/signup">Create workspace and subscribe</a></p>
-
-      <p class="tiny" style="margin-top:.85rem">
-        That is a plain mailto link for now: it opens your own mail client and sends an address. Nothing is
-        stored on a website, there is no newsletter, and there is no tracking or cookie banner &mdash; because
-        there are no cookies on this page.
-      </p>
-    </div>
-  </div>
-</section>
-
-<footer class="foot">
-  <div class="wrap">
-    <div class="cols">
-      <div>
-        <a class="brand" href="#top" style="display:inline-flex;align-items:center;gap:.5rem;
-           font-size:var(--fs-lg);font-weight:600;letter-spacing:-.02em;color:var(--ink);text-decoration:none">
-          <svg class="mark" width="24" height="24" viewBox="0 0 32 32" aria-hidden="true" style="border-radius:6px">
-            <rect width="32" height="32" rx="8" fill="#131c2b"/>
-            <path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#35d39a" stroke-width="3.4"
-                  stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span>Tickmark</span>
-        </a>
-        <p class="note" style="margin-top:.9rem;max-width:26rem">
-          The list of documents a client owes you, and a tick as each one arrives. Encrypted in the browser,
-          so the server stores what it cannot read &mdash; whichever server that is.
-        </p>
-      </div>
-
-      <div>
-        <h4>The product</h4>
-        <ul>
-          <li><a href="#how">What it does</a></li>
-          <li><a href="#client">Your client&rsquo;s end</a></li>
-          <li><a href="#difference">The difference</a></li>
-          <li><a href="#price">Price</a></li>
-          <li><a href="#yours">Run it yourself</a></li>
-        </ul>
-      </div>
-
-      <div>
-        <h4>Check it yourself</h4>
-        <ul>
-          <li><a href="https://github.com/Caseymccallum/tickmark">Source code</a></li>
-          <li><a href="https://github.com/Caseymccallum/tickmark/blob/main/docs/encryption.md">How the encryption works</a></li>
-          <li><a href="https://github.com/Caseymccallum/tickmark/blob/main/docs/mvp.md">What it does not do</a></li>
-          <li><a href="https://github.com/Caseymccallum/tickmark/blob/main/LICENSE">Licence (AGPL-3.0)</a></li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="rule"></div>
-
-    <p class="note" style="max-width:46rem">
-      Written plainly on purpose. This page describes software that exists and can be read line by line, and a
-      price that is new this month. What has not happened yet is a paying customer &mdash; which is exactly why
-      hosted Checkout requires payment details and bills immediately. No free trial is configured.
-    </p>
-    <p class="tiny" style="max-width:46rem">
-      Hosted pricing is £49 per month in GBP. Tax treatment and invoice requirements need confirmation from the operator before launch.
-    </p>
-  </div>
-</footer>
-
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
+<a class="brand" href="#"><svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#164e3c"/><path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#d6f5e4" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Tickmark</a>
+<nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#security">Security</a><a href="#pricing">Pricing</a><a href="#hosted-access" data-app-signin>Sign in</a></nav>
+</div></header>
+<main id="main">
+<section class="hero"><div class="wrap hero-grid"><div>
+<p class="eyebrow">For practices that value their time</p>
+<h1>Stop chasing clients for paperwork.</h1>
+<p class="lead">Send one checklist, track what is missing, and let clients upload documents without creating an account.</p>
+<div class="actions"><a class="btn primary" href="#product">Take a closer look <span aria-hidden="true">&nbsp;↗</span></a><a class="btn" href="#self-hosted">Explore self-hosting</a></div>
+<p class="note">Built for accountants, bookkeepers, and the people they work with. Hosted access is awaiting launch validation.</p>
+</div><div>
+<div class="preview" aria-label="Illustrative request overview with fictional data"><div class="preview-bar"><span class="dot"></span>Lodge &amp; Co<span class="demo-label">Fictional preview</span></div><div class="preview-body">
+<div class="preview-title"><div><strong>Everything on your list.</strong><small>A clear place to pick up the work.</small></div><span class="preview-action">New request</span></div>
+<div class="preview-metrics"><div><b>2</b><span>to review</span></div><div><b>1</b><span>waiting on client</span></div><div><b>1</b><span>ready to work on</span></div></div>
+<div class="preview-row"><span class="check">↗</span><div><strong>Rowan Studio</strong><small>Annual accounts · 2 documents arrived</small></div><span class="status review">Files to check</span></div>
+<div class="preview-row"><span class="check"></span><div><strong>Juniper Trading</strong><small>Quarterly bookkeeping · 1 outstanding</small></div><span class="status">Waiting on client</span></div>
+<div class="preview-row"><span class="check done">✓</span><div><strong>Willow Workshop</strong><small>Year-end checklist · all checked</small></div><span class="status done">Ready to work on</span></div>
+</div></div><p class="preview-caption">Interface illustration. All practice names, people and documents shown here are fictional.</p>
+</div></div></section>
+<div class="wrap"><div class="strip"><span>No client accounts</span><span>One checklist per request</span><span>Browser-encrypted uploads</span><span>Your data, exportable</span></div></div>
+<section class="band" id="product"><div class="wrap product-pair">
+<div class="preview" aria-label="Illustrative fictional client document checklist"><div class="preview-bar"><span class="dot"></span>Lodge &amp; Co<span class="demo-label">Client preview</span></div><div class="preview-body">
+<p class="eyebrow">FICTIONAL · Rowan Studio</p><div class="preview-title"><div><strong>Your year-end documents</strong><small>Needed by 31 October</small></div></div><p class="note">You have sent 2 of 3 documents.</p><div class="progress-track" aria-hidden="true"></div>
+<div class="preview-row"><span class="check done">✓</span><div><strong>Bank statements</strong><small>statements-example.pdf · received</small></div></div>
+<div class="preview-row"><span class="check done">✓</span><div><strong>Purchase invoices</strong><small>invoices-example.pdf · received</small></div></div>
+<div class="upload-preview"><strong>Signed questionnaire</strong><span class="note">Still needed · choose a PDF or a photograph</span><p class="note">Encrypted in your browser before it is sent.</p></div>
+<p class="note">No password to remember. Keep the link to send the rest later.</p>
+</div></div>
+<div class="product-copy"><p class="eyebrow">Simple on both sides</p><h2>A clear request.<br>A little less back-and-forth.</h2><p>Your client sees exactly what you need, what has arrived, and what still needs their attention. You see a review queue instead of another pile of email attachments.</p><ul><li>Upload PDFs or photographs from a phone.</li><li>Confirm an arrival or explain why it needs replacing.</li><li>Let clients say they do not have a document or will send it later.</li><li>Keep messages and review history with the request.</li></ul><p class="note">This is a static, fictional illustration of supported workflows, not a live demonstration.</p></div>
+</div></section>
+<section class="band" id="how-it-works"><div class="wrap"><div class="band-head"><p class="eyebrow">From request to ready</p><h2>Four steps. One shared understanding.</h2></div><ol class="steps"><li><h3>Make your checklist</h3><p>Start a request, set a deadline, and reuse a template when the work comes around again.</p></li><li><h3>Send one link</h3><p>Give the client a private link. They can open their list without signing up.</p></li><li><h3>Watch the documents arrive</h3><p>See what is missing. Draft reminders, or send them through your configured mail service.</p></li><li><h3>Review and finish</h3><p>Check each arrival, ask for a replacement where needed, and close the request when the work is done.</p></li></ol></div></section>
+<section class="band"><div class="wrap"><div class="band-head"><p class="eyebrow">Less to keep in your head</p><h2>The details stay with the work.</h2></div><div class="grid three">
+<div class="card lift"><span class="number">01 / REQUESTS</span><h3>Know what is missing</h3><p>Outstanding items, arrivals to review, and ready requests each have a clear place on the board.</p></div>
+<div class="card lift"><span class="number">02 / CLIENTS</span><h3>A familiar, simple handover</h3><p>Clients get a checklist, a file picker, and confirmation of what they sent. No separate account.</p></div>
+<div class="card lift"><span class="number">03 / REVIEW</span><h3>Received is only the first step</h3><p>Check an arrival or explain what is wrong. The request keeps that review history.</p></div>
+<div class="card lift"><span class="number">04 / REMINDERS</span><h3>Chase against the actual list</h3><p>Preview reminders and bulk sends before confirming. Sending needs a configured delivery provider.</p></div>
+<div class="card lift"><span class="number">05 / TEAM</span><h3>The right level of access</h3><p>Invite colleagues with existing owner, accountant and assistant roles. Assistants do not receive a document key.</p></div>
+<div class="card lift"><span class="number">06 / RECOVERY</span><h3>Keep a way out</h3><p>Owner-verified exports preserve encrypted documents. Opening them still requires the practice's key or recovery material.</p></div>
+</div></div></section>
+<section class="band" id="security"><div class="wrap"><div class="band-head"><p class="eyebrow">Understand what you are trusting</p><h2>The files arrive encrypted.<br>The responsibility stays clear.</h2><p class="lead">A client's browser encrypts document bytes to your practice's key before upload. The server stores the encrypted envelope; your practice opens it in the browser.</p></div><div class="grid two"><div class="card"><h3>Your practice holds the key</h3><p>The server does not receive the private document key in plaintext. Save your recovery material safely: losing all usable key copies can make your documents unreadable.</p></div><div class="card"><h3>Metadata is still visible</h3><p>Client names, request details, filenames, file sizes and workflow history remain server-visible. This is document-content encryption, with browser and device trust still required.</p></div></div><div class="security-note"><h3>Evidence before promises</h3><p>Hosted launch validation, provider arrangements, legal documents and real operational recovery still need founder decisions and verification. No certification or production backup guarantee is claimed here.</p><p><a href="https://github.com/Caseymccallum/tickmark/blob/main/docs/encryption.md">Read the encryption design</a> · <a href="https://github.com/Caseymccallum/tickmark/blob/main/SECURITY.md">Security and reporting</a></p></div></div></section>
+<section class="band" id="pricing"><div class="wrap price-layout"><div><p class="eyebrow">A straightforward hosted plan</p><h2>One price for<br>your practice.</h2><p class="lead">The current commercial plan is £49 per month. Hosted access will open after the remaining launch checks and operator decisions are complete.</p><p class="note">No paid signup is offered on this page. Tax treatment and final service terms must be confirmed before launch.</p></div><div class="plan"><h3>Hosted practice</h3><p class="price">£49 <small>/ month</small></p><p class="note">£49 per month · billing starts at checkout</p><ul class="ticks"><li>5 GiB hosted document storage</li><li>25 MiB per-file upload limit</li><li>No separate per-client or staff-seat price in this plan</li><li>Document checklists, review and reminders</li><li>Encrypted document uploads</li></ul><div class="callout"><strong>Payment details required. No free trial.</strong><p>The first payment is due immediately at checkout once the hosted service is configured and open.</p></div></div></div></section>
+<section class="band" id="self-hosted"><div class="wrap grid two"><div><p class="eyebrow">Keep it on your own terms</p><h2>Prefer to run it yourself?</h2><p class="lead">The application and this website share one repository. Tickmark is open source under AGPL-3.0-or-later.</p></div><div class="product-copy"><h3>A small, readable application</h3><p>Server-rendered HTML, SQLite, and browser cryptography. Self-hosting brings responsibility for your host, TLS, mail, backups, updates and recovery.</p><div class="actions"><a class="btn" href="https://github.com/Caseymccallum/tickmark">Read the source and setup guide ↗</a></div><p><a href="https://github.com/Caseymccallum/tickmark/blob/main/docs/operations.md">Operations and recovery guide</a></p></div></div></section>
+<section class="band" id="questions"><div class="wrap"><div class="band-head"><p class="eyebrow">Before you choose</p><h2>A few useful answers.</h2></div><div class="faq">
+<details><summary>Does my client need an account?</summary><p>No. They open the private link you send, choose their files, and return to the same checklist later. The link is a credential, so it should be shared carefully.</p></details>
+<details><summary>Can Tickmark read the documents?</summary><p>The server stores browser-encrypted document bytes and does not hold the plaintext practice key. It can still see workflow metadata. Browser/device compromise and the delivered browser code remain part of the trust boundary.</p></details>
+<details><summary>What happens if we lose our key?</summary><p>Use a saved practice recovery key or another usable member copy. An encrypted export does not recover a lost private key. If every usable copy is lost, the documents can become permanently unreadable.</p></details>
+<details><summary>Can we send reminders?</summary><p>You can draft and preview reminders. Actual email or SMS delivery requires the relevant provider to be configured by the operator. Bulk messaging retains explicit review and confirmation.</p></details>
+<details><summary>Is there a free trial?</summary><p>No. The configured hosted Checkout requires payment details and bills immediately. The £49 per month plan is a commercial decision; this page does not open paid signup.</p></details>
+<details><summary>Can we export our data?</summary><p>Owner-verified export tooling preserves records and encrypted documents for recovery or migration. Decryption still needs your key material. Deletion and backup expiry are separate processes with operational retention limits.</p></details>
+<details><summary>Can I see it working locally?</summary><p>The repository includes a repeatable synthetic-data setup. It creates fictional people, requests and encrypted PDFs for a local demonstration. See the release-quality guide before running it.</p></details>
+</div></div></section>
+<section class="band" id="hosted-access"><div class="wrap"><div class="band-head"><p class="eyebrow">Hosted access</p><h2>A careful start for<br>important paperwork.</h2><p class="lead">The hosted service is awaiting launch validation. An existing installation's sign-in link can be configured by its operator; a public support contact will be published before access opens.</p><div class="actions"><a class="btn primary" href="#product">Explore the workflow</a><a class="btn" href="https://github.com/Caseymccallum/tickmark/blob/main/docs/release-quality.md">Local demo instructions</a></div></div></div></section>
+</main>
+<footer class="foot"><div class="wrap cols"><div><a class="brand" href="#">Tickmark</a><p class="note">The list of documents a client owes you, and a tick as each one arrives.</p><p class="note">Fictional interface previews. No real client documents or testimonials.</p></div><div><h3>Explore</h3><ul><li><a href="#product">Product preview</a></li><li><a href="#pricing">Hosted plan</a></li><li><a href="#hosted-access" data-app-signin>Sign in</a></li></ul></div><div><h3>Read the details</h3><ul><li><a href="https://github.com/Caseymccallum/tickmark">Source and setup</a></li><li><a href="https://github.com/Caseymccallum/tickmark/blob/main/docs/encryption.md">Encryption design</a></li><li><a href="https://github.com/Caseymccallum/tickmark/blob/main/LICENSE">AGPL-3.0-or-later</a></li></ul></div></div></footer>
 </body>
 </html>
