@@ -147,6 +147,7 @@ export async function completeTenantDeletion(registry, { tenantId, tenantsRoot, 
     const tenant = registry.prepare('SELECT owner_id FROM tenant WHERE id = ?').get(tenantId);
     if (tenant) members.push(tenant.owner_id);
     registry.prepare('DELETE FROM hosted_invite WHERE tenant_id = ?').run(tenantId);
+    registry.prepare('DELETE FROM stripe_reconciliation WHERE tenant_id = ?').run(tenantId);
     registry.prepare('DELETE FROM link_index WHERE tenant_id = ?').run(tenantId);
     registry.prepare('DELETE FROM tenant_host WHERE tenant_id = ?').run(tenantId);
     registry.prepare('DELETE FROM tenant_member WHERE tenant_id = ?').run(tenantId);

@@ -69,9 +69,10 @@ export function stripeBillingReady(stripe) {
   return Boolean(stripe?.billingReady ?? (stripe?.valid !== false && stripe?.secretKey && stripe?.priceId && stripe?.webhookSecret));
 }
 
-async function get(stripe, path) {
+async function get(stripe, path, { signal } = {}) {
   const response = await fetch(`${STRIPE_API}${path}`, {
     headers: { authorization: `Bearer ${stripe.secretKey}` },
+    ...(signal ? { signal } : {}),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -80,6 +81,22 @@ async function get(stripe, path) {
     });
   }
   return payload;
+}
+
+/** Retrieve only the current subscription fields needed for an audited operator reconciliation. */
+export async function retrieveSubscription(stripe, subscriptionId, { signal = AbortSignal.timeout(10_000) } = {}) {
+  if (!stripe?.secretKey || stripe.valid === false || !/^(sk_test_|sk_live_)[A-Za-z0-9_]+$/.test(stripe.secretKey)) {
+    throw new StripeError('Stripe API credentials are unavailable or invalid');
+  }
+  if (!/^sub_[A-Za-z0-9_]+$/.test(String(subscriptionId ?? ''))) {
+    throw new StripeError('an explicit Stripe subscription id is required');
+  }
+  const value = await get(stripe, `/subscriptions/${encodeURIComponent(subscriptionId)}`, { signal });
+  return {
+    id: value.id,
+    customer: typeof value.customer === 'string' ? value.customer : value.customer?.id ?? null,
+    status: value.status,
+  };
 }
 
 /** Check the configured Stripe price against the published commercial catalogue before checkout. */

@@ -35,7 +35,8 @@
     "preview:gateway": "node tools/preview-gateway.mjs",
     "check:nav": "node tools/check-nav.mjs",
     "transcript": "node tools/smtp-transcript.mjs",
-    "drill:stripe": "node tools/stripe-drill.mjs"
+    "drill:stripe": "node tools/stripe-drill.mjs",
+    "reconcile:stripe": "node tools/reconcile-stripe.mjs"
   },
   "dependencies": {},
   "devDependencies": {}
