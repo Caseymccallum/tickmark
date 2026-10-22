@@ -371,13 +371,16 @@ test('a session carries the practice, so a page knows whose records it is showin
   const practiceId = createPractice(db, { name: 'One person' });
   const person = createPractitioner(db, { practiceId, email: 'sam@firm.example', passwordHash: 'x' });
 
-  const { token } = createSession(db, person);
+  const { token, expiresAt } = createSession(db, person);
   const who = sessionFor(db, token);
 
   assert.equal(who.id, person, 'the session still identifies the person');
   assert.equal(who.practiceId, practiceId, 'and now carries the firm');
   assert.equal(who.hasKey, false, 'with no key yet');
   assert.equal(sessionFor(db, 'not-a-token'), null);
+  assert.equal(sessionFor(db, token, new Date(expiresAt)), null, 'expired session access is refused');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM session WHERE token_hash IS NOT NULL').get().n, 0,
+    'the expired session is removed when it is next presented');
 });
 
   db.close();

@@ -20,6 +20,7 @@ const { values } = parseArgs({
     tenant: { type: 'string' },
     email: { type: 'string' },
     'password-file': { type: 'string' },
+    'totp-code-file': { type: 'string' },
     to: { type: 'string' },
     confirm: { type: 'string' },
     'confirm-no-export': { type: 'string' },
@@ -35,6 +36,7 @@ if (!tenantsInfo.isDirectory() || tenantsInfo.isSymbolicLink()) throw new Error(
 const registry = openRegistry(resolve(values.registry ?? join(dataDir, 'saas.db')));
 try {
   if (!values.tenant || values.confirm !== values.tenant) throw new Error('--tenant and --confirm must contain the same tenant UUID');
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(values.tenant)) throw new Error('--tenant must be a UUID');
   if (values.action === 'hold') {
     if (!values['hold-until'] || !values.reason) throw new Error('hold action requires --hold-until and --reason');
     if (!setTenantRetentionHold(registry, { tenantId: values.tenant, until: values['hold-until'], reason: values.reason })) {
@@ -60,12 +62,11 @@ try {
   }
 
   const password = (await readFile(values['password-file'], 'utf8')).split(/\r?\n/)[0];
-  const { tenant, owner } = await verifyTenantOwner(registry, {
-    tenantId: values.tenant,
-    email: values.email,
-    password,
-    confirmTenantId: values.confirm,
-  });
+  const secondFactorCode = values['totp-code-file']
+    ? (await readFile(values['totp-code-file'], 'utf8')).split(/\r?\n/)[0]
+    : null;
+  let tenant;
+  let owner;
   let exportDigest = null;
   if (values.to) {
     const manifest = await createPracticeExport({
@@ -75,10 +76,28 @@ try {
       to: values.to,
       email: values.email,
       password,
+      secondFactorCode,
       confirmTenantId: values.confirm,
     });
+    tenant = registry.prepare('SELECT id, owner_id FROM tenant WHERE id = ?').get(values.tenant);
+    owner = registry.prepare('SELECT id FROM account WHERE id = ?').get(tenant?.owner_id);
+    if (!tenant || !owner) throw new Error('the practice owner could not be verified');
     exportDigest = createHash('sha256').update(await readFile(resolve(values.to, 'manifest.json'))).digest('hex');
     console.log(`Verified encrypted export created: ${manifest.blobs.files} documents; manifest sha256 ${exportDigest}.`);
+  } else {
+    const verificationDb = openDatabase(join(tenantsRoot, values.tenant, 'tickmark.db'));
+    try {
+      ({ tenant, owner } = await verifyTenantOwner(registry, {
+        tenantId: values.tenant,
+        email: values.email,
+        password,
+        confirmTenantId: values.confirm,
+        tenantDb: verificationDb,
+        secondFactorCode,
+      }));
+    } finally {
+      verificationDb.close();
+    }
   }
 
   const result = requestTenantDeletion(registry, {

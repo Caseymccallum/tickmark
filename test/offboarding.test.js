@@ -4,9 +4,10 @@ import { existsSync, mkdtempSync, rmSync, mkdirSync, renameSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createSession } from '../src/auth.js';
+import { confirmTwoFactor, createSession, setPendingSecret } from '../src/auth.js';
 import { openRegistry, createAccount, createTenant } from '../src/tenancy/registry.js';
 import { createPool } from '../src/tenancy/pool.js';
+import { codeAt, counterAt, generateRecoveryCodes, generateSecret } from '../src/totp.js';
 import { createClient, createRequest, issueToken } from '../src/store.js';
 import {
   completeTenantDeletion,
@@ -40,12 +41,27 @@ test('owner-authorised offboarding revokes access, enforces retention and holds,
 
   assert.deepEqual(requestTenantDeletion(registry, { tenantId: tenant.id, ownerAccountId: 'someone-else', retentionDays: 0 }), { state: 'not-owner' });
   assert.equal((await verifyTenantOwner(registry, {
-    tenantId: tenant.id, email: 'owner@offboard.example', password, confirmTenantId: tenant.id,
+    tenantId: tenant.id, email: 'owner@offboard.example', password, confirmTenantId: tenant.id, tenantDb: db,
   })).tenant.id, tenant.id);
   await assert.rejects(() => verifyTenantOwner(registry, {
-    tenantId: tenant.id, email: 'owner@offboard.example', password: 'wrong password', confirmTenantId: tenant.id,
+    tenantId: tenant.id, email: 'owner@offboard.example', password: 'wrong password', confirmTenantId: tenant.id, tenantDb: db,
   }), /could not be verified/);
   const when = new Date('2026-10-22T00:00:00.000Z');
+  const secret = generateSecret();
+  setPendingSecret(db, practitioner.id, secret);
+  confirmTwoFactor(db, practitioner.id, generateRecoveryCodes(), when);
+  await assert.rejects(() => verifyTenantOwner(registry, {
+    tenantId: tenant.id, email: 'owner@offboard.example', password, confirmTenantId: tenant.id, tenantDb: db,
+  }), /second factor/);
+  const ownerCode = codeAt(secret, counterAt(when));
+  assert.equal((await verifyTenantOwner(registry, {
+    tenantId: tenant.id, email: 'owner@offboard.example', password, confirmTenantId: tenant.id,
+    tenantDb: db, secondFactorCode: ownerCode, at: when,
+  })).tenant.id, tenant.id);
+  await assert.rejects(() => verifyTenantOwner(registry, {
+    tenantId: tenant.id, email: 'owner@offboard.example', password, confirmTenantId: tenant.id,
+    tenantDb: db, secondFactorCode: ownerCode, at: when,
+  }), /second factor/);
   const stalePayments = pendingPaymentRetentionCandidates(registry, { olderThan: '2026-10-01T00:00:00.000Z', limit: 1 });
   assert.deepEqual(stalePayments.map((row) => row.id), [otherTenant.id], 'only an aged pending-payment tenant is a candidate');
   assert.throws(() => pendingPaymentRetentionCandidates(registry, { olderThan: when.toISOString(), limit: 1001 }), /batch size/);

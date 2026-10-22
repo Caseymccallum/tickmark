@@ -81,13 +81,14 @@ The owner initiates deletion after strong password verification, email match and
 
 ```sh
 node tools/offboard-tenant.mjs --tenant <tenant-uuid> --confirm <tenant-uuid> \
-  --email owner@example.test --password-file /secure/owner-password.txt --to /secure/exports/practice
+  --email owner@example.test --password-file /secure/owner-password.txt \
+  --totp-code-file /secure/owner-totp.txt --to /secure/exports/practice
 node tools/offboard-tenant.mjs --action hold --tenant <tenant-uuid> --confirm <tenant-uuid> \
   --hold-until 2027-01-01T00:00:00.000Z --reason 'contractual retention'
 node tools/offboard-tenant.mjs --action purge --tenant <tenant-uuid> --confirm <tenant-uuid>
 ```
 
-Purge is refused before the deletion date or while a retention hold is active. It first changes lifecycle state to `deleting`, moves the practice directory under `.retired`, removes it without following links, and then removes registry relationships, hosted invitations, accounts no longer used by another practice, and sessions. A tombstone prevents slug reuse and records completion without retaining personal identifiers. A retry resumes from `.retired` and is idempotent. Pending-payment practices older than 30 days can be listed/scheduled with `tools/reap-pending-tenants.mjs`; dry-run is the default and its deletion still receives the normal 30-day retention window.
+When a practice has confirmed TOTP, owner exports and deletion requests require a current, unused authenticator code or a single-use recovery code. Supply it through `--totp-code-file`; the code itself is never an argument or a log value. The accepted TOTP step or recovery code is consumed. Practices without confirmed TOTP continue to require the owner email/password checks. Purge is refused before the deletion date or while a retention hold is active. It first changes lifecycle state to `deleting`, moves the practice directory under `.retired`, removes it without following links, and then removes registry relationships, hosted invitations, accounts no longer used by another practice, and sessions. A tombstone prevents slug reuse and records completion without retaining personal identifiers. A retry resumes from `.retired` and is idempotent. Pending-payment practices older than 30 days can be listed/scheduled with `tools/reap-pending-tenants.mjs`; dry-run is the default and its deletion still receives the normal 30-day retention window.
 
 Retention behavior currently implemented:
 

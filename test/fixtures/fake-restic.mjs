@@ -1,4 +1,4 @@
-import { cpSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const statePath = process.env.RESTIC_TEST_STATE;
@@ -22,6 +22,13 @@ if (command === 'dump') {
 if (command === 'restore') {
   const target = args[args.indexOf('--target') + 1];
   for (const entry of readdirSync(process.env.RESTIC_TEST_RESTORE_ROOT)) {
-    cpSync(join(process.env.RESTIC_TEST_RESTORE_ROOT, entry), join(target, entry), { recursive: true });
+    const source = join(process.env.RESTIC_TEST_RESTORE_ROOT, entry);
+    const destination = join(target, entry);
+    if (lstatSync(source).isSymbolicLink()) {
+      const directory = statSync(source).isDirectory();
+      symlinkSync(readlinkSync(source), destination, process.platform === 'win32' ? (directory ? 'junction' : 'file') : undefined);
+    } else {
+      cpSync(source, destination, { recursive: true });
+    }
   }
 }

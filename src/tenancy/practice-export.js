@@ -4,6 +4,7 @@ import { copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/pr
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { openDatabase } from '../db.js';
+import { consumeTwoFactorProof } from '../auth.js';
 import { hashPassword, verifyPassword } from '../crypto.js';
 import { takeBackup } from '../../tools/backup-lib.mjs';
 import { UNVERIFIABLE_PASSWORD_HASH } from './registry.js';
@@ -46,6 +47,7 @@ export async function createPracticeExport({
   to,
   email,
   password,
+  secondFactorCode,
   confirmTenantId,
   at = new Date(),
 } = {}) {
@@ -82,6 +84,12 @@ export async function createPracticeExport({
   let locked = false;
   let registrySnapshot = false;
   try {
+    const owner = db.prepare(
+      "SELECT id FROM practitioner WHERE email = ? AND (role = 'owner' OR role IS NULL) AND removed_at IS NULL",
+    ).get(account.email);
+    if (!owner || !consumeTwoFactorProof(db, owner.id, secondFactorCode, at)) {
+      throw new Error('the practice owner second factor could not be verified');
+    }
     // Keep a stable view of identity metadata while copying. A read transaction does not block
     // registry writers, but it keeps the exported member list internally consistent.
     registry.exec('BEGIN');

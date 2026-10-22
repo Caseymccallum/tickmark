@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { unlink, writeFile } from 'node:fs/promises';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,6 +11,8 @@ import { openRegistry, createAccount, createTenant } from '../src/tenancy/regist
 import { createPool } from '../src/tenancy/pool.js';
 import { createPracticeExport, restorePracticeExport, verifyPracticeExport } from '../src/tenancy/practice-export.js';
 import { verifyPassword } from '../src/crypto.js';
+import { confirmTwoFactor, setPendingSecret } from '../src/auth.js';
+import { codeAt, counterAt, generateRecoveryCodes, generateSecret } from '../src/totp.js';
 import { NULL_LOG } from '../src/log.js';
 import { decryptEnvelope, unwrapPracticeKey } from '../web/tickmark-crypto.js';
 import { agent, createLink, setUpKey, upload } from './helpers.js';
@@ -145,4 +147,64 @@ test('export verification refuses a ciphertext byte changed after export', async
   dbBytes[dbBytes.length - 1] ^= 1;
   await writeFile(join(target, 'tickmark.db'), dbBytes);
   await assert.rejects(() => verifyPracticeExport(target), /integrity check failed/);
+});
+
+test('an owner export consumes a fresh TOTP or one recovery code when the practice has second factor enabled', async (t) => {
+  const data = mkdtempSync(join(tmpdir(), 'tickmark-export-totp-'));
+  const registry = openRegistry(join(data, 'saas.db'));
+  const pool = createPool({ root: join(data, 'tenants') });
+  const password = 'owner password long enough';
+  const accountId = await createAccount(registry, { email: 'owner@totp-export.example', password });
+  const tenant = createTenant(registry, pool, { ownerAccountId: accountId, email: 'owner@totp-export.example', name: 'TOTP Export Practice' });
+  const db = pool.get(tenant.id);
+  const practitioner = db.prepare('SELECT id FROM practitioner WHERE email = ?').get('owner@totp-export.example');
+  const at = new Date();
+  const secret = generateSecret();
+  setPendingSecret(db, practitioner.id, secret);
+  const recoveryCodes = generateRecoveryCodes();
+  confirmTwoFactor(db, practitioner.id, recoveryCodes, at);
+  t.after(() => { pool.closeAll(); registry.close(); rmSync(data, { recursive: true, force: true }); });
+
+  const base = {
+    registry, tenantId: tenant.id, tenantsRoot: pool.root, email: 'owner@totp-export.example', password,
+    confirmTenantId: tenant.id, at,
+  };
+  const missingProof = join(data, 'missing-proof');
+  await assert.rejects(() => createPracticeExport({ ...base, to: missingProof }), /second factor/);
+  assert.equal(existsSync(missingProof), false, 'a failed second factor creates no export');
+
+  const ownerCode = codeAt(secret, counterAt(at));
+  assert.equal((await createPracticeExport({ ...base, to: join(data, 'totp-export'), secondFactorCode: ownerCode })).blobs.files, 0);
+  await assert.rejects(() => createPracticeExport({ ...base, to: join(data, 'totp-replay'), secondFactorCode: ownerCode }), /second factor/);
+  assert.equal((await createPracticeExport({ ...base, to: join(data, 'recovery-export'), secondFactorCode: recoveryCodes[0] })).blobs.files, 0);
+  await assert.rejects(() => createPracticeExport({ ...base, to: join(data, 'recovery-replay'), secondFactorCode: recoveryCodes[0] }), /second factor/);
+});
+
+test('export verification and restore refuse a symlink without promoting a destination', async (t) => {
+  const data = mkdtempSync(join(tmpdir(), 'tickmark-export-symlink-'));
+  const registry = openRegistry(join(data, 'saas.db'));
+  const pool = createPool({ root: join(data, 'tenants') });
+  const password = 'owner password long enough';
+  const accountId = await createAccount(registry, { email: 'owner@symlink.example', password });
+  const tenant = createTenant(registry, pool, { ownerAccountId: accountId, email: 'owner@symlink.example', name: 'Symlink Practice' });
+  pool.closeAll();
+  t.after(() => { pool.closeAll(); registry.close(); rmSync(data, { recursive: true, force: true }); });
+
+  const bundle = join(data, 'bundle');
+  await createPracticeExport({
+    registry, tenantId: tenant.id, tenantsRoot: pool.root, to: bundle,
+    email: 'owner@symlink.example', password, confirmTenantId: tenant.id,
+  });
+  const outside = join(data, 'outside-secret');
+  mkdirSync(outside);
+  await writeFile(join(outside, 'synthetic.txt'), 'synthetic outside data');
+  await symlink(outside, join(bundle, 'escape'), 'junction');
+  await assert.rejects(() => verifyPracticeExport(bundle), /symbolic link/);
+  const target = join(data, 'restore-target');
+  await assert.rejects(() => restorePracticeExport({
+    from: bundle, to: target, ownerEmail: 'owner@symlink.example',
+    ownerPassword: 'new owner password long enough', confirmTenantId: tenant.id,
+  }), /symbolic link/);
+  assert.equal(existsSync(target), false, 'validation fails before restore creates or promotes a destination');
+  assert.equal(readFileSync(join(outside, 'synthetic.txt'), 'utf8'), 'synthetic outside data');
 });

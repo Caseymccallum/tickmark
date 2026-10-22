@@ -12,7 +12,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { hashPassword, hashToken, newToken } from '../src/crypto.js';
-import { claimInvite, createInvite, inviteByToken } from '../src/store.js';
+import { createSession, sessionFor, sessionIdFor } from '../src/auth.js';
+import { claimInvite, createInvite, createPractitioner, inviteByToken } from '../src/store.js';
 import { generatePracticeKey } from '../web/tickmark-crypto.js';
 import { startRelay } from './smtp-relay.js';
 import { PASSPHRASE, PASSWORD, practiceWithRequest, signUp, withServer } from './helpers.js';
@@ -107,12 +108,21 @@ test('an address change needs the password and refuses one already taken', async
   });
 });
 
-test('the sessions page names this one and ends the others on request', async (t) => {
+test('the sessions page names this one and ends only sessions belonging to this practitioner', async (t) => {
   await withServer(async ({ agent: jar, db }) => {
     const first = jar();
     await signUp(first, 'sam@practice.example');
     const second = jar();
     await second.post('/signin', { email: 'sam@practice.example', password: PASSWORD });
+
+    const owner = db.prepare('SELECT id, practice_id FROM practitioner WHERE email = ?').get('sam@practice.example');
+    const otherId = createPractitioner(db, {
+      practiceId: owner.practice_id,
+      email: 'other@practice.example',
+      passwordHash: await hashPassword('another synthetic password'),
+    });
+    const otherSession = createSession(db, otherId);
+    const foreignSessionId = sessionIdFor(db, otherSession.token);
 
     const page = await (await first.get('/account/sessions')).text();
     assert.match(page, /this one/, 'the session being held is named, so the list is readable');
@@ -122,6 +132,8 @@ test('the sessions page names this one and ends the others on request', async (t
     // signing somebody out from under a form aimed at a row below.
     const mine = db.prepare('SELECT id FROM session ORDER BY created_at LIMIT 1').get().id;
     assert.equal((await first.post('/account/sessions/end', { id: mine })).status, 400, 'not this one');
+    assert.equal((await first.post('/account/sessions/end', { id: foreignSessionId })).status, 404, 'another practitioner’s session is outside this list');
+    assert.ok(sessionFor(db, otherSession.token), 'the refused attempt leaves the other person signed in');
 
     const ended = await first.post('/account/sessions/end-others', {});
     assert.equal(ended.status, 303);

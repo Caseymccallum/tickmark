@@ -14,6 +14,7 @@ const { values } = parseArgs({
     tenant: { type: 'string' },
     email: { type: 'string' },
     'password-file': { type: 'string' },
+    'totp-code-file': { type: 'string' },
     to: { type: 'string' },
     confirm: { type: 'string' },
   },
@@ -26,6 +27,9 @@ const tenantsRoot = resolve(values.tenants ?? join(dataDir, 'tenants'));
 const registry = openRegistry(resolve(values.registry ?? join(dataDir, 'saas.db')));
 try {
   const password = (await readFile(values['password-file'], 'utf8')).split(/\r?\n/)[0];
+  const secondFactorCode = values['totp-code-file']
+    ? (await readFile(values['totp-code-file'], 'utf8')).split(/\r?\n/)[0]
+    : null;
   const manifest = await createPracticeExport({
     registry,
     tenantId: values.tenant,
@@ -33,6 +37,7 @@ try {
     to: values.to,
     email: values.email,
     password,
+    secondFactorCode,
     confirmTenantId: values.confirm,
   });
   console.log(`Exported practice ${manifest.tenantId}: ${manifest.blobs.files} encrypted documents, ${manifest.blobs.bytes} bytes.`);

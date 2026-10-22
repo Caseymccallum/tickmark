@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,4 +110,47 @@ test('a full hosted restore replays the latest deletion tombstone before exposin
   assert.equal(report.earliestContainingSnapshot.id, snapshots[0].short_id);
   assert.equal(report.latestContainingSnapshot.id, snapshots[0].short_id);
   assert.equal(report.snapshots[0].outsideNormalRetentionWindow, false);
+});
+
+test('hosted restore refuses a symlink in the recovered tree and leaves the target unpromoted', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'tickmark-hosted-restore-link-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const data = join(root, 'primary');
+  const tenantsRoot = join(data, 'tenants');
+  const registry = openRegistry(join(data, 'saas.db'));
+  const ownerId = await createAccount(registry, { email: 'safe-restore@example.test', password: 'synthetic long password' });
+  const pool = createPool({ root: tenantsRoot });
+  createTenant(registry, pool, { ownerAccountId: ownerId, email: 'safe-restore@example.test', name: 'Safe Restore Practice' });
+  pool.closeAll();
+  registry.close();
+
+  const snapshot = join(root, 'snapshot');
+  const backedUp = run(BACKUP, ['--data', data, '--to', snapshot, '--quiet']);
+  assert.equal(backedUp.status, 0, backedUp.output);
+  const outside = join(root, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'synthetic.txt'), 'outside snapshot bytes');
+  symlinkSync(outside, join(snapshot, 'escape'), 'junction');
+
+  const snapshots = [{ id: '3333333333333333', short_id: '33333333', time: new Date().toISOString(), tags: ['tickmark-hosted'] }];
+  const state = join(root, 'restic-state.json');
+  const passwordFile = join(root, 'restic-password');
+  writeFileSync(state, JSON.stringify({ commands: [], snapshots }));
+  writeFileSync(passwordFile, 'synthetic Restic passphrase\n', { mode: 0o600 });
+  const env = {
+    ...process.env,
+    RESTIC_REPOSITORY: 'synthetic-repository',
+    RESTIC_PASSWORD_FILE: passwordFile,
+    RESTIC_BIN_ARGS: JSON.stringify([FAKE_RESTIC]),
+    RESTIC_TEST_STATE: state,
+    RESTIC_TEST_RESTORE_ROOT: snapshot,
+    RESTIC_TEST_LEDGER_FILE: join(snapshot, 'fleet.json'),
+    RESTIC_TEST_SNAPSHOT_MAP: JSON.stringify({ [snapshots[0].id]: join(snapshot, 'fleet.json') }),
+  };
+  const target = join(root, 'restored-data');
+  const restored = run(RESTORE, ['--snapshot', snapshots[0].id, '--to', target, '--staging', root, '--restic-bin', process.execPath], env);
+  assert.equal(restored.status, 1);
+  assert.match(restored.output, /symbolic link/);
+  assert.equal(existsSync(target), false, 'the unsafe recovery tree never becomes the target directory');
+  assert.equal(readFileSync(join(outside, 'synthetic.txt'), 'utf8'), 'outside snapshot bytes');
 });

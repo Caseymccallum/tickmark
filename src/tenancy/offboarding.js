@@ -4,16 +4,27 @@ import { join, relative, resolve, sep } from 'node:path';
 
 import { verifyPassword } from '../crypto.js';
 import { now } from '../db.js';
+import { consumeTwoFactorProof } from '../auth.js';
 
 const DAY = 86400000;
 const slugDigest = (slug) => createHash('sha256').update(String(slug).toLowerCase()).digest('hex');
 
-export async function verifyTenantOwner(registry, { tenantId, email, password, confirmTenantId }) {
+export async function verifyTenantOwner(registry, {
+  tenantId, email, password, confirmTenantId, tenantDb, secondFactorCode, at = new Date(),
+}) {
   if (confirmTenantId !== tenantId) throw new Error('explicit confirmation must exactly match the tenant id');
   const tenant = registry.prepare('SELECT id, owner_id, name, slug, lifecycle_state FROM tenant WHERE id = ?').get(tenantId);
   const owner = tenant && registry.prepare('SELECT id, email, password_hash FROM account WHERE id = ?').get(tenant.owner_id);
   if (!owner || owner.email !== String(email).toLowerCase() || !(await verifyPassword(password, owner.password_hash))) {
     throw new Error('the practice owner could not be verified');
+  }
+  if (!tenantDb) throw new Error('the practice owner could not be verified');
+  const practitioner = tenantDb.prepare(
+    "SELECT id FROM practitioner WHERE email = ? AND (role = 'owner' OR role IS NULL) AND removed_at IS NULL",
+  ).get(owner.email);
+  if (!practitioner) throw new Error('the practice owner could not be verified');
+  if (!consumeTwoFactorProof(tenantDb, practitioner.id, secondFactorCode, at)) {
+    throw new Error('the practice owner second factor could not be verified');
   }
   return { tenant, owner };
 }

@@ -14,7 +14,7 @@ import { timingSafeEqual } from 'node:crypto';
 
 import { hashToken, newToken } from './crypto.js';
 import { newId } from './db.js';
-import { CHALLENGE_MINUTES, normaliseRecoveryCode } from './totp.js';
+import { CHALLENGE_MINUTES, codeStepFor, normaliseRecoveryCode } from './totp.js';
 
 export const SESSION_DAYS = 14;
 export const COOKIE_NAME = 'tickmark_session';
@@ -273,6 +273,19 @@ export function spendRecoveryCode(db, practitionerId, code, at = new Date()) {
     db.prepare('UPDATE recovery_code SET used_at = ? WHERE id = ? AND used_at IS NULL').run(at.toISOString(), match.id)
       .changes === 1
   );
+}
+
+/** Consume one current authenticator step or one recovery code for an operator-confirmed action. */
+export function consumeTwoFactorProof(db, practitionerId, code, at = new Date()) {
+  const factor = twoFactorState(db, practitionerId);
+  if (factor.state !== 'on') return true;
+  const step = codeStepFor(factor.secret, code, { at });
+  if (step !== null && step !== factor.lastStep) {
+    return db.prepare(
+      'UPDATE practitioner SET totp_last_step = ? WHERE id = ? AND totp_last_step IS ?',
+    ).run(step, practitionerId, factor.lastStep ?? null).changes === 1;
+  }
+  return spendRecoveryCode(db, practitionerId, code, at);
 }
 
 /**
