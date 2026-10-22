@@ -201,6 +201,7 @@ Guides, and the reasoning behind the decisions:
 - [phase-3-hosted-operations.md](docs/phase-3-hosted-operations.md) — hosted topology, off-site backup/restore, retention, monitoring and operator procedures
 - [phase-4-commercial-readiness.md](docs/phase-4-commercial-readiness.md) — billing lifecycle, truthful hosted offer, customer journey, legal drafts and launch gates
 - [phase-5-launch-qualification.md](docs/phase-5-launch-qualification.md) — synthetic full-host recovery evidence, release gates, pilot verdicts and remaining operator checks
+- [release-quality.md](docs/release-quality.md) — focused release review, final verification and synthetic demo instructions
 - [hosted-legal-drafts.md](docs/hosted-legal-drafts.md) — hosted terms, privacy, DPA, security, retention and operator fact placeholders; draft only
 - [operations.md](docs/operations.md) — running it for a practice: backup and restore, and storage
 - [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
