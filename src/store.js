@@ -1427,8 +1427,18 @@ export function issueToken(db, { requestId, tokenHash, expiresAt, at = now() }) 
  * clears nothing. The event says which kind arrived, because "upload.received" against a checklist line and
  * "upload.extra" against no line at all are different things to find in a history eleven months later.
  */
-export function recordUpload(db, { id = newId(), requestId, requestItemId = null, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, keyId = null, at = now() }) {
+export function recordUpload(db, { id = newId(), requestId, requestItemId = null, filename, mime = null, sizeBytes, sha256, storagePath, clientNote = null, keyId = null, linkToken = null, at = now() }) {
   return inTransaction(db, () => {
+    if (linkToken !== null) {
+      const stillOpen = db.prepare(
+        'SELECT 1 FROM access_token WHERE request_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > ?',
+      ).get(requestId, hashToken(linkToken), at);
+      if (!stillOpen) {
+        const error = new Error('upload link was revoked while receiving');
+        error.code = 'ERR_UPLOAD_LINK_REVOKED';
+        throw error;
+      }
+    }
     if (requestItemId !== null && !itemInRequest(db, requestId, requestItemId)) {
       throw new Error(`upload ${id} names an item that is not in request ${requestId}`);
     }
@@ -1437,6 +1447,7 @@ export function recordUpload(db, { id = newId(), requestId, requestItemId = null
       `INSERT INTO upload (id, request_id, request_item_id, filename, mime, size_bytes, sha256, storage_path, client_note, key_id, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, requestId, requestItemId, filename, mime, sizeBytes, sha256, storagePath, clientNote, keyId, at);
+    db.prepare('DELETE FROM upload_reservation WHERE id = ?').run(id);
 
     // New material has not been looked at, so a check that was made against the old set no longer
     // stands. Doing this here rather than in the route means no caller can forget it — and a request

@@ -153,10 +153,10 @@ export function formFields(body) {
  * caller remembering to clean up. (The socket is left open after a refusal, for the same reason
  * `readBody` leaves it open: the client has to be able to read the answer.)
  */
-export function spoolBody(request, limit, path) {
+export function spoolBody(request, limit, path, { onChunk = null } = {}) {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
-    const out = createWriteStream(path);
+    const out = createWriteStream(path, { flags: 'wx', mode: 0o600 });
     let size = 0;
     let settled = false;
 
@@ -175,6 +175,16 @@ export function spoolBody(request, limit, path) {
         giveUp(new RequestError(413, 'the request body is larger than this endpoint accepts'));
         return;
       }
+      try {
+        const admitted = onChunk?.(chunk.length);
+        if (admitted === false) {
+          giveUp(new RequestError(413, 'the practice storage limit has been reached'));
+          return;
+        }
+      } catch (error) {
+        giveUp(error);
+        return;
+      }
       hash.update(chunk);
       // Backpressure, honoured: a fast sender to a slow disk should wait, not fill memory — which is
       // the whole point of this function.
@@ -184,6 +194,7 @@ export function spoolBody(request, limit, path) {
       }
     });
     request.on('error', giveUp);
+    request.on('aborted', () => giveUp(new RequestError(400, 'the upload was interrupted')));
     out.on('error', giveUp);
     request.on('end', () => {
       if (settled) return;

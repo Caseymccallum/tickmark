@@ -13,6 +13,8 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { decryptEnvelope } from '../web/tickmark-crypto.js';
+import { encryptFile } from '../web/tickmark-crypto.js';
+import { storageUsage } from '../src/storage.js';
 import { createLink as createLinkPage, practiceWithRequest, signUp, upload, withServer } from './helpers.js';
 
 const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
@@ -64,6 +66,8 @@ test('the client page lists the documents, carries the key to encrypt to, and sa
     assert.match(body, /Northwind Ltd/);
     assert.match(body, /still needed/, 'nothing has arrived yet');
     assert.match(body, /class="upload"/, 'each item has somewhere to put a file');
+    assert.match(body, /type="file"[^>]*aria-label="Upload one or more files for: Bank statements"/, 'the checklist file input has an accessible name');
+    assert.match(body, /type="text"[^>]*aria-label="A note about this document \(optional\)"/, 'the checklist note input has an accessible name');
     assert.ok(!body.includes('tickmark_session'), 'a client page carries no session');
 
     // The key the browser encrypts to, and the honest statement of what the server sees anyway.
@@ -336,4 +340,42 @@ test('the history records the link being made and the file arriving, in order', 
       .map((row) => row.kind);
     assert.deepEqual(kinds, ['request.created', 'link.issued', 'upload.received']);
   });
+});
+
+test('tenant storage counts ciphertext bytes and concurrent uploads cannot cross the quota', async () => {
+  await withServer(async ({ agent, base, db }) => {
+    const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
+    const token = await createLink(client, requestId);
+    const plaintext = Buffer.alloc(4096, 7);
+    const oneEnvelopeBytes = (await encryptFile(keys.publicKey, plaintext)).length;
+
+    const uploads = await Promise.all([
+      upload({ base, token, itemId: itemIds[0], publicKey: keys.publicKey, plaintext }),
+      upload({ base, token, itemId: itemIds[1], publicKey: keys.publicKey, plaintext }),
+    ]);
+    const statuses = uploads.map(({ response }) => response.status).sort();
+    assert.deepEqual(statuses, [201, 413], 'only one concurrent envelope fits');
+    const usage = storageUsage(db);
+    assert.equal(usage.documentBytes, oneEnvelopeBytes, 'the database accounts for encrypted bytes, not plaintext');
+    assert.equal(usage.logicalBytes, oneEnvelopeBytes, 'the refused attempt leaves no live reservation');
+    assert.equal(usage.activeUploads, 0);
+  }, { maxStorageBytes: 8192, minFreeBytes: 0 });
+});
+
+test('a low global free-space threshold refuses before creating an upload', async () => {
+  await withServer(async ({ agent, base, db, blobDir }) => {
+    const { client, requestId, itemIds, keys } = await practiceWithRequest({ agent, db });
+    const token = await createLink(client, requestId);
+    const { response } = await upload({
+      base,
+      token,
+      itemId: itemIds[0],
+      publicKey: keys.publicKey,
+      plaintext: Buffer.from('disk admission'),
+    });
+    assert.equal(response.status, 507);
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload').get()).n, 0);
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM upload_reservation').get()).n, 0);
+    assert.ok(!existsSync(join(blobDir, requestId)));
+  }, { minFreeBytes: Number.MAX_SAFE_INTEGER });
 });

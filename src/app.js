@@ -347,6 +347,8 @@ export function createApp(db, {
   maxUploadBytes = DEFAULT_MAX_UPLOAD,
   maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
   maxRequestFiles = DEFAULT_MAX_REQUEST_FILES,
+  maxStorageBytes = null,
+  minFreeBytes = Number(process.env.TICKMARK_MIN_FREE_BYTES ?? 512 * 1024 * 1024),
   webDir = join(HERE, '..', 'web'),
   mailer = null,
   // Texting, when configured (docs/sms.md). Like the mailer: null when off, and the pages say so
@@ -403,6 +405,9 @@ export function createApp(db, {
   // that keeps its access log at the proxy, can pass `NULL_LOG` and stay quiet — same shape as `mailer`.
   log = logEvent,
 } = {}) {
+  const effectiveMinFreeBytes = Number.isSafeInteger(minFreeBytes) && minFreeBytes >= 0
+    ? minFreeBytes
+    : 512 * 1024 * 1024;
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
 
@@ -440,7 +445,7 @@ export function createApp(db, {
     // The one object every handler below reads from, resolved per request before any routing.
     // Declared here so that the catch block reports against the practice the request was
     // actually answered by, not whichever one started the process.
-    let scoped = { db, blobDir, mailer, sms, chaseBudgetMs, maxUploadBytes, maxRequestBytes, maxRequestFiles, onLinkIssued };
+    let scoped = { db, blobDir, mailer, sms, chaseBudgetMs, maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes, minFreeBytes: effectiveMinFreeBytes, onLinkIssued };
 
     try {
       if (preHandle) {
@@ -465,6 +470,8 @@ export function createApp(db, {
           // are a deployment concern and the core never learns what a plan is.
           maxRequestBytes: tenant.maxRequestBytes ?? maxRequestBytes,
           maxRequestFiles: tenant.maxRequestFiles ?? maxRequestFiles,
+          maxStorageBytes: tenant.maxStorageBytes ?? maxStorageBytes,
+          minFreeBytes: tenant.minFreeBytes ?? minFreeBytes,
           onLinkIssued: tenant.onLinkIssued ?? onLinkIssued,
         };
       }
@@ -503,6 +510,9 @@ export function createApp(db, {
           // scope, so a new limit is not in force until it is named here.
           maxRequestBytes: scoped.maxRequestBytes,
           maxRequestFiles: scoped.maxRequestFiles,
+          maxStorageBytes: scoped.maxStorageBytes,
+          minFreeBytes: scoped.minFreeBytes,
+          log,
           webDir,
           mailer: scoped.mailer,
           sms: scoped.sms,

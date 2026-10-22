@@ -15,6 +15,8 @@
  *    second practice in its database — it sends the visitor to sign in, because the way into an
  *    existing firm is an invitation. Account creation is a platform act, at the platform's address.
  */
+import { createHash } from 'node:crypto';
+
 import {
   CHALLENGE_COOKIE,
   challengeCookie,
@@ -103,6 +105,7 @@ export function createGateway({
   loginLimiter = createAttemptLimiter(),
   sourceLoginLimiter = createAttemptLimiter({ limit: 30 }),
   trustedProxies = [],
+  storageQuotaBytes = 5 * 1024 ** 3,
   now = () => new Date(),
 }) {
   /** The address a practice's workspace answers at: its host, or its slug path. */
@@ -154,6 +157,7 @@ export function createGateway({
    * one thing in this product that must not be got wrong. Not asking is smaller and cannot be wrong.
    */
   function bridgeIntoTenant(tenant, email) {
+    if (tenant?.lifecycle_state && tenant.lifecycle_state !== 'active') return null;
     const found = practitionerForAccount(pool, tenant, email);
     return found;
   }
@@ -398,6 +402,7 @@ export function createGateway({
       slug,
       email,
       status: 'pending_payment',
+      storageQuotaBytes,
     });
     const host = hostForSlug(slug);
     if (host) mapHost(registry, { tenantId: tenant.id, host });
@@ -472,6 +477,11 @@ export function createGateway({
       return;
     }
 
+    if (onTenantHost?.lifecycle_state && onTenantHost.lifecycle_state !== 'active') {
+      sendPage(response, 410, simplePage('Practice closed', 'This practice is being closed', 'Its workspace is unavailable while its data is being retired.'));
+      return;
+    }
+
     loginLimiter?.succeeded(keys[0]);
     // The platform dashboard is not a tenant session. It may show billing and a workspace link, but
     // a single-practice account may also receive the same tenant-local session the old flow used.
@@ -480,7 +490,7 @@ export function createGateway({
       replacePresentedSessions(request);
       const platform = createSaasSession(registry, account.id, now());
       const tenant = registry.prepare(
-        `SELECT t.id, t.slug, t.name, t.plan, t.status
+        `SELECT t.id, t.slug, t.name, t.plan, t.status, t.lifecycle_state
            FROM tenant_member m JOIN tenant t ON t.id = m.tenant_id
           WHERE m.account_id = ? ORDER BY t.created_at LIMIT 1`,
       ).get(account.id);
@@ -744,8 +754,12 @@ export function createGateway({
   function uniqueSlug(name) {
     const base = slugify(name);
     let candidate = base;
+    const inUse = (slug) => Boolean(
+      registry.prepare('SELECT 1 AS taken FROM tenant WHERE slug = ?').get(slug) ||
+      registry.prepare('SELECT 1 AS taken FROM tenant_deletion WHERE slug_digest = ?').get(createHash('sha256').update(slug.toLowerCase()).digest('hex')),
+    );
     for (let suffix = 2; suffix < 1000; suffix += 1) {
-      if (!registry.prepare('SELECT 1 AS taken FROM tenant WHERE slug = ?').get(candidate)) return candidate;
+      if (!inUse(candidate)) return candidate;
       candidate = `${base}-${suffix}`;
     }
     return `${base}-${Date.now()}`;

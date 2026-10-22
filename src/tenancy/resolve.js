@@ -27,6 +27,7 @@
  * the practice's billing, and the practice cannot read what arrives until they pay either way.
  */
 import { join } from 'node:path';
+import { html, page, sendPage } from '../views.js';
 
 import { PLANS, TENANT_STATUS, tenantForHost, tenantForLink, tenantForSlug, tenantAllowsAccess } from './registry.js';
 
@@ -48,7 +49,10 @@ export function createResolver({ registry, pool, defaults = {}, onBlocked = null
     const link = LINK_PATH.exec(url.pathname) ?? INVITE_PATH.exec(url.pathname);
     if (link) {
       const tenant = tenantForLink(registry, link[1]);
-      if (tenant) return open(tenant);
+      if (tenant) {
+        if (tenant.lifecycle_state && tenant.lifecycle_state !== 'active') return offboardingBlock(response);
+        return open(tenant);
+      }
       // A link the index does not know falls through to the host check, then to null: the same
       // 404 an unknown host gets, without revealing which of the two failed.
     }
@@ -80,6 +84,7 @@ export function createResolver({ registry, pool, defaults = {}, onBlocked = null
    * host is — never silently allowed through, which is the failure that would matter.
    */
   function guard(tenant, response) {
+    if (tenant.lifecycle_state && tenant.lifecycle_state !== 'active') return offboardingBlock(response);
     if (tenantAllowsAccess(tenant)) return open(tenant);
     if (onBlocked && response) {
       onBlocked(response, tenant, TENANT_STATUS[tenant.status] ?? TENANT_STATUS.cancelled);
@@ -102,7 +107,21 @@ export function createResolver({ registry, pool, defaults = {}, onBlocked = null
       maxUploadBytes: plan.maxUploadBytes,
       maxRequestBytes: plan.maxRequestBytes,
       maxRequestFiles: plan.maxRequestFiles,
+      maxStorageBytes: Number(tenant.storage_quota_bytes ?? defaults.maxStorageBytes ?? 5 * 1024 ** 3),
+      lifecycleState: tenant.lifecycle_state ?? 'active',
       ...defaults,
     };
+  }
+
+  function offboardingBlock(response) {
+    if (response) {
+      sendPage(response, 410, page({
+        signIn: false,
+        title: 'This practice is being closed',
+        body: html`<h1>This practice is being closed</h1><p>Its workspace and client links are unavailable while its data is being retired.</p>`,
+      }));
+      return { handled: true };
+    }
+    return null;
   }
 }

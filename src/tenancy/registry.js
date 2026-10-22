@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS tenant (
   name        TEXT NOT NULL,
   plan        TEXT NOT NULL DEFAULT 'standard',
   status      TEXT NOT NULL DEFAULT 'active',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_state IN ('active', 'deletion_requested', 'deleting', 'deleted')),
+  deletion_requested_at TEXT,
+  deletion_after TEXT,
+  retention_hold_until TEXT,
+  retention_hold_reason TEXT,
+  storage_quota_bytes INTEGER NOT NULL DEFAULT 5368709120 CHECK (storage_quota_bytes > 0),
   -- When the card first failed, for the grace window that decides how long the documents stay open
   -- after past_due. Null unless the subscription is past due, and cleared the moment it is fixed — so a
   -- card that fails, is retried, and fails again keeps one clock rather than a fresh window each time.
@@ -104,6 +110,22 @@ CREATE TABLE IF NOT EXISTS hosted_invite (
 
 CREATE INDEX IF NOT EXISTS hosted_invite_tenant ON hosted_invite(tenant_id, state);
 
+-- A tombstone survives retirement of the tenant row. It records the lifecycle decision without
+-- retaining practice names, emails, credentials, documents, or billing identifiers.
+CREATE TABLE IF NOT EXISTS tenant_deletion (
+  tenant_id TEXT PRIMARY KEY,
+  slug_digest TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('requested', 'deleting', 'deleted')),
+  requested_at TEXT NOT NULL,
+  delete_after TEXT NOT NULL,
+  completed_at TEXT,
+  export_manifest_sha256 TEXT,
+  retention_hold_until TEXT,
+  retention_hold_reason TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS tenant_deletion_slug ON tenant_deletion(slug_digest);
+
 -- The SaaS session: an account, not a practice.
 CREATE TABLE IF NOT EXISTS saas_session (
   id         TEXT PRIMARY KEY,
@@ -142,6 +164,16 @@ export function openRegistry(file) {
     // Start the grace clock for anyone already past due, rather than reading a null as "since when?"
     // and locking a practice out whose card failed before this column existed.
     db.prepare("UPDATE tenant SET past_due_since = ? WHERE status = 'past_due'").run(new Date().toISOString());
+  }
+  for (const [column, definition] of [
+    ['lifecycle_state', "TEXT NOT NULL DEFAULT 'active'"],
+    ['deletion_requested_at', 'TEXT'],
+    ['deletion_after', 'TEXT'],
+    ['retention_hold_until', 'TEXT'],
+    ['retention_hold_reason', 'TEXT'],
+    ['storage_quota_bytes', 'INTEGER NOT NULL DEFAULT 5368709120'],
+  ]) {
+    if (!columns.includes(column)) db.exec(`ALTER TABLE tenant ADD COLUMN ${column} ${definition}`);
   }
   // The same startup sweep `src/db.js` does: platform sessions are live state, and a row nobody ever
   // touched again is a row that would otherwise outlive its own expiry forever.
@@ -381,6 +413,7 @@ export const pastDueGraceDays = () => {
  * subscription is over — still closes at once, because that is a decision rather than a hiccup.
  */
 export function tenantAllowsAccess(tenant, at = new Date()) {
+  if (tenant?.lifecycle_state && tenant.lifecycle_state !== 'active') return false;
   if (tenant?.status === 'past_due') {
     const since = Date.parse(tenant?.past_due_since ?? '');
     // A past-due practice with no clock is a state this code did not create (a hand-edited row). It is
@@ -441,7 +474,7 @@ export function slugify(name) {
  * shows, passphrase warning included. Nothing about the practice's *data* is known here, and
  * nothing about it is asked for: the passphrase belongs to the practice alone.
  */
-export function createTenant(registry, pool, { ownerAccountId, name, slug = null, email = null, plan = 'standard', status = 'active' }) {
+export function createTenant(registry, pool, { ownerAccountId, name, slug = null, email = null, plan = 'standard', status = 'active', storageQuotaBytes = 5 * 1024 ** 3 }) {
   const id = newId();
   const finalSlug = slug ?? slugify(name);
 
@@ -463,8 +496,8 @@ export function createTenant(registry, pool, { ownerAccountId, name, slug = null
   });
 
   registry
-    .prepare('INSERT INTO tenant (id, practice_id, slug, name, plan, status, owner_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, practiceId, finalSlug, name, plan, status, ownerAccountId, now());
+    .prepare('INSERT INTO tenant (id, practice_id, slug, name, plan, status, storage_quota_bytes, owner_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, practiceId, finalSlug, name, plan, status, storageQuotaBytes, ownerAccountId, now());
   registry
     .prepare('INSERT INTO tenant_member (tenant_id, account_id, created_at) VALUES (?, ?, ?)')
     .run(id, ownerAccountId, now());
@@ -497,7 +530,8 @@ export function tenantForHost(registry, host) {
   return (
     registry
       .prepare(
-        `SELECT t.id, t.slug, t.name, t.plan, t.status, t.past_due_since
+        `SELECT t.id, t.slug, t.name, t.plan, t.status, t.past_due_since,
+                t.storage_quota_bytes, t.lifecycle_state, t.deletion_after
            FROM tenant_host h JOIN tenant t ON t.id = h.tenant_id
           WHERE h.host = ?`,
       )
@@ -508,7 +542,7 @@ export function tenantForHost(registry, host) {
 export function tenantForSlug(registry, slug) {
   return (
     registry
-      .prepare('SELECT id, slug, name, plan, status, past_due_since FROM tenant WHERE slug = ?')
+      .prepare('SELECT id, slug, name, plan, status, past_due_since, storage_quota_bytes, lifecycle_state, deletion_after FROM tenant WHERE slug = ?')
       .get(String(slug).toLowerCase()) ?? null
   );
 }
@@ -534,6 +568,12 @@ export const PLANS = {
     maxRequestFiles: 500,
   },
 };
+
+/** Change one practice's limit without changing another tenant's allowance. */
+export function setTenantStorageQuota(registry, tenantId, bytes) {
+  if (!Number.isSafeInteger(bytes) || bytes < 1) throw new RangeError('storage quota must be a positive safe integer');
+  return registry.prepare('UPDATE tenant SET storage_quota_bytes = ? WHERE id = ?').run(bytes, tenantId).changes === 1;
+}
 
 // --- the link index --------------------------------------------------------------------------
 
@@ -561,7 +601,7 @@ export function tenantForLink(registry, token) {
   return (
     registry
       .prepare(
-        `SELECT t.id, t.slug, t.name, t.plan
+        `SELECT t.id, t.slug, t.name, t.plan, t.lifecycle_state, t.storage_quota_bytes
            FROM link_index l JOIN tenant t ON t.id = l.tenant_id
           WHERE l.token_prefix = ?`,
       )

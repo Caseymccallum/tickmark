@@ -16,7 +16,7 @@
  * One thing was mended on the way in: the note describing the keys page had drifted several hundred lines away from
  * its function, sitting above `saveKeys`. It is now where it belongs — above `keysPage`.
  */
-import { open, unlink } from 'node:fs/promises';
+import { open, statfs, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { readHead } from './blobs.js';
@@ -82,7 +82,7 @@ export function pendingFor({ db, response, practitioner, practiceId, params }) {
  * route's job is to refuse anything that is not an envelope, so a broken re-encryption cannot overwrite a
  * good file with rubbish.
  */
-export async function reencryptFile({ db, request, response, practitioner, practiceId, params, maxUploadBytes }) {
+export async function reencryptFile({ db, request, response, practitioner, practiceId, params, maxUploadBytes, minFreeBytes = 512 * 1024 * 1024 }) {
   if (!requireSignIn({ practitioner, response })) return;
 
   const type = String(request.headers['content-type'] ?? '');
@@ -101,6 +101,17 @@ export async function reencryptFile({ db, request, response, practitioner, pract
     )
     .get(params[0], practiceId);
   if (!existing) return fail(response, 404, 'There is no file with that id.', practitioner);
+
+  try {
+    const disk = await statfs(dirname(existing.storage_path));
+    const freeBytes = Number(disk.bavail) * Number(disk.bsize);
+    if (!Number.isFinite(freeBytes) || freeBytes - maxUploadBytes < minFreeBytes) {
+      return fail(response, 507, 'Re-encryption is temporarily unavailable because this server is low on free space. Nothing was replaced.', practitioner);
+    }
+  } catch (error) {
+    if (error?.code === 'ENOSPC') return fail(response, 507, 'The server ran out of free space. Nothing was replaced.', practitioner);
+    throw error;
+  }
 
   // Written under a name of its own, so the file the row currently points at is untouched until the row
   // moves. See the note on `replaceUpload` for why that order is the one that cannot lose a document.

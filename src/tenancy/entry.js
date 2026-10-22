@@ -46,6 +46,7 @@ export function createSaasServer({
   registryFile = process.env.TICKMARK_REGISTRY ?? join(dataDir, 'saas.db'),
   tenantsRoot = process.env.TICKMARK_TENANTS ?? join(dataDir, 'tenants'),
   maxUploadBytes = Number(process.env.TICKMARK_MAX_UPLOAD ?? 25 * 1024 * 1024),
+  storageQuotaBytes = null,
   env = process.env,
   loginLimiter,
   sourceLoginLimiter,
@@ -63,6 +64,7 @@ export function createSaasServer({
     ...(sourceLoginLimiter ? { sourceLoginLimiter } : {}),
     ...(now ? { now } : {}),
     trustedProxies: String(env.TICKMARK_TRUSTED_PROXIES ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+    storageQuotaBytes: storageQuotaBytes ?? Number(env.TICKMARK_HOSTED_STORAGE_QUOTA_BYTES ?? 5 * 1024 ** 3),
   });
 
   // A practice with a closed subscription gets the billing wall from the resolver, before its own

@@ -377,6 +377,15 @@ CREATE TABLE IF NOT EXISTS upload (
   key_id          TEXT REFERENCES practice_key(id)
 );
 
+-- Bytes in a ciphertext upload that has started but has not yet become an upload row. Keeping this
+-- reservation in the tenant database makes quota admission atomic across concurrent requests and
+-- processes. A crash leaves a reconcilable reservation rather than an unaccounted spool file.
+CREATE TABLE IF NOT EXISTS upload_reservation (
+  id            TEXT PRIMARY KEY,
+  reserved_bytes INTEGER NOT NULL DEFAULT 0 CHECK (reserved_bytes >= 0),
+  created_at    TEXT NOT NULL
+);
+
 -- Append-only: what was sent, what arrived, when. This is the table that answers
 -- "did we ever get the bank statements?" eleven months later.
 CREATE TABLE IF NOT EXISTS event (

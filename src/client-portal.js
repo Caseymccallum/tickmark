@@ -15,13 +15,14 @@
  * Deliberately *not* here: the practice's own pages for the same documents. Opening a file, checking it off and
  * replacing it are the signed-in surface, and they stay in `src/app.js`.
  */
-import { mkdir, rename, unlink } from 'node:fs/promises';
+import { mkdir, rename, statfs, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { readHead } from './blobs.js';
 import { dateIn } from './clock.js';
 import { newId, now } from './db.js';
-import { field, formFields, originOf, readBody, spoolBody } from './http.js';
+import { RequestError, field, formFields, originOf, readBody, spoolBody } from './http.js';
+import { declaredUploadBytes, releaseStorageReservation, reserveStorageBytes, startStorageReservation, storageUsage } from './storage.js';
 import { notifyPracticeOfChange } from './notices.js';
 import {
   MAX_CLIENT_MESSAGE,
@@ -354,7 +355,7 @@ export async function clientSays({ db, request, response, params, mailer, client
  * Returns null when it has already answered the request with a failure, which is this file's idiom — `fail`
  * writes the response, so a caller only has to return.
  */
-export async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, requestId, requestItemId = null }) {
+export async function acceptEnvelope({ db, request, response, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes = null, minFreeBytes = 512 * 1024 * 1024, log = () => {}, token = null, requestId, requestItemId = null }) {
   const type = String(request.headers['content-type'] ?? '');
   if (!type.startsWith('application/octet-stream')) {
     return fail(response, 415, 'This page sends files as raw bytes, which needs JavaScript to be enabled.');
@@ -385,6 +386,21 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
     );
   }
 
+  let declaredBytes;
+  try {
+    declaredBytes = declaredUploadBytes(request.headers['content-length']);
+  } catch {
+    return fail(response, 400, 'The upload length was not valid. Nothing was stored.');
+  }
+  if (declaredBytes !== null && declaredBytes > maxUploadBytes) {
+    return fail(response, 413, 'That file is larger than the per-file limit. Nothing was stored.');
+  }
+
+  const beforeUsage = storageUsage(db);
+  if (Number.isFinite(maxStorageBytes) && declaredBytes !== null && beforeUsage.logicalBytes + declaredBytes > maxStorageBytes) {
+    return fail(response, 413, 'This practice has reached its storage limit. Nothing was stored. Ask the practice owner to review its storage.');
+  }
+
   // Before anything is read or written: the header helper, because the key check below needs it and a
   // rejected upload should leave nothing behind.
   const header = (name, fallback, limit) =>
@@ -397,12 +413,49 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
   // client.
   const uploadId = newId();
   await mkdir(blobDir, { recursive: true });
+  try {
+    const disk = await statfs(blobDir);
+    const freeBytes = Number(disk.bavail) * Number(disk.bsize);
+    const admissionBytes = declaredBytes ?? maxUploadBytes;
+    if (!Number.isFinite(freeBytes) || freeBytes - admissionBytes < minFreeBytes) {
+      log('warn', 'storage.disk-low', { freeBytes: Number.isFinite(freeBytes) ? freeBytes : null, minimumFreeBytes: minFreeBytes });
+      return fail(response, 507, 'Uploads are temporarily unavailable because this server is low on free space. Your file was not stored.');
+    }
+  } catch (error) {
+    if (error?.code === 'ENOSPC') {
+      return fail(response, 507, 'Uploads are temporarily unavailable because this server is out of free space. Your file was not stored.');
+    }
+    throw error;
+  }
   const spoolPath = join(blobDir, `${uploadId}.incoming`);
-  const spooled = await spoolBody(request, maxUploadBytes, spoolPath);
+  startStorageReservation(db, uploadId);
+  let spooled;
+  try {
+    spooled = await spoolBody(request, maxUploadBytes, spoolPath, {
+      onChunk: (bytes) => {
+        if (token && tokenLookup(db, token).state !== 'open') {
+          throw new RequestError(410, 'This link no longer works. Ask the practice for a new one.');
+        }
+        return reserveStorageBytes(db, uploadId, bytes, maxStorageBytes).allowed;
+      },
+    });
+  } catch (error) {
+    releaseStorageReservation(db, uploadId);
+    if (error?.code === 'ENOSPC') return fail(response, 507, 'The server ran out of free space. Your file was not stored.');
+    if (Number.isInteger(error?.status)) return fail(response, error.status, error.message);
+    throw error;
+  }
   const drop = () => unlink(spoolPath).catch(() => {});
   if (spooled.bytes === 0) {
     await drop();
+    releaseStorageReservation(db, uploadId);
     return fail(response, 400, 'That file was empty.');
+  }
+
+  if (token && tokenLookup(db, token).state !== 'open') {
+    await drop();
+    releaseStorageReservation(db, uploadId);
+    return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
   }
 
   // The exact check, now that the length is known. `spent` above could only refuse a link that had *already*
@@ -410,6 +463,7 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
   if (spent.bytes + spooled.bytes > maxRequestBytes) {
     const left = Math.max(0, maxRequestBytes - spent.bytes);
     await drop();
+    releaseStorageReservation(db, uploadId);
     return fail(
       response,
       413,
@@ -427,6 +481,7 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
       : readEnvelope(await readHead(spoolPath));
   if (!envelope.ok) {
     await drop();
+    releaseStorageReservation(db, uploadId);
     return fail(
       response,
       400,
@@ -449,6 +504,7 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
       .get(claimedKey, requestId);
     if (!key) {
       await drop();
+      releaseStorageReservation(db, uploadId);
       return fail(response, 400, 'That upload named a key this practice does not have. Nothing was stored.');
     }
     keyId = key.id;
@@ -458,23 +514,44 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
   // rename on the same volume is the cheap kind; a crash before it leaves an unreferenced `.incoming`
   // file and no row, which is the safe direction (and swept by hand if it ever happens).
   const directory = join(blobDir, requestId);
-  await mkdir(directory, { recursive: true });
   const storagePath = join(directory, `${uploadId}.bin`);
-  await rename(spoolPath, storagePath);
+  let moved = false;
+  try {
+    await mkdir(directory, { recursive: true });
+    await rename(spoolPath, storagePath);
+    moved = true;
 
-  recordUpload(db, {
-    id: uploadId,
-    requestId,
-    requestItemId,
-    filename: header('x-file-name', 'upload.bin', 255),
-    mime: header('x-file-type', 'application/octet-stream', 120),
-    sizeBytes: spooled.bytes,
-    sha256: spooled.sha256,
-    storagePath,
-    clientNote: header('x-note', null, 500),
-    keyId,
-    at: now(),
-  });
+    recordUpload(db, {
+      id: uploadId,
+      requestId,
+      requestItemId,
+      filename: header('x-file-name', 'upload.bin', 255),
+      mime: header('x-file-type', 'application/octet-stream', 120),
+      sizeBytes: spooled.bytes,
+      sha256: spooled.sha256,
+      storagePath,
+      clientNote: header('x-note', null, 500),
+      keyId,
+      linkToken: token,
+      at: now(),
+    });
+  } catch (error) {
+    if (error?.code === 'ERR_UPLOAD_LINK_REVOKED') {
+      await unlink(moved ? storagePath : spoolPath).catch(() => {});
+      releaseStorageReservation(db, uploadId);
+      return fail(response, 410, 'This link no longer works. Ask the practice for a new one.');
+    }
+    if (!moved) releaseStorageReservation(db, uploadId);
+    if (error?.code === 'ENOSPC') return fail(response, 507, 'The server ran out of free space. Your file was not stored.');
+    throw error;
+  }
+
+  if (Number.isFinite(maxStorageBytes)) {
+    const afterUsage = storageUsage(db);
+    if (afterUsage.logicalBytes >= maxStorageBytes * 0.8 && beforeUsage.logicalBytes < maxStorageBytes * 0.8) {
+      log('warn', 'storage.quota-approaching', { usedBytes: afterUsage.logicalBytes, quotaBytes: maxStorageBytes });
+    }
+  }
 
   return { uploadId, bytes: spooled.bytes };
 }
@@ -490,7 +567,7 @@ export async function acceptEnvelope({ db, request, response, blobDir, maxUpload
  * It answers no item, so it clears nothing and marks nothing received — the checklist is what the practice
  * asked for, and a client's own addition is not an answer to a question.
  */
-export async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, clientLimiter }) {
+export async function receiveExtra({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes, minFreeBytes, log, mailer, clientLimiter }) {
   if (!clientWriteAllowed({ clientLimiter, token: params[0], response })) return;
   const found = tokenLookup(db, params[0]);
   if (found.state !== 'open') {
@@ -505,6 +582,10 @@ export async function receiveExtra({ db, request, response, params, blobDir, max
     maxUploadBytes,
     maxRequestBytes,
     maxRequestFiles,
+    maxStorageBytes,
+    minFreeBytes,
+    log,
+    token: params[0],
     requestId: found.request.id,
   });
   if (!stored) return;
@@ -573,7 +654,7 @@ export async function clientMessage({ db, request, response, params, mailer, cli
  * safe to write without a sanitiser, and it needs no test to stay true as long as nobody
  * starts joining the filename into a path.
  */
-export async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, clientLimiter }) {
+export async function receiveUpload({ db, request, response, params, blobDir, maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes, minFreeBytes, log, mailer, clientLimiter }) {
   const [token, itemId] = params;
   if (!clientWriteAllowed({ clientLimiter, token, response })) return;
   const found = tokenLookup(db, token);
@@ -597,6 +678,10 @@ export async function receiveUpload({ db, request, response, params, blobDir, ma
     maxUploadBytes,
     maxRequestBytes,
     maxRequestFiles,
+    maxStorageBytes,
+    minFreeBytes,
+    log,
+    token,
     requestId: found.request.id,
     requestItemId: item.id,
   });

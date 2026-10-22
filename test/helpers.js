@@ -116,7 +116,7 @@ export function linkFromSent(path) {
  */
 const ACCOUNT_LETTER = /Finish creating your Tickmark practice|You already have a Tickmark practice|Set a new password for Tickmark/;
 
-export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, mailer, sms, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter, webDir } = {}) {
+export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequestFiles, maxStorageBytes, minFreeBytes, mailer, sms, chaseBudgetMs, signInLimiter, signUpLimiter, clientLimiter, webDir } = {}) {
   sent.length = 0;
   const directory = mkdtempSync(join(tmpdir(), 'tickmark-test-'));
   const blobDir = join(directory, 'blobs');
@@ -126,6 +126,8 @@ export async function withServer(run, { maxUploadBytes, maxRequestBytes, maxRequ
     maxUploadBytes,
     maxRequestBytes,
     maxRequestFiles,
+    maxStorageBytes,
+    minFreeBytes,
     mailer: mailer
       ? {
           ...mailer,

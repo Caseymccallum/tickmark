@@ -66,6 +66,7 @@ const PLAN_TABLES = [
   'template',
   'template_item',
   'upload',
+  'upload_reservation',
 ];
 
 /** A practice with one client and one request, which most tests need. */
