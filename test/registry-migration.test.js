@@ -45,4 +45,7 @@ test('the hosted invite migration preserves existing accounts and memberships', 
   assert.equal(upgraded.prepare('SELECT status FROM tenant WHERE id = ?').get('tenant-1').status, 'active');
   assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hosted_invite'").get());
   assert.equal(upgraded.prepare('SELECT COUNT(*) AS n FROM hosted_invite').get().n, 0);
+  assert.equal(upgraded.prepare('SELECT stripe_event_created FROM tenant WHERE id = ?').get('tenant-1').stripe_event_created, 0);
+  assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stripe_event'").get());
+  assert.equal(upgraded.prepare('SELECT COUNT(*) AS n FROM stripe_event').get().n, 0);
 });

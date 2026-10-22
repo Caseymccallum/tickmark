@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS tenant (
   -- alone; and so support can find the customer record from a practice's row.
   stripe_customer_id     TEXT,
   stripe_subscription_id TEXT,
+  stripe_event_created INTEGER NOT NULL DEFAULT 0,
   owner_id    TEXT NOT NULL REFERENCES account(id),
   created_at  TEXT NOT NULL
 );
@@ -136,6 +137,19 @@ CREATE TABLE IF NOT EXISTS saas_session (
 );
 
 CREATE INDEX IF NOT EXISTS saas_session_account ON saas_session(account_id);
+
+-- Stripe retries and reorders webhook events. This durable receipt ledger is committed in the
+-- same SQLite transaction as the billing state change, so a restart cannot split the two.
+CREATE TABLE IF NOT EXISTS stripe_event (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  event_created INTEGER NOT NULL,
+  outcome TEXT NOT NULL,
+  tenant_id TEXT,
+  received_at TEXT NOT NULL,
+  applied_at TEXT
+);
+CREATE INDEX IF NOT EXISTS stripe_event_received ON stripe_event(received_at);
 `;
 
 const SESSION_DAYS = 14;
@@ -164,6 +178,9 @@ export function openRegistry(file) {
     // Start the grace clock for anyone already past due, rather than reading a null as "since when?"
     // and locking a practice out whose card failed before this column existed.
     db.prepare("UPDATE tenant SET past_due_since = ? WHERE status = 'past_due'").run(new Date().toISOString());
+  }
+  if (!columns.includes('stripe_event_created')) {
+    db.exec('ALTER TABLE tenant ADD COLUMN stripe_event_created INTEGER NOT NULL DEFAULT 0');
   }
   for (const [column, definition] of [
     ['lifecycle_state', "TEXT NOT NULL DEFAULT 'active'"],
@@ -382,13 +399,13 @@ export const TENANT_STATUS = {
   },
   past_due: {
     allowed: false,
-    heading: 'Your subscription is currently inactive. Please update your payment details to access your documents.',
-    detail: 'The last payment did not go through. Nothing has been deleted — your documents are waiting.',
+    heading: 'A payment needs attention',
+    detail: 'Your practice stays available during the configured 14-day payment grace period. Update payment details to keep access after that period. Nothing has been deleted.',
   },
   cancelled: {
     allowed: false,
-    heading: 'Your subscription is currently inactive. Please update your payment details to access your documents.',
-    detail: 'The subscription has ended. Start it again and your workspace comes straight back.',
+    heading: 'The subscription has ended',
+    detail: 'Practice access is paused. Your encrypted documents remain stored during the published retention period. Contact the service operator to arrange export or deletion.',
   },
 };
 

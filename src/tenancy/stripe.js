@@ -22,6 +22,7 @@
  * fields it needs and ignores the rest, which is what keeps this file small enough to read in full.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { COMMERCIAL_PRICE } from './commercial-config.js';
 
 export const STRIPE_API = 'https://api.stripe.com/v1';
 
@@ -40,15 +41,56 @@ export class StripeError extends Error {
 
 /** Configuration from the environment, or null when billing is not set up. */
 export function stripeFromEnvironment(env = process.env) {
-  const secretKey = env.STRIPE_SECRET_KEY;
-  if (!secretKey) return null;
+  const secretKey = env.STRIPE_SECRET_KEY ?? null;
+  const priceId = env.STRIPE_PRICE_ID ?? null;
+  const webhookSecret = env.STRIPE_WEBHOOK_SECRET ?? null;
+  if (!secretKey && !priceId && !webhookSecret) return null;
+  const baseUrl = (env.TICKMARK_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  let parsedBase = null;
+  try { parsedBase = new URL(baseUrl); } catch { /* invalid URLs fail closed */ }
+  const local = parsedBase?.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsedBase.hostname);
+  const securePublicUrl = parsedBase?.protocol === 'https:' && Boolean(parsedBase.hostname);
+  const valid = (!secretKey || /^(sk_test_|sk_live_)[A-Za-z0-9_]+$/.test(secretKey)) &&
+    (!priceId || /^price_[A-Za-z0-9_]+$/.test(priceId)) &&
+    (!webhookSecret || /^whsec_[A-Za-z0-9_]+$/.test(webhookSecret)) &&
+    (local || securePublicUrl) && !parsedBase?.username && !parsedBase?.password && !parsedBase?.hash;
   return {
     secretKey,
-    priceId: env.STRIPE_PRICE_ID ?? null,
-    webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null,
+    priceId,
+    webhookSecret,
     // Where Stripe sends the browser back to. One base URL, so the return paths cannot drift.
-    baseUrl: (env.TICKMARK_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
+    baseUrl,
+    valid,
+    billingReady: Boolean(valid && secretKey && priceId && webhookSecret),
   };
+}
+
+export function stripeBillingReady(stripe) {
+  return Boolean(stripe?.billingReady ?? (stripe?.valid !== false && stripe?.secretKey && stripe?.priceId && stripe?.webhookSecret));
+}
+
+async function get(stripe, path) {
+  const response = await fetch(`${STRIPE_API}${path}`, {
+    headers: { authorization: `Bearer ${stripe.secretKey}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new StripeError(payload?.error?.message ?? `Stripe refused the request (${response.status})`, {
+      status: response.status, type: payload?.error?.type ?? null, raw: payload,
+    });
+  }
+  return payload;
+}
+
+/** Check the configured Stripe price against the published commercial catalogue before checkout. */
+export async function verifyConfiguredPrice(stripe) {
+  if (!stripeBillingReady(stripe)) throw new StripeError('Stripe billing configuration is incomplete or invalid');
+  const price = await get(stripe, `/prices/${encodeURIComponent(stripe.priceId)}`);
+  const matches = price?.active === true && price?.currency === COMMERCIAL_PRICE.currency &&
+    price?.unit_amount === COMMERCIAL_PRICE.unitAmount && price?.recurring?.interval === COMMERCIAL_PRICE.interval &&
+    price?.recurring?.interval_count === 1;
+  if (!matches) throw new StripeError('configured Stripe price does not match the published monthly GBP catalogue');
+  return price;
 }
 
 /** POST a form to Stripe and hand back the JSON, or throw the relay's own words. */
@@ -79,15 +121,15 @@ async function post(stripe, path, form) {
  * metadata is the only thing that survives the round trip through Stripe's hosted page and comes
  * back un-forgeable inside a signed webhook. It is the join between a payment and a practice.
  */
-export function createCheckoutSession(stripe, { tenantId, tenantName, customerEmail, successPath, cancelPath }) {
-  if (!stripe?.secretKey) throw new StripeError('Stripe is not configured: STRIPE_SECRET_KEY is missing');
-  if (!stripe.priceId) throw new StripeError('Stripe is not configured: STRIPE_PRICE_ID is missing');
+export async function createCheckoutSession(stripe, { tenantId, tenantName, customerEmail, customerId = null, successPath, cancelPath }) {
+  if (!stripeBillingReady(stripe)) throw new StripeError('Stripe billing configuration is incomplete or invalid');
+  await verifyConfiguredPrice(stripe);
 
   const form = new URLSearchParams({
     mode: 'subscription',
+    payment_method_collection: 'always',
     'line_items[0][price]': stripe.priceId,
     'line_items[0][quantity]': '1',
-    customer_email: customerEmail,
     client_reference_id: tenantId,
     success_url: `${stripe.baseUrl}${successPath}?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${stripe.baseUrl}${cancelPath}`,
@@ -98,8 +140,11 @@ export function createCheckoutSession(stripe, { tenantId, tenantName, customerEm
     // match the tenant by customer id alone.
     'subscription_data[metadata][tenant_id]': tenantId,
   });
+  if (customerId) form.set('customer', customerId);
+  else form.set('customer_email', customerEmail);
 
-  return post(stripe, '/checkout/sessions', form).then((payload) => ({ id: payload.id, url: payload.url }));
+  const payload = await post(stripe, '/checkout/sessions', form);
+  return { id: payload.id, url: payload.url };
 }
 
 /** The customer portal, so a practice can change its own card without emailing anybody. */
@@ -170,6 +215,9 @@ export function parseEvent(rawBody) {
   } catch {
     throw new StripeError('the webhook body is not JSON');
   }
-  if (!event?.type || !event?.data?.object) throw new StripeError('the webhook body is not a Stripe event');
+  if (!event?.id || typeof event.id !== 'string' || !Number.isSafeInteger(event.created) ||
+      !event?.type || !event?.data?.object) {
+    throw new StripeError('the webhook body is not a complete Stripe event');
+  }
   return event;
 }

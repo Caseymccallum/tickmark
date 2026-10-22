@@ -66,6 +66,7 @@ import {
   createBillingPortalSession,
   createCheckoutSession,
   parseEvent,
+  stripeBillingReady,
   verifyWebhookSignature,
 } from './stripe.js';
 import { dashboardPage, loginCodePage, loginPage, signupPage, simplePage } from './views.js';
@@ -136,7 +137,7 @@ export function createGateway({
     if (params.get('second-factor') === '1') {
       return 'You are signed in here. Your practice asks for a code from your authenticator, so open your workspace and sign in there to enter it.';
     }
-    if (params.get('paid') === '1') return 'Thank you — your workspace is open.';
+    if (params.get('paid') === '1') return 'Checkout returned. Billing confirmation is still processing; this workspace opens when Stripe confirms the subscription.';
     return null;
   }
 
@@ -261,7 +262,7 @@ export function createGateway({
         return true;
       }
       if (method === 'GET') {
-        sendPage(response, 200, signupPage({ billingReady: Boolean(stripe?.priceId) }));
+        sendPage(response, 200, signupPage({ billingReady: stripeBillingReady(stripe) }));
         return true;
       }
       handleSignup(request, response);
@@ -320,7 +321,7 @@ export function createGateway({
           tenantUrl: session.tenant ? tenantUrlFor(session.tenant) : '/signup',
           customerConfigured: Boolean(customerIdOf(session.tenant)),
           notice: dashboardNotice(url.searchParams),
-          noticeTone: url.searchParams.get('second-factor') === '1' ? 'warning' : 'success',
+          noticeTone: url.searchParams.get('second-factor') === '1' || url.searchParams.get('paid') === '1' ? 'warning' : 'success',
         }),
       );
       return true;
@@ -356,7 +357,7 @@ export function createGateway({
     const email = field(fields, 'email')?.toLowerCase() ?? null;
     const password = typeof fields.password === 'string' ? fields.password : '';
     const values = { practice_name: practiceName ?? '', email: email ?? '' };
-    const billingReady = Boolean(stripe?.priceId);
+    const billingReady = stripeBillingReady(stripe);
 
     // The same cost the core's sign-up has — a scrypt hash and rows made for whoever asks — and the same
     // two buckets as `signUp` in src/app.js: the address, and where the request came from. The platform's
@@ -425,7 +426,7 @@ export function createGateway({
       } catch (error) {
         // The account and the tenant both exist, so this is recoverable: send them somewhere with
         // a button to try again rather than into a dead end.
-        console.error(`tickmark: Stripe checkout could not be created — ${error.message}`);
+        console.error('tickmark: Stripe checkout could not be created — configuration or provider request failed');
       }
     }
     redirect(response, '/dashboard', cookies);
@@ -652,7 +653,7 @@ export function createGateway({
   // --- billing ---------------------------------------------------------------------------------
 
   async function handleCheckout(response, session) {
-    if (!stripe?.priceId) {
+    if (!stripeBillingReady(stripe)) {
       sendPage(
         response,
         503,
@@ -673,13 +674,14 @@ export function createGateway({
         tenantId: session.tenant.id,
         tenantName: session.tenant.name,
         customerEmail: session.account.email,
+        customerId: session.tenant.stripe_customer_id ?? null,
         successPath: '/billing/checkout/success',
         cancelPath: '/dashboard',
       });
       redirect(response, checkout.url);
     } catch (error) {
-      console.error(`tickmark: Stripe checkout could not be created — ${error.message}`);
-      sendPage(response, 502, simplePage('Billing', 'Stripe refused that', error.message));
+      console.error('tickmark: Stripe checkout could not be created — configuration or provider request failed');
+      sendPage(response, 503, simplePage('Billing', 'Checkout is unavailable', 'The payment service could not verify its billing setup. Try again later or contact the service operator.'));
     }
   }
 
@@ -694,8 +696,8 @@ export function createGateway({
       const portal = await createBillingPortalSession(stripe, { customerId: customer, returnPath: '/dashboard' });
       redirect(response, portal.url);
     } catch (error) {
-      console.error(`tickmark: Stripe portal could not be created — ${error.message}`);
-      sendPage(response, 502, simplePage('Billing', 'Stripe refused that', error.message));
+      console.error('tickmark: Stripe portal could not be created — provider request failed');
+      sendPage(response, 502, simplePage('Billing', 'Billing settings are unavailable', 'Try again later or contact the service operator.'));
     }
   }
 
@@ -736,7 +738,17 @@ export function createGateway({
       return;
     }
 
-    const result = applyStripeEvent(registry, event);
+    let result;
+    try {
+      result = applyStripeEvent(registry, event, { at: now() });
+    } catch {
+      // No event receipt is committed unless its state transition commits in the same transaction.
+      // A 500 asks Stripe to retry after a transient disk/SQLite failure.
+      console.error(`tickmark: Stripe event ${event.id} could not be committed`);
+      response.writeHead(500, { 'content-type': 'text/plain' });
+      response.end('event processing unavailable');
+      return;
+    }
     console.log(
       result.handled
         ? `tickmark: stripe ${event.type} — tenant ${result.tenantId} ${result.before} → ${result.after}`

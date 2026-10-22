@@ -62,6 +62,7 @@ async function withSaas(run, { env = {}, loginLimiter, sourceLoginLimiter, log, 
 
 /** A Stripe webhook the way Stripe signs one: HMAC over `timestamp.payload`. */
 function signedWebhook(event, { secret = WEBHOOK_SECRET, at = Date.now() } = {}) {
+  event = { created: Math.floor(at / 1000), ...event };
   const payload = JSON.stringify(event);
   const timestamp = Math.floor(at / 1000);
   const signature = createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');
@@ -148,6 +149,9 @@ test('signing up with Stripe redirects to checkout, with the tenant id in the me
   globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('https://api.stripe.com')) return realFetch(url, init);
     asked = { url: String(url), body: String(init.body) };
+    if (String(url).includes('/prices/')) {
+      return { ok: true, status: 200, json: async () => ({ active: true, currency: 'gbp', unit_amount: 4900, recurring: { interval: 'month', interval_count: 1 } }) };
+    }
     return {
       ok: true,
       status: 200,
@@ -245,7 +249,12 @@ test('a paid checkout opens the practice, and a cancelled subscription closes it
         }),
       );
       assert.equal(paid.status, 200);
-      assert.equal(tenantRow(registry).status, 'active', 'the practice is open');
+      assert.equal(tenantRow(registry).status, 'pending_payment', 'checkout completion alone cannot grant access');
+      await postWebhook(client, signedWebhook({
+        id: 'evt_subscription_created', type: 'customer.subscription.created',
+        data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } },
+      }));
+      assert.equal(tenantRow(registry).status, 'active', 'Stripe subscription state opens the practice');
       assert.equal(
         registry.prepare('SELECT stripe_customer_id FROM tenant WHERE id = ?').get(tenant.id).stripe_customer_id,
         'cus_1',
@@ -302,10 +311,7 @@ test('a paid checkout opens the practice, and a cancelled subscription closes it
 
       const locked = await client.get('/t/acme-accounting/requests');
       assert.equal(locked.status, 402);
-      assert.match(
-        await locked.text(),
-        /Your subscription is currently inactive\. Please update your payment details to access your documents\./,
-      );
+      assert.match(await locked.text(), /The subscription has ended/);
 
       // But the client mid-upload is not stranded by the practice's billing.
       const clientPage = await agent(base).get(`/r/${token}`);
@@ -326,8 +332,8 @@ test('a failing card marks the practice past due, and paying opens it again', as
         client,
         signedWebhook({
           id: 'evt_paid',
-          type: 'checkout.session.completed',
-          data: { object: { metadata: { tenant_id: tenant.id } } },
+          type: 'customer.subscription.created',
+          data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } },
         }),
       );
       assert.equal(tenantRow(registry).status, 'active');
@@ -336,8 +342,8 @@ test('a failing card marks the practice past due, and paying opens it again', as
         client,
         signedWebhook({
           id: 'evt_failed',
-          type: 'invoice.payment_failed',
-          data: { object: { id: 'in_1', metadata: { tenant_id: tenant.id } } },
+          type: 'customer.subscription.updated',
+          data: { object: { id: 'sub_1', customer: 'cus_1', status: 'past_due', metadata: { tenant_id: tenant.id } } },
         }),
       );
       assert.equal(tenantRow(registry).status, 'past_due', 'the card failed, and it is said plainly');
@@ -346,8 +352,8 @@ test('a failing card marks the practice past due, and paying opens it again', as
         client,
         signedWebhook({
           id: 'evt_paid_again',
-          type: 'invoice.payment_succeeded',
-          data: { object: { id: 'in_1', metadata: { tenant_id: tenant.id } } },
+          type: 'customer.subscription.updated',
+          data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } },
         }),
       );
       assert.equal(tenantRow(registry).status, 'active', 'and paying opens it again');
@@ -368,6 +374,57 @@ test('a failing card marks the practice past due, and paying opens it again', as
   );
 });
 
+test('webhook receipts survive replays, stale delivery and wrong-customer events, then allow re-subscription', async () => {
+  await withSaas(async ({ agent, registry }) => {
+    const client = agent();
+    await signup(client);
+    const tenant = tenantRow(registry);
+    const created = Math.floor(Date.now() / 1000);
+    const active = {
+      id: 'evt_durable_active', created, type: 'customer.subscription.created',
+      data: { object: { id: 'sub_durable', customer: 'cus_durable', status: 'active', metadata: { tenant_id: tenant.id } } },
+    };
+    assert.equal((await postWebhook(client, signedWebhook(active))).status, 200);
+    assert.equal(tenantRow(registry).status, 'active');
+    const replay = await postWebhook(client, signedWebhook(active));
+    assert.equal((await replay.json()).duplicate, true);
+
+    const cancelled = {
+      id: 'evt_durable_cancel', created: created + 2, type: 'customer.subscription.deleted',
+      data: { object: { id: 'sub_durable', customer: 'cus_durable', metadata: { tenant_id: tenant.id } } },
+    };
+    await postWebhook(client, signedWebhook(cancelled));
+    await postWebhook(client, signedWebhook({
+      id: 'evt_old_invoice_paid', created: created + 3, type: 'invoice.payment_succeeded',
+      data: { object: { id: 'in_old', subscription: 'sub_durable', customer: 'cus_durable', metadata: { tenant_id: tenant.id } } },
+    }));
+    assert.equal(tenantRow(registry).status, 'cancelled', 'a later-delivered successful invoice cannot reactivate a cancelled subscription');
+    const stale = {
+      id: 'evt_durable_stale', created: created + 1, type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_durable', customer: 'cus_durable', status: 'active', metadata: { tenant_id: tenant.id } } },
+    };
+    await postWebhook(client, signedWebhook(stale));
+    assert.equal(tenantRow(registry).status, 'cancelled', 'an older active snapshot cannot undo cancellation');
+
+    const wrongCustomer = {
+      id: 'evt_wrong_customer', created: created + 3, type: 'customer.subscription.updated',
+      data: { object: { id: 'sub_durable', customer: 'cus_other', status: 'active', metadata: { tenant_id: tenant.id } } },
+    };
+    const wrong = await postWebhook(client, signedWebhook(wrongCustomer));
+    assert.equal((await wrong.json()).handled, false);
+    assert.equal(tenantRow(registry).status, 'cancelled');
+
+    const renewed = {
+      id: 'evt_resubscribed', created: created + 4, type: 'customer.subscription.created',
+      data: { object: { id: 'sub_restarted', customer: 'cus_durable', status: 'active', metadata: { tenant_id: tenant.id } } },
+    };
+    await postWebhook(client, signedWebhook(renewed));
+    assert.equal(tenantRow(registry).status, 'active', 'a new subscription can reopen the same retained practice');
+    assert.equal(registry.prepare('SELECT stripe_subscription_id FROM tenant WHERE id = ?').get(tenant.id).stripe_subscription_id, 'sub_restarted');
+    assert.equal(registry.prepare('SELECT count(*) AS n FROM stripe_event').get().n, 6);
+  }, { env: { STRIPE_SECRET_KEY: 'sk_test_1', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET } });
+});
+
 test('a failing card keeps the documents open for the grace window, so a fixable hiccup is not a lockout', async () => {
   await withSaas(
     async ({ agent, registry }) => {
@@ -375,8 +432,8 @@ test('a failing card keeps the documents open for the grace window, so a fixable
       await signup(client);
       const tenant = tenantRow(registry);
 
-      await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'checkout.session.completed', data: { object: { metadata: { tenant_id: tenant.id } } } }));
-      await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'invoice.payment_failed', data: { object: { id: 'in_1', metadata: { tenant_id: tenant.id } } } }));
+      await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'customer.subscription.created', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } } }));
+      await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'customer.subscription.updated', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'past_due', metadata: { tenant_id: tenant.id } } } }));
       assert.equal(tenantRow(registry).status, 'past_due');
 
       const open = await client.get('/t/acme-accounting/requests');
@@ -398,8 +455,8 @@ test('with the grace window set to zero, a failing card locks the practice at on
         await signup(client);
         const tenant = tenantRow(registry);
 
-        await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'checkout.session.completed', data: { object: { metadata: { tenant_id: tenant.id } } } }));
-        await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'invoice.payment_failed', data: { object: { id: 'in_1', metadata: { tenant_id: tenant.id } } } }));
+        await postWebhook(client, signedWebhook({ id: 'evt_paid', type: 'customer.subscription.created', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { tenant_id: tenant.id } } } }));
+        await postWebhook(client, signedWebhook({ id: 'evt_failed', type: 'customer.subscription.updated', data: { object: { id: 'sub_1', customer: 'cus_1', status: 'past_due', metadata: { tenant_id: tenant.id } } } }));
         assert.equal(tenantRow(registry).status, 'past_due');
 
         const locked = await client.get('/t/acme-accounting/requests');
