@@ -82,7 +82,7 @@ export function templatesPage({ db, response, practitioner, practiceId, url }) {
 
       ${templates.length === 0
         ? empty('No templates yet', 'Make one below — or open a request and save its list, which is less typing if the list already exists.')
-        : html`<div class="scroll"><table>
+        : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable checklist templates"><table>
             <thead><tr>
               <th class="w34">Name</th>
               <th class="w10">Documents</th>
@@ -170,7 +170,7 @@ export function templatePage({ db, response, practitioner, practiceId, params, u
       ${section('What it asks for', html`
         ${found.items.length === 0
           ? empty('Nothing on it yet', 'Add the documents below, one per line.')
-          : html`<div class="scroll"><table>
+          : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable checklist templates"><table>
               <thead><tr><th class="w78">Document</th><th class="num w22">Remove</th></tr></thead>
               <tbody>
                 ${found.items.map((item) => html`<tr>

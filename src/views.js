@@ -13,6 +13,7 @@
  */
 import { randomBytes } from 'node:crypto';
 
+import { publicOrigin } from './public-urls.js';
 import { CANVAS, STYLE } from './style.js';
 import { acceptableBody, withEncoding } from './http.js';
 
@@ -75,8 +76,8 @@ export const jsonTag = (id, value) =>
  * separate copies once, and a claim in a comment that two strings are the same is worth nothing.
  */
 const MARK =
-  '<rect width="32" height="32" rx="8" fill="#101828"/>' +
-  '<path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#32d583" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>';
+  '<rect width="32" height="32" rx="8" fill="#164e3c"/>' +
+  '<path d="M9 16.5l4.6 4.5L23 10.8" fill="none" stroke="#d6f5e4" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>';
 
 const mark = (size = 22) =>
   raw(`<svg class="mark" width="${size}" height="${size}" viewBox="0 0 32 32" role="img" aria-label="Tickmark">${MARK}</svg>`);
@@ -113,6 +114,9 @@ const FAVICON = `data:image/svg+xml,${encodeURIComponent(
  */
 const ICONS = {
   // Done, or true. The one shape the whole product is named after.
+  list: '<rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/>',
+  document: '<path d="M4 1.5h5l3 3V14H4zM9 1.5v3h3M6 8h4M6 11h4"/>',
+  people: '<circle cx="6" cy="5" r="2.5"/><path d="M1.5 14v-1a4.5 4.5 0 019 0v1M11 3a2.5 2.5 0 010 5M12 10a4 4 0 012.5 4"/>',
   tick: '<path d="M3 8.5l3.2 3L13 4.5"/>',
   // A protection claim: the server cannot read your files.
   shield: '<path d="M8 1.8l5 1.9v4c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5v-4z"/><path d="M5.8 8.2l1.6 1.6 3-3.2"/>',
@@ -190,9 +194,25 @@ export function page({
   banner = null,
   signIn = true,
   here = null,
+  marketingUrl = process.env.TICKMARK_MARKETING_URL,
 }) {
-  const navLink = (href, label) =>
-    html`<a href="${href}"${here === href ? raw(' aria-current="page"') : ''}>${label}</a>`;
+  const marketingSite = publicOrigin(marketingUrl);
+  const navLink = (href, label, glyph) =>
+    html`<a href="${href}"${here === href ? raw(' aria-current="page"') : ''}>${icon(glyph)}<span>${label}</span></a>`;
+  const workspaceNav = practitioner ? html`
+    <div class="nav-group"><p class="nav-label">Workspace</p>
+      ${navLink('/requests', 'Requests', 'list')}
+      ${navLink('/clients', 'Clients', 'people')}
+      ${navLink('/files', 'Documents', 'document')}
+      ${navLink('/chase', 'Chase', 'clock')}
+      ${navLink('/templates', 'Templates', 'list')}
+    </div>
+    <div class="nav-group"><p class="nav-label">Practice</p>
+      ${navLink('/integrations', 'Integrations', 'link')}
+      ${navLink('/members', 'Members', 'people')}
+      ${navLink('/keys', 'Keys', 'key')}
+      ${navLink('/account/two-factor', 'Account security', 'shield')}
+    </div>` : null;
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -201,39 +221,36 @@ export function page({
   <title>${title} · Tickmark</title>
   <link rel="icon" href="${FAVICON}">
   <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="${CANVAS.light}" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="${CANVAS.dark}" media="(prefers-color-scheme: dark)">
   <style ${raw(NONCE_PLACEHOLDER)}>${raw(STYLE)}</style>
 </head>
-<body>
+<body${practitioner ? raw(' class="workspace"') : ''}>
   <a class="skip" href="#main">Skip to content</a>
   <header class="top">
-    <a class="brand" href="${practitioner ? '/requests' : account ? '/dashboard' : '/'}">${mark()}<span>Tickmark</span></a>
-    <nav>
+    <a class="brand" href="${practitioner ? '/requests' : account ? '/dashboard' : '/'}">${mark(28)}<span>Tickmark</span></a>
+    ${practitioner ? html`<span class="workspace-label">Practice workspace</span>
+      <details class="mobile-nav"><summary>Workspace menu</summary><nav aria-label="Mobile workspace">${workspaceNav}</nav></details>` : ''}
+    <div class="account-actions">
+      ${marketingSite ? html`<a class="public-site note" href="${marketingSite}/" rel="noreferrer">Public website</a>` : ''}
       ${practitioner
-        ? html`${navLink('/requests', 'Requests')}
-            ${navLink('/clients', 'Clients')}
-            ${navLink('/files', 'Documents')}
-            ${navLink('/chase', 'Chase')}
-            ${navLink('/templates', 'Templates')}
-            ${navLink('/integrations', 'Integrations')}
-            ${navLink('/keys', 'Keys')}
-            ${navLink('/members', 'Members')}
-            <a class="who" href="/account/two-factor" title="${practitioner.email} — your account">${practitioner.email}</a>
+        ? html`<a class="who" href="/account/two-factor" title="${practitioner.email} — your account">${practitioner.email}</a>
             <form method="post" action="/signout"><button type="submit" class="ghost">Sign out</button></form>`
         : account
-          ? html`${navLink('/dashboard', 'Your account')}
-              <span class="who" title="${account.email}">${account.email}</span>
+          ? html`<a href="/dashboard">Your account</a><span class="who" title="${account.email}">${account.email}</span>
               <form method="post" action="/logout"><button type="submit" class="ghost">Sign out</button></form>`
-          : signIn
-            ? html`<a href="/signin">Sign in</a>`
-            : ''}
-    </nav>
+          : signIn ? html`<a class="btn" href="/signin">Sign in</a>` : ''}
+    </div>
   </header>
-  <main class="wrap" id="main">
-    ${banner}
-    ${body}
-  </main>
+  <div class="app-layout${practitioner ? '' : ' public-layout'}">
+    ${practitioner ? html`<aside class="sidebar"><nav aria-label="Practice workspace">${workspaceNav}</nav>
+      <p class="sidebar-note">A checklist for the work.<br>A tick as each document arrives.</p></aside>` : ''}
+    <main class="wrap" id="main" tabindex="-1">
+      ${banner}
+      ${body}
+    </main>
+  </div>
   <footer class="foot">
     <strong>Tickmark</strong> — the list of documents a client owes you, and a tick as each one
     arrives. Files are encrypted in the browser before they are sent; the server stores what it

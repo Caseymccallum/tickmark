@@ -217,7 +217,7 @@ export function chasePage({ db, response, practitioner, practiceId, mailer, url 
         'Nothing is outstanding for anyone.',
         html`<a href="/requests">The board</a> has the full picture.`,
       )
-    : html`<div class="scroll"><table class="chase">
+    : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable reminder data"><table class="chase">
         <colgroup>
           <col class="w17"><col class="w24"><col class="w29">
           <col class="w18"><col class="w12">
@@ -626,7 +626,7 @@ function chaseReportPage({ practitioner, results, skipped, held = [], cadenceDay
         : ''}
       ${results.length + skipped.length + held.length === 0
         ? empty('There was nothing to send.', 'Nobody owed anything that this run could write to.')
-        : html`<div class="scroll"><table>
+        : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable reminder data"><table>
             <colgroup><col class="w22"><col class="w34"><col class="w44"></colgroup>
             <thead>
               <tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr>

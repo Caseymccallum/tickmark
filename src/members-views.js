@@ -157,7 +157,7 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
         request page shows the real names.</p>
         <div class="actions"><button type="submit">Save</button></div>
       </form>
-      <div class="scroll"><table class="members">
+      <div class="scroll" tabindex="0" role="region" aria-label="Scrollable practice members"><table class="members">
         <colgroup><col class="w34"><col class="w14"><col class="w34"><col class="w18"></colgroup>
         <thead>
           <tr><th align="left">Email</th><th align="left">Joined</th><th align="left">Can open the newest files?</th><th align="left"></th></tr>
@@ -195,7 +195,7 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
         : html`<h2>Removed</h2>
             <p class="note">No longer members. Their names stay in the records, because the requests they
               made and the files they uploaded say who did what. Someone still here can invite them back.</p>
-            <div class="scroll"><table>
+            <div class="scroll" tabindex="0" role="region" aria-label="Scrollable practice members"><table>
               <thead><tr><th align="left">Email</th><th align="left">Joined</th><th align="left">Removed</th></tr></thead>
               <tbody>
                 ${removed.map((person) => html`<tr>
@@ -249,7 +249,7 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
       ${invites.length > 0
         ? html`<section class="card">
             <h2>Invitations</h2>
-            <div class="scroll"><table>
+            <div class="scroll" tabindex="0" role="region" aria-label="Scrollable practice members"><table>
               <thead><tr><th align="left">Sent by</th><th align="left">When</th><th align="left">Outcome</th><th align="left"></th></tr></thead>
               <tbody>
                 ${invites.map((row) => html`<tr>

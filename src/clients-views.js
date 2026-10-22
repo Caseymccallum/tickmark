@@ -137,7 +137,7 @@ export function filesPage({ db, response, practitioner, practiceId, url }) {
             <p class="note">${shown.length} ${shown.length === 1 ? 'document' : 'documents'}${query
               ? html` matching “${query}” of ${total} in total`
               : ''}.</p>
-            <div class="scroll"><table class="wide">
+            <div class="scroll" tabindex="0" role="region" aria-label="Scrollable client and document data"><table class="wide">
               <colgroup>
                 <col class="w30"><col class="w17"><col class="w23">
                 <col class="w12"><col class="w8"><col class="w10">
@@ -240,7 +240,7 @@ export function listClients({ db, response, practitioner, practiceId, url }) {
             : 'A client appears here the first time you ask them for something — type a name on a new request and they are kept.',
         query || onlyDue ? null : html`<a class="btn primary" href="/requests/new">New request</a>`,
       )
-    : html`<div class="scroll"><table class="clients">
+    : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable client and document data"><table class="clients">
         <colgroup>
           <col class="c-name"><col class="c-mail"><col class="c-open">
           <col class="c-out"><col class="c-reminded"><col class="c-do">
@@ -460,7 +460,7 @@ export function viewClient({ db, response, practitioner, params, practiceId, url
     <td><span class="muted">${request.created_at.slice(0, 10)}</span></td>
   </tr>`;
 
-  const table = (rows) => html`<div class="scroll"><table class="items">
+  const table = (rows) => html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable client and document data"><table class="items">
     <colgroup>
       <col class="c-title"><col class="c-state"><col class="c-received">
       <col class="c-due"><col class="c-asked">
@@ -684,7 +684,7 @@ export async function importClientsRun({ db, request, response, practitioner, pr
         <strong>${preview.unchanged}</strong> already there and left alone${preview.invalid
           ? html`, and <strong>${preview.invalid}</strong> with no name, skipped`
           : ''}.</p>
-        <div class="scroll"><table class="wide">
+        <div class="scroll" tabindex="0" role="region" aria-label="Scrollable client and document data"><table class="wide">
           <thead><tr>
             <th align="left">Client</th><th align="left">Address</th><th align="left">What happens</th>
           </tr></thead>

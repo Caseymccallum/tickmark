@@ -522,7 +522,7 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
       ${live.length === 0
         ? html`<p class="info">There is no key yet. <a href="/setup">Make one</a> and clients can start
             sending.</p>`
-        : html`<div class="scroll"><table class="keys">
+        : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable practice keys"><table class="keys">
             <colgroup><col class="w15"><col class="w21"><col class="w9"><col class="w55"></colgroup>
             <thead>
               <tr>
@@ -560,7 +560,7 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
       ${retired.length > 0
         ? html`<section class="card">
             <h2>Retired keys</h2>
-            <div class="scroll"><table>
+            <div class="scroll" tabindex="0" role="region" aria-label="Scrollable practice keys"><table>
               <thead><tr><th align="left">Made</th><th align="left">What became of it</th></tr></thead>
               <tbody>${retiredRows}</tbody>
             </table></div>

@@ -566,7 +566,7 @@ const SURFACES = `
   .card > :last-child { margin-bottom: 0; }
   .card.tight { padding: 1rem; }
   .card.tight > h2:first-child { margin: -1rem -1rem .85rem; padding: .65rem 1rem; }
-  .grid-2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
+  .grid-2 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
 
   /* --- notices ------------------------------------------------------------------------------ */
   .error, .warning, .success, .info {
@@ -833,6 +833,8 @@ const CLIENT_AND_MISC = `
  * of inventing a number per table. (`tools/check-pages.mjs` fails a page that brings one back.)
  */
 const SHELL = `
+  .app-layout.public-layout { display: block; }
+  .public-site { padding: .6rem; }
   .workspace .top { background: var(--surface); backdrop-filter: none; }
   .workspace-label { color: var(--soft); font-size: var(--fs-sm); border-left: 1px solid var(--line); padding-left: 1rem; }
   .app-layout { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); min-height: calc(100vh - var(--header)); }
@@ -848,9 +850,16 @@ const SHELL = `
   .mobile-nav { display: none; }
   .account-actions { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
   .account-actions form { margin: 0; }
+  .request-summary { display: flex; align-items: center; gap: 1.5rem; justify-content: space-between; flex-wrap: wrap; margin: 1rem 0; }
+  .request-summary progress { width: 15rem; height: .6rem; }
+  .timeline { list-style: none; padding: 0 0 0 1.4rem; margin: 1rem 0; border-left: 1px solid var(--line-2); }
+  .timeline li { position: relative; padding: .65rem 0 1rem; overflow-wrap: anywhere; }
+  .timeline li::before { content: ""; position: absolute; left: -1.7rem; top: 1rem; width: .5rem; height: .5rem; border-radius: 50%; background: var(--brand); outline: 4px solid var(--canvas); }
   .page-head { padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
   .page-head .sub { max-width: 48rem; margin-top: .5rem; line-height: 1.6; }
   .scroll { scrollbar-color: var(--line-2) var(--surface); }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+  input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
   .scroll:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
   .gateway { max-width: 64rem; padding: 2rem 0; }
   .gateway.auth-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 4rem; align-items: start; }

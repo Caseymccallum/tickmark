@@ -390,7 +390,7 @@ function askEveryoneReportPage({ practitioner, template, title, results, without
               .join(', ')} — add an email address on <a href="/clients">the clients page</a> and ask again.</p>`
         : ''}
 
-      <div class="scroll"><table>
+      <div class="scroll" tabindex="0" role="region" aria-label="Scrollable bulk request preview"><table>
         <colgroup><col class="w26"><col class="w32"><col class="w42"></colgroup>
         <thead><tr><th align="left">Client</th><th align="left">Request</th><th align="left">Outcome</th></tr></thead>
         <tbody>

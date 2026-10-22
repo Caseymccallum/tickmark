@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publicOrigin } from '../src/public-urls.js';
 import { signupPage, loginCodePage } from '../src/tenancy/views.js';
+import { html, page } from '../src/views.js';
 
 test('public navigation configuration accepts only an explicit HTTPS origin', () => {
   assert.equal(publicOrigin('https://www.example.test/'), 'https://www.example.test');
@@ -51,4 +52,18 @@ test('hosted challenge retains scoped action and recovery-code explanation after
   assert.match(page, /autocomplete="one-time-code"/);
   assert.match(page, /id="code-help"/);
   assert.match(page, /recovery code works once/);
+});
+
+test('workspace shell keeps navigation and POST sign-out with an accessible native mobile menu', () => {
+  const rendered = page({ title: 'Clients', practitioner: { email: '<owner@example.test>' }, here: '/clients',
+    marketingUrl: 'https://www.example.test', body: html`<h1>Clients</h1>` }).value;
+  assert.match(rendered, /<details class="mobile-nav"><summary>Workspace menu<\/summary>/);
+  assert.match(rendered, /href="\/clients" aria-current="page"/);
+  assert.match(rendered, /form method="post" action="\/signout"/);
+  assert.match(rendered, /&lt;owner@example.test&gt;/);
+  assert.match(rendered, /href="https:\/\/www.example.test\/" rel="noreferrer"/);
+  assert.match(rendered, /name="robots" content="noindex, nofollow"/);
+  assert.match(rendered, /id="main" tabindex="-1"/);
+  const refused = page({ title: 'Client page', signIn: false, marketingUrl: 'https://example.test/r/bearer-secret', body: html`<h1>Documents</h1>` }).value;
+  assert.doesNotMatch(refused, /bearer-secret|Public website|href="\/signin"/);
 });

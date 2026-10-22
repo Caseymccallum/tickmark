@@ -304,7 +304,7 @@ export function listRequests({ db, response, practitioner, url, practiceId, mail
               : html`Start one and send the client a link — it takes a minute, and the client needs no account.`,
         query || showingClosed || wanted ? null : html`<a class="btn primary" href="/requests/new">New request</a>`,
       )
-    : html`<div class="scroll"><table class="board">
+    : html`<div class="scroll" tabindex="0" role="region" aria-label="Scrollable request data"><table class="board">
         <colgroup>
           <col class="c-client"><col class="c-request"><col class="c-state">
           <col class="c-due"><col class="c-out"><col class="c-check">
@@ -903,7 +903,8 @@ export function viewRequest({ db, request, response, practitioner, params, pract
         : ''}
       ${found.client_note ? html`<div class="greeting">${found.client_note}</div>` : ''}
       ${sentNotice}
-      <p class="count">${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
+      <div class="request-summary"><p class="count">${received} of ${live.length} received${found.due_at ? html`, due ${found.due_at}` : ''}${withdrawn.length > 0 ? html` · ${withdrawn.length} no longer asked for` : ''}.</p>
+      ${live.length > 0 ? html`<progress value="${received}" max="${live.length}" aria-label="Documents received">${received} of ${live.length}</progress>` : ''}</div>
       ${found.closed_at
         ? html`<p class="info"><strong>Closed.</strong> Nothing has been deleted — the client’s link still
             works, and reopening puts it back on the list exactly as it was.</p>`
@@ -980,7 +981,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
             never leaves this tab.</p>
           </div>`
         : ''}
-      <div class="scroll"><table class="items">
+      <div class="scroll" tabindex="0" role="region" aria-label="Scrollable request data"><table class="items">
         <colgroup>
           <col class="c-doc"><col class="c-state"><col class="c-files"><col class="c-say">
         </colgroup>
@@ -1084,7 +1085,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
             <h2>Sent without being asked</h2>
             <p class="note">Files the client sent that are not on the checklist. They are encrypted the same
             way as everything else, and they answer nothing — so they do not count toward what is outstanding.</p>
-            <div class="scroll"><table>
+            <div class="scroll" tabindex="0" role="region" aria-label="Scrollable request data"><table>
               <thead><tr><th align="left">File</th><th align="left">Arrived</th><th align="left">Open</th></tr></thead>
               <tbody>
                 ${extras.map((upload) => html`<tr>
@@ -1104,7 +1105,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
         : ''}
       <section class="card">
         <h2>What has happened</h2>
-        <ul class="plain">
+        <ul class="timeline">
           ${events.map((event) => html`<li><code>${event.kind}</code> <span class="note">${event.at}${event.detail ? ` — ${event.detail}` : ''}</span></li>`)}
         </ul>
       </section>

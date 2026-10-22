@@ -50,3 +50,9 @@ Build configuration accepts HTTPS origins only, rejects credentials, paths, quer
 ## Phase C: hosted account experience
 
 Signup and login use a two-column introduction/form-panel composition on desktop and stack below 48rem. TOTP/expired challenges, dashboard, billing walls and return/error screens retain the shared cards, states and readable facts. Labels, actions, methods, names, challenge tokens and billing meanings remain intact. Error notices announce as alerts; account confirmations announce as status. The TOTP input permits the keyboard needed for alphanumeric recovery codes and points to its explanatory text. No session, membership, billing or encryption implementation is changed.
+
+## Phase D: practice workspace
+
+The common renderer now gives every signed-in practice page a 14.5rem desktop navigation rail, grouped workspace/practice routes, an account-security entry and an existing POST sign-out. Under 64rem, a native details menu replaces the rail and preserves keyboard behavior without new JavaScript. The same escaped navigation fragment renders both contexts. Existing routes, role checks and source-of-truth overview counts remain unchanged; no analytics are invented.
+
+Requests, clients, documents, templates, reminders, team, keys and integrations reuse the larger controls, page headings, surfaces and spacing. Request detail adds a native, labelled received-document progress indicator; review status still distinguishes received from checked. History becomes a readable timeline. Core table regions now have keyboard focus and accessible region names, preserving real table structure and narrow-screen horizontal scrolling. Shared empty states, warning/confirmation forms and passphrase fields remain intact. Every application page is noindex/nofollow; the optional public-site link accepts a validated operator HTTPS origin and carries no token/query data.
