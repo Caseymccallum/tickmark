@@ -15,6 +15,18 @@ if (process.argv.includes('--sync')) {
   for (const key of ['TICKMARK_PUBLIC_URL', 'TICKMARK_MARKETING_URL']) {
     if (process.env[key] && !publicOrigin(process.env[key])) throw new Error(`${key} must be an HTTPS origin without a path, credentials, query or fragment`);
   }
+  const demoOrigin = publicOrigin(process.env.TICKMARK_PUBLIC_DEMO_URL);
+  const demoApproved = process.env.TICKMARK_PUBLIC_DEMO_APPROVED === '1';
+  if (process.env.TICKMARK_PUBLIC_DEMO_URL && !demoOrigin) {
+    throw new Error('TICKMARK_PUBLIC_DEMO_URL must be one HTTPS origin, without credentials, path, query or fragment');
+  }
+  if (demoApproved && !demoOrigin) throw new Error('TICKMARK_PUBLIC_DEMO_APPROVED=1 requires a validated TICKMARK_PUBLIC_DEMO_URL');
+  if (demoApproved && demoOrigin) {
+    const fallback = '<!-- TICKMARK DEMO CTA START --><span class="btn" aria-disabled="true">Interactive demonstration coming soon</span><!-- TICKMARK DEMO CTA END -->';
+    if (!html.includes(fallback)) throw new Error('Marketing page does not contain the expected gated demo CTA slot');
+    html = html.replace(fallback,
+      `<!-- TICKMARK DEMO CTA START --><a class="btn primary" href="${escapeHtml(demoOrigin)}/" rel="noreferrer">Open interactive demonstration</a><!-- TICKMARK DEMO CTA END -->`);
+  }
   const app = publicOrigin(process.env.TICKMARK_PUBLIC_URL);
   const site = publicOrigin(process.env.TICKMARK_MARKETING_URL);
   if (app) html = html.replaceAll('href="#hosted-access" data-app-signin', `href="${escapeHtml(app)}/login" data-app-signin rel="noreferrer"`);

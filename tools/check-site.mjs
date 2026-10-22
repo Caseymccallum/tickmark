@@ -29,6 +29,8 @@ for (const tag of ['html', 'head', 'body', 'header', 'nav', 'section', 'div', 'p
 if (!/^<!doctype html>/i.test(html.trim())) problems.push('no doctype');
 if (!html.trim().endsWith('</html>')) problems.push('does not end with </html>');
 if (/undefined|\[object Object\]/.test(html)) problems.push('an undefined or stringified object leaked into the page');
+if (!html.includes('Interactive demonstration coming soon')) problems.push('public demo CTA must remain a truthful fallback in the source build');
+if (/127\.0\.0\.1|localhost|TICKMARK_PUBLIC_DEMO_URL/.test(html)) problems.push('a local or configuration-only demo URL leaked into the public marketing source');
 // The same two facts the application's checker requires of every page it serves: a keyboard's first Tab lands
 // on the content, and a phone's browser chrome matches the page. This page is opened from a phone more often
 // than the app is, so the skip link matters here at least as much.
