@@ -134,7 +134,7 @@ async function takeAll() {
     say(`${first ? '' : '\n'}${label}  ${id}`);
     first = false;
     try {
-      const manifest = await takeBackup(join(tenantsRoot, id), join(to, id), { say });
+      const manifest = await takeBackup(join(tenantsRoot, id), join(to, id), { say, includeBlobIntegrity: true });
       await verifyBackup(join(to, id), { say });
       documents += manifest.blobs.files;
       bytes += manifest.blobs.bytes;
@@ -150,8 +150,9 @@ async function takeAll() {
   // in the backup is the one kind of lie a restore cannot detect.
   say('\nregistry');
   let registryEntry = null;
+  let registryManifest = null;
   try {
-    await takeDatabaseBackup(registryFile, join(to, 'registry'), { say });
+    registryManifest = await takeDatabaseBackup(registryFile, join(to, 'registry'), { say });
     await verifyBackup(join(to, 'registry'), { say });
     registryEntry = { id: 'registry', kind: 'registry', name: 'registry', slug: null };
   } catch (error) {
@@ -162,10 +163,15 @@ async function takeAll() {
   // The fleet manifest, written last: it is what makes this directory a fleet backup rather than a pile of verified
   // practices. See the note at the top of this file.
   const fleet = {
+    format: 'tickmark-hosted-backup',
+    version: 2,
     at: new Date().toISOString(),
     from: dataDir,
     practices: entries,
     registry: registryEntry,
+    tenantIds: registryManifest?.tenantIds ?? [],
+    deletionTombstones: registryManifest?.deletionTombstones ?? [],
+    retentionHolds: registryManifest?.retentionHolds ?? [],
     verified: entries.length,
     failed: failures.map((failure) => failure.id),
     documents,

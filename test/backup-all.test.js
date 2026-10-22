@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -134,6 +134,16 @@ test('a practice that lost a document is named, and one broken practice does not
 
   const took = run(ALL, ['--data', install.dataDir, '--to', to]);
   assert.equal(took.status, 0, took.out);
+
+  const acmeBlob = blob(to, install.ids.acme);
+  const intactBytes = readFileSync(acmeBlob);
+  const corrupted = Buffer.from(intactBytes);
+  corrupted[corrupted.length - 1] ^= 0xff;
+  writeFileSync(acmeBlob, corrupted);
+  const corruptCheck = run(ALL, ['--verify', to]);
+  assert.equal(corruptCheck.status, 1, 'a same-size ciphertext modification is detected');
+  assert.match(corruptCheck.out, /blob integrity check failed/);
+  writeFileSync(acmeBlob, intactBytes);
 
   // Baker's copy loses the document the row names — the failure `--verify` exists to catch.
   rmSync(blob(to, install.ids.baker));

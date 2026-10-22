@@ -1,0 +1,15 @@
+[Unit]
+Description=Verified encrypted off-site Tickmark hosted backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/tickmark/ops/tickmark-hosted-backup.sh
+TimeoutStartSec=6h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/tickmark /run/lock

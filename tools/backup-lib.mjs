@@ -155,6 +155,8 @@ export async function takeBackup(dataDir, to, { say = () => {}, fileFilter = () 
   say(`documents  ${blobFiles.length} files, ${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
   const manifest = {
+    format: 'tickmark-practice-backup',
+    version: 2,
     kind: 'practice',
     at: new Date().toISOString(),
     from: dataDir,
@@ -204,6 +206,21 @@ export async function verifyFleetBackup(to, { say = () => {} } = {}) {
   const fleet = JSON.parse(readFileSync(file, 'utf8'));
 
   const failures = [];
+  if (fleet.format && fleet.format !== 'tickmark-hosted-backup') {
+    failures.push({ id: 'fleet', label: 'fleet manifest', problems: [`unsupported fleet format: ${fleet.format}`] });
+  }
+  if (fleet.version !== undefined && fleet.version !== 2) {
+    failures.push({ id: 'fleet', label: 'fleet manifest', problems: [`unsupported fleet version: ${fleet.version}`] });
+  }
+
+  const ids = new Set();
+  for (const entry of fleet.practices ?? []) {
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(entry.id ?? '') || ids.has(entry.id)) {
+      failures.push({ id: 'fleet', label: 'fleet manifest', problems: ['practice entries must have unique UUID ids'] });
+      break;
+    }
+    ids.add(entry.id);
+  }
   for (const entry of fleet.practices ?? []) {
     const label = entry.name ?? entry.slug ?? entry.id;
     say(`\n${label}  ${entry.id}`);
@@ -220,7 +237,17 @@ export async function verifyFleetBackup(to, { say = () => {} } = {}) {
   if (fleet.registry) {
     say('\nregistry');
     try {
-      await verifyBackup(join(to, 'registry'), { say });
+      const registry = await verifyBackup(join(to, 'registry'), { say });
+      if (fleet.format === 'tickmark-hosted-backup') {
+        const practiceIds = new Set((fleet.practices ?? []).map((entry) => entry.id));
+        const missing = (registry.tenantIds ?? []).filter((id) => !practiceIds.has(id));
+        if (missing.length) throw new Error(`registry names ${missing.length} practice directories absent from this backup: ${missing.slice(0, 5).join(', ')}`);
+        for (const field of ['tenantIds', 'deletionTombstones', 'retentionHolds']) {
+          if (JSON.stringify(fleet[field] ?? []) !== JSON.stringify(registry[field] ?? [])) {
+            throw new Error(`fleet ${field} differ from the registry recovery metadata`);
+          }
+        }
+      }
     } catch (error) {
       failures.push({ id: 'registry', label: 'registry', problems: error.problems ?? [error.message] });
       say('  FAILED — see the list at the end.');
@@ -244,16 +271,30 @@ export async function takeDatabaseBackup(file, to, { say = () => {} } = {}) {
 
   const db = openDatabase(path);
   const counts = registryCounts(db);
+  const tenantIds = db.prepare('SELECT id FROM tenant ORDER BY id').all().map((row) => row.id);
+  const deletionTombstones = db.prepare(
+    `SELECT tenant_id, slug_digest, state, requested_at, delete_after, completed_at, retention_hold_until
+       FROM tenant_deletion ORDER BY tenant_id`,
+  ).all();
+  const retentionHolds = db.prepare(
+    `SELECT id AS tenant_id, retention_hold_until FROM tenant
+      WHERE retention_hold_until IS NOT NULL ORDER BY id`,
+  ).all();
   db.close();
   say(`contents   ${counts.accounts} accounts, ${counts.tenants} tenants, ${counts.hosts} host names`);
 
   const manifest = {
+    format: 'tickmark-practice-backup',
+    version: 2,
     kind: 'registry',
     at: new Date().toISOString(),
     from: file,
     database: { file: name, bytes: readFileSync(path).length, sha256: await digestOf(path) },
     blobs: { files: 0, bytes: 0 },
     counts,
+    tenantIds,
+    deletionTombstones,
+    retentionHolds,
   };
   writeFileSync(join(to, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
@@ -274,6 +315,9 @@ export async function verifyBackup(to, { say = () => {} } = {}) {
   const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
   const kind = KINDS[manifest.kind ?? 'practice'];
   const problems = [];
+  if (!kind) problems.push(`unsupported backup kind: ${String(manifest.kind)}`);
+  if (manifest.format && manifest.format !== 'tickmark-practice-backup') problems.push(`unsupported backup format: ${manifest.format}`);
+  if (manifest.version !== undefined && manifest.version !== 2) problems.push(`unsupported backup version: ${manifest.version}`);
 
   const database = join(to, manifest.database.file);
   if (!existsSync(database)) {
@@ -307,6 +351,21 @@ export async function verifyBackup(to, { say = () => {} } = {}) {
       say(`documents  every one of the ${named} rows has its file present`);
     }
 
+    const integrity = manifest.blobs?.integrity;
+    if (integrity) {
+      if (integrity.length !== manifest.blobs.files) {
+        problems.push('the blob integrity manifest does not list every copied file');
+      } else {
+        for (const entry of integrity) {
+          const file = join(to, 'blobs', entry.path);
+          if (!present.has(entry.path) || (await digestOf(file)) !== entry.sha256 || (await lstat(file)).size !== entry.bytes) {
+            problems.push(`blob integrity check failed: ${entry.path}`);
+          }
+        }
+        if (problems.length === 0) say(`integrity  sha256 verified for all ${integrity.length} copied blob files`);
+      }
+    }
+
     const orphans = present.size - named;
     if (orphans > 0) {
       say(`note       ${orphans} file${orphans === 1 ? '' : 's'} with no row — written during the backup, and`);
@@ -320,6 +379,18 @@ export async function verifyBackup(to, { say = () => {} } = {}) {
     try {
       const counts = registryCounts(db);
       say(`contents   ${counts.accounts} accounts, ${counts.tenants} tenants, ${counts.hosts} host names, all readable`);
+      const tenantIds = db.prepare('SELECT id FROM tenant ORDER BY id').all().map((row) => row.id);
+      const deletionTombstones = db.prepare(
+        `SELECT tenant_id, slug_digest, state, requested_at, delete_after, completed_at, retention_hold_until
+           FROM tenant_deletion ORDER BY tenant_id`,
+      ).all();
+      const retentionHolds = db.prepare(
+        `SELECT id AS tenant_id, retention_hold_until FROM tenant
+          WHERE retention_hold_until IS NOT NULL ORDER BY id`,
+      ).all();
+      if (JSON.stringify(tenantIds) !== JSON.stringify(manifest.tenantIds ?? [])) problems.push('registry tenant list differs from its backup manifest');
+      if (JSON.stringify(deletionTombstones) !== JSON.stringify(manifest.deletionTombstones ?? [])) problems.push('deletion tombstone list differs from its backup manifest');
+      if (JSON.stringify(retentionHolds) !== JSON.stringify(manifest.retentionHolds ?? [])) problems.push('retention hold list differs from its backup manifest');
     } catch (error) {
       problems.push(`the copy does not hold a registry a restore could use: ${error.message}`);
     }
