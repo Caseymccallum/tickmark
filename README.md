@@ -195,6 +195,7 @@ Guides, and the reasoning behind the decisions:
 - [sms.md](docs/sms.md) — texting a reminder: the gateway, the one-line message, and what it never carries
 - [saas.md](docs/saas.md) — the hosted layer, and what is not proven about it
 - [phase-1-hosted-identity.md](docs/phase-1-hosted-identity.md) — hosted login, TOTP, staff invitations, membership and verification results
+- [phase-2-data-custody.md](docs/phase-2-data-custody.md) — storage quotas, upload reconciliation, owner export/restore, offboarding and retention
 - [operations.md](docs/operations.md) — running it for a practice: backup and restore, and storage
 - [verify-demand.md](docs/verify-demand.md) — the research: what was asked, what came back, and the reading
 - [go-succeed-prep.md](docs/go-succeed-prep.md) — the business-prep pack for a Go Succeed NI application
@@ -213,6 +214,7 @@ Guides, and the reasoning behind the decisions:
 | `docs/design.md` | The look: what it is, the rules behind it, and how to review a page |
 | `docs/saas.md` | The multi-tenant hosted layer, and which parts are built vs unproven |
 | `docs/phase-1-hosted-identity.md` | Hosted login, TOTP, staff invitations, membership and verification results |
+| `docs/phase-2-data-custody.md` | Storage limits, export, restore, reconciliation, deletion and retention |
 | `docs/mail.md` | Sending reminders: what to configure, why a relay, and what the tests cover |
 | `docs/sms.md` | Texting a reminder: the gateway, the one-line message, and what it never carries |
 | `docs/operations.md` | Running it for a practice: backup, restore, and the storage ceilings |

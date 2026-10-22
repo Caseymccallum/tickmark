@@ -106,13 +106,13 @@ TICKMARK_MAX_REQUEST_BYTES=8589934592   # 8 GB
 TICKMARK_MAX_REQUEST_FILES=2000
 ```
 
-Both are read at startup by `src/server.js`. In a hosted install they come from the tenant's plan instead — see
-`PLANS` in `src/tenancy/registry.js`, where the `free` plan gets a tenth of these.
+Both are read at startup by `src/server.js`. Hosted practices also have an independent tenant-wide ciphertext quota,
+5 GiB by default; the quota is stored per tenant and is enforced against concurrent uploads. See
+[`phase-2-data-custody.md`](phase-2-data-custody.md) for storage reporting, export, restore and offboarding commands.
 
-**These bound a link, not a practice.** A practice with sixty clients has sixty of them, so the total a practice
-may store is a billing question rather than a product one, and it belongs to the hosted layer. On a self-hosted
-install the answer is your disk size, and the honest advice is to look at it once a season rather than to expect
-the software to.
+**These bound a link, not a practice.** Hosted practice totals are also capped by the tenant-wide quota. On a
+self-hosted install no practice quota is applied; the disk floor still refuses new uploads when the configured
+free-space threshold is reached.
 
 ## One thing that interacts with backups: the re-encryption pass
 

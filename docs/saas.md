@@ -426,8 +426,10 @@ while client links (`/r/<token>`) keep working.
 | `TICKMARK_TRUSTED_PROXIES` | empty | comma-separated proxy peer IPs allowed to supply `X-Forwarded-For` for login throttling |
 | `TICKMARK_SMTP_URL` / `TICKMARK_MAIL_FROM` | unset | one relay for the process (per-tenant relays are not built yet) |
 
-Backing up a hosted install is `cp -r data`, exactly as it is self-hosted: the registry is one file
-and every practice is a directory inside it.
+Back up a hosted install with the verified fleet tools, not a recursive copy while SQLite is running:
+`node tools/backup-all.mjs --data data --to <new-backup-directory>` and then
+`node tools/backup-all.mjs --verify <backup-directory>`. The registry and each practice directory form one
+recovery set. See [`operations.md`](operations.md) and [`phase-2-data-custody.md`](phase-2-data-custody.md).
 
 ## Phase 1 hosted identity
 
@@ -457,12 +459,12 @@ the reasons, in the order they would bite:
    records (the practice's and the registry's) can still drift at the edges — an operator's CLI reset
    touches only the practice file — but an ordinary password or address change now mirrors to both
    through `onCredentialChanged`, so one password stays one password.
-5. **No tenant deletion or export for a leaving customer.** `tools/import-tenant.mjs` goes one way.
+5. **Tenant data export and offboarding** are now implemented as an owner-verified export and a stateful deletion
+   workflow. Backup expiration and deletion propagation remain Phase 3 operational work.
 6. **One mail relay for the whole installation.** A hosted practice cannot yet send reminders from
    its own address.
-7. **`pending_payment` tenants get a real directory and a real practice row** — nobody can read it,
-   and an abandoned sign-up leaves a directory behind. A reaper for abandoned tenants does not exist
-   yet.
+7. **`pending_payment` tenants get a real directory and a real practice row.** The bounded dry-run reaper can now
+   schedule aged records for deletion; final purge still follows the retention window and any legal hold.
 
 
 ### 2.7 What this design costs, stated rather than discovered
