@@ -143,21 +143,21 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
     }));
   }
 
-  const rows = items.map((item) => html`<tr>
-    <td>
-      <span class="cell-t">${item.label}</span>
+  const rows = items.map((item) => html`<li class="client-item">
+    <div class="client-item-head"><div>
+      <h2>${item.label}</h2>
       ${item.note ? html`<span class="cell-s">${item.note}</span>` : ''}
       ${(answers.get(item.id) ?? []).map((upload) => html`<span class="cell-s">you sent
         <strong>${upload.filename}</strong> on ${dateIn(practice?.timezone, new Date(upload.uploaded_at))}</span>`)}
-    </td>
-    <td>${item.needsAttention
+    </div>
+    <div>${item.needsAttention
       ? html`${badge('please send this again', TONES.wrong)}${item.attentionNote ? html`<span class="cell-s">${item.attentionNote}</span>` : ''}`
       : (answers.get(item.id) ?? []).length > 0
-        ? badge('received', TONES.done)
+        ? html`${badge('received', TONES.done)}<span class="cell-s">${item.checked ? 'Checked by the practice' : 'Awaiting review by the practice'}</span>`
         : item.clientSays
           ? html`${badge('you said:', TONES.waiting)}<span class="cell-s">${item.clientSays}</span>`
-          : badge('still needed', TONES.waiting)}</td>
-    <td>
+          : badge('still needed', TONES.waiting)}</div></div>
+    <div>
       <form class="upload" method="post" action="/r/${params[0]}/items/${item.id}">
         ${/* The row names the document; these two still need a name of their own, because a file input with no label
               is announced as "choose file" and nothing else — and the cell that says which document it belongs to is
@@ -168,7 +168,7 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
           aria-label="A note about this document (optional)">
         <div class="row">
           <button type="submit">Send</button>
-          <span class="status"></span>
+          <span class="status" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
       </form>
       ${item.received
@@ -177,23 +177,21 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
             ${Object.entries(CLIENT_SAYS).map(([value, words]) => html`
               <button type="submit" name="says" value="${value}" class="ghost sm">${words}</button>`)}
           </form>`}
-    </td>
-  </tr>`);
+    </div>
+  </li>`);
 
   return sendPage(response, 200, page({
     title: `${practice?.name ?? 'Documents requested'} — ${open.title}`,
     // No sign-in link: a client has no account, and offering one is offering a door that is not
     // theirs. The practice's pages keep their own header, because there the link is the point.
     signIn: false,
-    banner: html`<p class="note"><strong>What you send is encrypted in this browser before it
-      leaves it.</strong> Only the practice can open it. What the server can still see is the
-      name of the file, which document it answers, and when it arrived — so name files the way
-      you would name an envelope, not the way you would name a letter.</p>`,
     body: html`
       <div class="client">
-        <p class="eyebrow">${practice?.name ?? 'Documents requested'}</p>
+        <div class="client-identity"><p class="eyebrow">${practice?.name ?? 'Documents requested'}</p>
         <h1>${open.title}</h1>
         <p class="who">${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
+        <p class="note">Choose your documents below. No account needed.</p></div>
+        <details class="client-privacy"><summary>How your documents are protected</summary><p class="note"><strong>What you send is encrypted in this browser before it leaves it.</strong> Only the practice can open it. The server can still see the filename, the document it answers and when it arrived. Keep this private link safe.</p></details>
         ${url.searchParams.get('said') === '1'
           ? html`<p class="success"><strong>Message sent.</strong> The practice has it, and it is kept with
               this request — you will see it below, and they will see it beside the documents.</p>`
@@ -201,17 +199,15 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
         ${open.client_note ? html`<div class="greeting">${open.client_note}</div>` : ''}
         ${items.length === 0
           ? ''
-          : received === items.length
+          : received === items.length && !items.some((item) => item.needsAttention)
             ? html`<p class="success"><strong>Thank you — everything asked for has arrived.</strong>
                 ${items.length === 1 ? 'The document you sent is' : `All ${items.length} documents are`}
                 with the practice. If they need anything else they will be in touch, and this page stays
                 here if you want to check what you sent.</p>`
             : html`<p class="count">You have sent ${received} of ${items.length}
                 ${items.length === 1 ? 'document' : 'documents'}.</p>`}
-        <div class="scroll"><table>
-          <thead><tr><th align="left">Document</th><th align="left">State</th><th align="left">Send it</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>
+        ${items.length > 0 ? html`<div class="client-summary"><p class="note">${received} of ${items.length} checklist items have files. The practice will review what you send.</p><progress value="${received}" max="${items.length}" aria-label="Checklist items with files">${received} of ${items.length}</progress></div>
+          <ol class="client-checklist" aria-label="Document checklist">${rows}</ol>` : ''}
         <p class="note">You can send more than one file at a time — photographs taken on your phone work as
         well as PDFs. If you cannot send one of these, say so with the buttons beside it — the practice
         would rather know than keep asking. Neither button takes it off the list; that is their call.</p>
@@ -227,7 +223,7 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
                   <span class="note"> — sent on ${dateIn(practice?.timezone, new Date(upload.uploaded_at))}</span>
                 </li>`)}</ul>`
           : ''}
-        <h2>Send something that was not asked for</h2>
+        <section class="client-support"><h2>Send something that was not asked for</h2>
         <p class="note">If you have a document the practice has not asked for — a letter, a form, anything
         you think they need — this is the safe way to send it. It is encrypted the same way as everything
         else, and they will see it attached to this request.</p>
@@ -238,7 +234,7 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
             aria-label="What is it? (optional)">
           <div class="row">
             <button type="submit">Send it</button>
-            <span class="status"></span>
+            <span class="status" role="status" aria-live="polite" aria-atomic="true"></span>
           </div>
         </form>
         <h2>Send a message</h2>
@@ -272,6 +268,7 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
           : ''}
         <p class="note">Nothing here needs an account. Come back to this page with the same
         link to send the rest — the list shows what has already arrived.</p>
+      </section>
       </div>
       ${jsonTag('practice-key', { keyId: open.practice_key_id, publicKey: JSON.parse(open.practice_public_key) })}
       ${jsonTag('upload-limit', { maxBytes: maxUploadBytes })}

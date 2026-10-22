@@ -35,7 +35,7 @@ const TOKENS = `
     --surface: #ffffff;
     --sunken: #edf1ec;
     --line: #dfe6de;
-    --line-2: #c9d3ca;
+    --line-2: #7b8f80;
 
     /* Ink, in four weights. Headings are a very dark navy rather than black: it reads as
        considered rather than default, and it is what makes a white page feel expensive. */
@@ -99,7 +99,7 @@ const TOKENS = `
       --surface: #14201c;
       --sunken: #101b17;
       --line: #283c32;
-      --line-2: #42594b;
+      --line-2: #668473;
 
       --ink: #e8f0eb;
       --ink-2: #d0ded5;
@@ -624,18 +624,11 @@ const SURFACES = `
 
 const CLIENT_AND_MISC = `
   /* --- the client's own page: the one a stranger sees, so it is the friendliest -------------- */
-  .client { max-width: 54rem; }
-  .client h1 { font-size: var(--fs-3xl); letter-spacing: -.03em; margin-bottom: .25rem; }
   .client .who { font-size: var(--fs-lg); color: var(--soft); margin: 0 0 1.25rem; }
-  .client .scroll { box-shadow: var(--sh-2); }
-  .client thead th { font-size: var(--fs-sm); text-transform: none; letter-spacing: 0; color: var(--soft); }
-  .client td { padding: .9rem 1rem; }
   .client .badge { height: 22px; font-size: var(--fs-sm); }
-  .client .upload { display: flex; flex-direction: column; gap: .4rem; margin: 0; }
   .client .upload .status { font-size: var(--fs-sm); }
   /* A check the browser made and the client can act on: not a refusal, so not the error colour either. */
   .client .upload .status.warn { color: var(--warn-ink); }
-  .client .says { margin-top: .35rem; }
 
   /* --- misc --------------------------------------------------------------------------------- */
   .stack { display: grid; gap: .5rem; }
@@ -795,8 +788,6 @@ const CLIENT_AND_MISC = `
 
   /* The public pages centre their content and give it room, because the person reading them has not decided to
      trust anything yet. */
-  .gateway { max-width: 34rem; margin: 0 auto; }
-  .gateway .hero h1 { font-size: 1.75rem; }
   .gateway .card { margin-top: 1.5rem; }
   .gateway .aside { margin-top: 1.25rem; font-size: .9375rem; color: var(--soft); }
   .gateway .aside a { font-weight: 550; }
@@ -861,7 +852,7 @@ const SHELL = `
   :focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
   input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
   .scroll:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
-  .gateway { max-width: 64rem; padding: 2rem 0; }
+  .gateway { max-width: 64rem; margin: 0 auto; padding: 2rem 0; }
   .gateway.auth-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 4rem; align-items: start; }
   .gateway .hero h1 { font-family: var(--display); font-size: clamp(2.3rem, 4vw, 3.25rem); font-weight: 500; line-height: 1.12; }
   .gateway .hero .lead { font-size: var(--fs-lg); }
@@ -874,6 +865,11 @@ const SHELL = `
   .center h1 { font-family: var(--display); font-size: 2rem; font-weight: 500; text-align: left; }
   .center .note { text-align: left; }
   .client { max-width: 48rem; margin: 0 auto; }
+  .public-layout main > h1 { font-family: var(--display); font-size: 2.5rem; font-weight: 500; margin-top: 2rem; max-width: 44rem; }
+  .public-layout main > p { max-width: 44rem; }
+  .client-privacy { margin: 1rem 0; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+  .client-privacy summary { padding: .5rem 0; cursor: pointer; color: var(--ink); font-size: var(--fs-md); font-weight: 600; min-height: 44px; }
+  .client-privacy[open] summary { margin-bottom: .75rem; }
   .client-identity { padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); margin-bottom: 1.5rem; }
   .client h1 { font-family: var(--display); font-size: clamp(2rem, 5vw, 2.8rem); font-weight: 500; line-height: 1.16; }
   .client-summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0; }
@@ -883,7 +879,7 @@ const SHELL = `
   .client-item-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-bottom: 1.25rem; }
   .client-item h2 { font-size: var(--fs-lg); margin: 0; }
   .client .cell-s { display: block; font-size: var(--fs-sm); color: var(--soft); margin-top: .35rem; overflow-wrap: anywhere; }
-  .client .upload { padding: 1rem; background: var(--sunken); border: 1px dashed var(--line-2); border-radius: var(--r-md); gap: .75rem; }
+  .client .upload { display: flex; flex-direction: column; margin: 0; padding: 1rem; background: var(--sunken); border: 1px dashed var(--line-2); border-radius: var(--r-md); gap: .75rem; }
   .client .upload input { max-width: 100%; }
   .client .upload input[type=file] { padding: .5rem; background: var(--surface); }
   .client .upload button[type=submit] { color: var(--primary-ink); background: var(--primary); border-color: var(--primary); }

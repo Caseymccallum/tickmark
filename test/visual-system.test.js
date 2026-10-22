@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { publicOrigin } from '../src/public-urls.js';
 import { signupPage, loginCodePage } from '../src/tenancy/views.js';
 import { html, page } from '../src/views.js';
+import { createLink, practiceWithRequest, upload, withServer } from './helpers.js';
 
 test('public navigation configuration accepts only an explicit HTTPS origin', () => {
   assert.equal(publicOrigin('https://www.example.test/'), 'https://www.example.test');
@@ -66,4 +67,29 @@ test('workspace shell keeps navigation and POST sign-out with an accessible nati
   assert.match(rendered, /id="main" tabindex="-1"/);
   const refused = page({ title: 'Client page', signIn: false, marketingUrl: 'https://example.test/r/bearer-secret', body: html`<h1>Documents</h1>` }).value;
   assert.doesNotMatch(refused, /bearer-secret|Public website|href="\/signin"/);
+});
+
+test('client checklist keeps encrypted upload contracts and distinguishes receipt, review and replacement', async () => {
+  await withServer(async ({ base, db, agent }) => {
+    const practice = await practiceWithRequest({ agent, db });
+    const { token } = await createLink(practice.client, practice.requestId);
+    const read = async () => (await fetch(`${base}/r/${token}`)).text();
+    const first = await read();
+    assert.match(first, /<ol class="client-checklist" aria-label="Document checklist">/);
+    assert.match(first, /class="status" role="status" aria-live="polite" aria-atomic="true"/);
+    assert.match(first, /aria-label="Upload one or more files for:/);
+    assert.doesNotMatch(first, /class="sidebar"|href="\/signin"/);
+    for (const itemId of practice.itemIds) {
+      const result = await upload({ base, token, itemId, publicKey: practice.keys.publicKey, plaintext: Buffer.from('FICTIONAL document'), filename: 'fictional.pdf' });
+      assert.equal(result.response.status, 201);
+    }
+    assert.match(await read(), /Awaiting review by the practice/);
+    await practice.client.post(`/requests/${practice.requestId}/items/${practice.itemIds[0]}/check`, {});
+    assert.match(await read(), /Checked by the practice/);
+    await practice.client.post(`/requests/${practice.requestId}/items/${practice.itemIds[0]}/attention`, { attention_note: 'Please send the missing second page' });
+    const replacement = await read();
+    assert.match(replacement, /please send this again/);
+    assert.match(replacement, /Please send the missing second page/);
+    assert.doesNotMatch(replacement, /Thank you — everything asked for has arrived/);
+  });
 });
