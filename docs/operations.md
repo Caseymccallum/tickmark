@@ -87,7 +87,7 @@ whole install down for every practice rather than for the one client.
 
 | | Default | Why |
 | --- | --- | --- |
-| Per file | 25 MB | Reading a very large file into memory is a memory problem, not a business one |
+| Per file | 25 MiB | Reading a very large file into memory is a memory problem, not a business one |
 | **Per link, total** | **2 GB** | A season's documents, generously measured |
 | **Per link, count** | **500 files** | A hundred thousand tiny files exhausts inodes long before bytes |
 

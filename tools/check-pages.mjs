@@ -84,6 +84,12 @@ for (const file of files) {
   }
   if (page.includes('class="skip"') && !page.includes('id="main"')) issues.push('a skip link with nothing to skip to');
 
+  for (const region of page.matchAll(/<div[^>]*class="scroll"[^>]*>/g)) {
+    if (!/tabindex="0"/.test(region[0]) || !/role="region"/.test(region[0]) || !/aria-label="[^"]+"/.test(region[0])) {
+      issues.push('a scrolling table region lacks keyboard access or an accessible name');
+    }
+  }
+
   // Every form control that renders as an input should be inside a form or a known exception.
   const buttonsOutsideForms = count(page, '</form>') === 0 && count(page, '<button') > 0;
 

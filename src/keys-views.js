@@ -313,7 +313,7 @@ export function setupForm({ db, response, practitioner, practiceId }) {
             </label>`
           : ''}
         <button type="submit" ${first ? 'disabled' : ''}>Make the key</button>
-        <div class="status note"></div>
+        <div class="status note" role="status" aria-live="polite" aria-atomic="true"></div>
       </form>
       <p class="note">Nothing can recover this passphrase and nothing can reset it.
       If you lose it, the files clients send you become unreadable — by you, by anyone. Write it
@@ -403,7 +403,7 @@ function recoverySection(current, sheet, justSheeted, justRecovered) {
               <input type="password" name="fresh" placeholder="a new passphrase" aria-label="A new passphrase" required autocomplete="new-password">
               <input type="password" name="again" placeholder="the new one again" aria-label="The new passphrase again" required autocomplete="new-password">
               <button type="submit">Re-seal the key under a new passphrase</button>
-              <span class="status note"></span>
+              <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
             </form>
           </details>
           <details>
@@ -411,7 +411,7 @@ function recoverySection(current, sheet, justSheeted, justRecovered) {
             <form class="recovery-sheet" data-key-id="${current.id}" method="post" action="/keys/${current.id}/recovery-sheet">
               <input type="password" name="passphrase" placeholder="the current passphrase" aria-label="The current passphrase" required autocomplete="current-password">
               <button type="submit">Make a new recovery sheet</button>
-              <span class="status note"></span>
+              <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
             </form>
           </details>`
       : html`<p class="note">If the passphrase is ever lost, the files are gone — that is what end-to-end encryption
@@ -420,7 +420,7 @@ function recoverySection(current, sheet, justSheeted, justRecovered) {
           <form class="recovery-sheet" data-key-id="${current.id}" method="post" action="/keys/${current.id}/recovery-sheet">
             <input type="password" name="passphrase" placeholder="the current passphrase" aria-label="The current passphrase" required autocomplete="current-password">
             <button type="submit">Make a recovery sheet</button>
-            <span class="status note"></span>
+            <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
           </form>`}
     <div id="recovery-sheet" class="card" hidden>
       <h3>Your recovery sheet</h3>
@@ -475,7 +475,7 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
           <input type="password" name="fresh" placeholder="new passphrase" aria-label="New passphrase" required autocomplete="new-password">
           <input type="password" name="again" placeholder="the new one again" aria-label="The new passphrase again" required autocomplete="new-password">
           <button type="submit">Change the passphrase</button>
-          <span class="status note"></span>
+          <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
         </form>
         ${key === current || holds === 0
           ? ''
@@ -483,7 +483,7 @@ export function keysPage({ db, response, practitioner, practiceId, url }) {
               <input type="password" name="passphrase" placeholder="this key's passphrase" aria-label="This key's passphrase" required autocomplete="current-password">
               <input type="password" name="current_passphrase" placeholder="the current key's passphrase, if it differs" aria-label="The current key's passphrase, if it differs" autocomplete="current-password">
               <button type="submit">Move ${holds} ${holds === 1 ? 'file' : 'files'} to the current key</button>
-              <span class="status note"></span>
+              <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
               <progress value="0" max="${holds}"></progress>
             </form>`}
         ${key === current || holds > 0

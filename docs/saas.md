@@ -101,7 +101,7 @@ not on the server at all.
 | Per-request tenant resolution + a backstop that cannot be forgotten | **Yes** — this is the heart of the plan |
 | Service-role bypass for server-owned work | **Yes** — reminders/chase run across tenants and must not be tenant-scoped |
 | One shared schema for all tenants | **Partly** — see the isolation decision below |
-| Ciphertext stored in-DB as JSON | **No** — Tickmark's blob files and envelope format are better for 25 MB documents, and they already exist |
+| Ciphertext stored in-DB as JSON | **No** — Tickmark's blob files and envelope format are better for 25 MiB documents, and they already exist |
 | Billing/plan tables beside tenant data | **No** — billing belongs to the SaaS layer, not the core schema |
 
 ---
@@ -443,7 +443,7 @@ the checklist below.
 | `STRIPE_SECRET_KEY` | unset | without it, sign-up still works and billing says it is not configured |
 | `STRIPE_PRICE_ID` | unset | the recurring price practices subscribe to |
 | `STRIPE_WEBHOOK_SECRET` | unset | without it the webhook endpoint refuses every event |
-| `TICKMARK_MAX_UPLOAD` | 25 MB | the per-file ceiling for the *process*; a plan overrides it per tenant |
+| `TICKMARK_MAX_UPLOAD` | 25 MiB | the per-file ceiling for the *process*; a plan overrides it per tenant |
 | `TICKMARK_INSECURE_COOKIES` | unset | `1` drops `Secure` from cookies — local plain-HTTP trials only |
 | `TICKMARK_TRUSTED_PROXIES` | empty | comma-separated proxy peer IPs allowed to supply `X-Forwarded-For` for login throttling |
 | `TICKMARK_SMTP_URL` / `TICKMARK_MAIL_FROM` | unset | one relay for the process (per-tenant relays are not built yet) |

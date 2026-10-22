@@ -240,7 +240,7 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
               </div>
               <button type="submit">Create an invitation</button>
             </form>
-            <p class="status" id="invite-status"></p>
+            <p class="status" id="invite-status" role="status" aria-live="polite" aria-atomic="true"></p>
             <p id="invite-link" hidden></p>
             ${jsonTag('invite-key', { keyId: newest.id, wrapped: mine })}
             ${raw('<script type="module" src="/assets/members.js"></script>')}
@@ -434,7 +434,7 @@ export async function invitePage({ db, response, params, error = null, onInviteE
         <input type="hidden" name="wrapped_private_key" id="wrapped_private_key">
         <button type="submit">Join</button>
       </form>
-      <p class="status" id="accept-status"></p>
+      <p class="status" id="accept-status" role="status" aria-live="polite" aria-atomic="true"></p>
       ${keyed
         ? html`<p class="note">Your browser opens the invitation with a secret that came in the link itself.
             That secret is never sent to the server, which is why this page needs JavaScript.</p>`

@@ -340,7 +340,7 @@ export async function quickBooksImport({ db, request, response, practitioner, pr
         <strong>${preview.unchanged}</strong> already there and left alone${preview.invalid
           ? html`, and <strong>${preview.invalid}</strong> with no name, skipped`
           : ''}.</p>
-        <div class="scroll"><table class="wide">
+        <div class="scroll" tabindex="0" role="region" aria-label="Scrollable QuickBooks import preview"><table class="wide">
           <thead><tr>
             <th align="left">Client</th><th align="left">Email address</th><th align="left">What happens</th>
           </tr></thead>

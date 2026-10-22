@@ -568,7 +568,7 @@ function codeForm({ error = null, action = '/signin/code' }) {
       ${error ? html`<p class="error">${error}</p>` : ''}
       <form method="post" action="${action}">
         <label for="code">Code <span class="note">— or one of your recovery codes</span></label>
-        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
+        <input id="code" name="code" inputmode="text" autocomplete="one-time-code" autofocus required
           maxlength="20" spellcheck="false" autocapitalize="none" class="code-input">
         <button type="submit">Continue</button>
       </form>
@@ -723,7 +723,7 @@ const twoFactorOnCard = ({ practitioner, left }) => html`
       <button type="submit">New recovery codes</button>
     </form>
     <form method="post" action="/account/two-factor/off" class="inline">
-      <input name="code" inputmode="numeric" maxlength="20" placeholder="code" spellcheck="false" autocapitalize="none"
+      <input name="code" inputmode="text" maxlength="20" placeholder="code" spellcheck="false" autocapitalize="none"
         aria-label="A code or a recovery code" required>
       <button type="submit" class="danger">Turn it off</button>
     </form>

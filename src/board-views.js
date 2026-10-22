@@ -831,7 +831,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
             <div class="row tight">
               <button type="submit">Save</button>
             </div>
-            <span class="status"></span>
+            <span class="status" role="status" aria-live="polite" aria-atomic="true"></span>
           </form>
         </details>`}`;
 
@@ -854,7 +854,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
           <button type="button" class="save" disabled
                   data-url="/requests/${found.id}/files/${file.id}"
                   data-name="${file.filename}">Save</button>
-          <span class="status note"></span>
+          <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
           ${file.client_note ? html`<div class="note">they said: ${file.client_note}</div>` : ''}
         </div>`)}</td>
     <td>${found.closed_at ? html`<span class="muted">closed</span>` : controlsFor(item)}</td>
@@ -974,7 +974,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
               ? html`<button type="button" id="download-all" disabled>Download everything
                   (${fileCount} files)</button>`
               : ''}
-            <span id="download-all-status" class="status note"></span>
+            <span id="download-all-status" class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
             <p id="unlock-status" class="note">It is used in this browser and sent nowhere. Unlocking
             keeps the keys in this tab so that saving several files does not mean typing it again.
             “Download everything” opens each file here and packs it into one archive — the plaintext
@@ -1096,7 +1096,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
                     <button type="button" class="save" disabled
                             data-url="/requests/${found.id}/files/${upload.id}"
                             data-name="${upload.filename}">Save</button>
-                    <span class="status note"></span>
+                    <span class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
                   </div></td>
                 </tr>`)}
               </tbody>
@@ -1127,7 +1127,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
                 aria-label="A note about this document (optional)">
               <div class="row">
                 <button type="submit">Add it to this request</button>
-                <span class="status"></span>
+                <span class="status" role="status" aria-live="polite" aria-atomic="true"></span>
               </div>
             </form>
           </section>`

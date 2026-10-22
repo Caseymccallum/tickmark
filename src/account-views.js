@@ -214,7 +214,7 @@ export function accountSessionsPage({ db, request, response, practitioner, url }
       ${ended === '0'
         ? html`<p class="note">There was nothing else to sign out — this is the only session.</p>`
         : ''}
-      <div class="scroll"><table>
+      <div class="scroll" tabindex="0" role="region" aria-label="Scrollable account sessions"><table>
         <thead><tr><th align="left">Signed in</th><th align="left">Expires</th><th align="left"></th></tr></thead>
         <tbody>
           ${sessions.map((row) => html`<tr>

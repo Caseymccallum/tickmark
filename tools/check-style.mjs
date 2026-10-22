@@ -144,6 +144,18 @@ for (const [mode, tokens] of [['light', light], ['dark', dark]]) {
 }
 console.log(`  ${PAIRS.length * 2} pairs of text and background clear AA; the tightest is ${tightest.name} at ${tightest.value.toFixed(2)}:1`);
 
+// Control boundaries need 3:1 against the surrounding surface (WCAG non-text contrast).
+for (const [mode, tokens] of [['light', light], ['dark', dark]]) {
+  for (const surface of SURFACES) {
+    const value = contrast(tokens.get('line-2'), tokens.get(surface));
+    if (value < 3) {
+      console.error(`  ${mode}: control border on ${surface} is ${value.toFixed(2)}:1, below 3:1`);
+      failed = true;
+    }
+  }
+}
+console.log('  control borders clear 3:1 on all three surfaces in both themes');
+
 const onlyLight = [...light.keys()].filter((name) => !dark.has(name));
 const onlyDark = [...dark.keys()].filter((name) => !light.has(name));
 if (onlyLight.length > 0 || onlyDark.length > 0) {

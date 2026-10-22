@@ -26,16 +26,11 @@
     --line: #dfe6de;
     --line-2: #7b8f80;
 
-    /* Ink, in four weights. Headings are a very dark navy rather than black: it reads as
-       considered rather than default, and it is what makes a white page feel expensive. */
+    /* Ink, in four weights: green-black headings, readable body copy and measured secondary labels. */
     --ink: #172d25;
     --ink-2: #30443b;
     --soft: #4e625a;
-    /* The quietest ink, and the only one whose whole job is small type: table headers, eyebrows, the footer.
-       It was #8b95a3, which measures 2.9:1 on the canvas — a label a person has to work to read is not a
-       subtle label, it is a missing one. #656e7b measures 4.9:1 on the canvas, 5.2 on a card and 4.7 on
-       the sunken fill, so the smallest type in the product clears AA on every surface it is actually used
-       on. Measured with the same formula the checkers would use, not chosen by eye. */
+    /* Quiet labels retain body-text contrast on every surface; checked in both themes. */
     --faint: #58675f;
 
     --link: #155e48;
@@ -93,8 +88,7 @@
       --ink: #e8f0eb;
       --ink-2: #d0ded5;
       --soft: #a0b3a8;
-      /* The same rule as the light faint — 5.1:1 on the canvas, 4.8 on a card — so a table header is as
-         readable in the dark as it is in the light. */
+      /* Quiet ink in the dark theme follows the same measured contrast rule. */
       --faint: #9caaa1;
 
       --link: #83d6b0;

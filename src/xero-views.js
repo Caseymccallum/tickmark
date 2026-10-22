@@ -410,7 +410,7 @@ export async function xeroImport({ db, request, response, practitioner, practice
         <strong>${preview.unchanged}</strong> already there and left alone${preview.invalid
           ? html`, and <strong>${preview.invalid}</strong> with no name, skipped`
           : ''}.</p>
-        <div class="scroll"><table class="wide">
+        <div class="scroll" tabindex="0" role="region" aria-label="Scrollable Xero import preview"><table class="wide">
           <thead><tr><th align="left">Client</th><th align="left">What happens</th></tr></thead>
           <tbody>${shown.map((row) => html`<tr>
             <td class="cell-t">${row.name || '—'}</td>

@@ -198,7 +198,7 @@ export function page({
 }) {
   const marketingSite = publicOrigin(marketingUrl);
   const navLink = (href, label, glyph) =>
-    html`<a href="${href}"${here === href ? raw(' aria-current="page"') : ''}>${icon(glyph)}<span>${label}</span></a>`;
+    html`<a href="${href}"${here === href ? raw(' aria-current="page"') : ''}>${label}${icon(glyph)}</a>`;
   const workspaceNav = practitioner ? html`
     <div class="nav-group"><p class="nav-label">Workspace</p>
       ${navLink('/requests', 'Requests', 'list')}

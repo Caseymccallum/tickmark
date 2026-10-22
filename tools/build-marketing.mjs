@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DESIGN_TOKENS } from '../src/style.js';
+import { escapeHtml } from '../src/views.js';
 import { publicOrigin } from '../src/public-urls.js';
 
 const source = new URL('../site/index.html', import.meta.url);
@@ -16,9 +17,9 @@ if (process.argv.includes('--sync')) {
   }
   const app = publicOrigin(process.env.TICKMARK_PUBLIC_URL);
   const site = publicOrigin(process.env.TICKMARK_MARKETING_URL);
-  if (app) html = html.replaceAll('href="#hosted-access" data-app-signin', `href="${app}/login" data-app-signin rel="noreferrer"`);
+  if (app) html = html.replaceAll('href="#hosted-access" data-app-signin', `href="${escapeHtml(app)}/login" data-app-signin rel="noreferrer"`);
   if (site) html = html.replace('<!-- Optional canonical metadata is added by tools/build-marketing.mjs. -->',
-    `<link rel="canonical" href="${site}/">\n<meta property="og:url" content="${site}/">`);
+    `<link rel="canonical" href="${escapeHtml(site)}/">\n<meta property="og:url" content="${escapeHtml(site)}/">`);
   const out = resolve(process.argv[2] ?? 'tmp-marketing');
   mkdirSync(out, { recursive: true });
   writeFileSync(resolve(out, 'index.html'), html);

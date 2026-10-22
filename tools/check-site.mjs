@@ -7,13 +7,16 @@
  * no page at all.
  */
 import { readFileSync } from 'node:fs';
-import { DESIGN_TOKENS } from '../src/style.js';
+import { CANVAS, DESIGN_TOKENS } from '../src/style.js';
 import { COMMERCIAL_PRICE } from '../src/tenancy/commercial-config.js';
 
 const html = readFileSync(new URL('../site/index.html', import.meta.url), 'utf8');
 const count = (pattern, text = html) => (text.match(pattern) ?? []).length;
 const tokenBlock = /\/\* TICKMARK TOKENS START \*\/([\s\S]*?)\/\* TICKMARK TOKENS END \*\//.exec(html)?.[1];
 const problems = [];
+for (const color of Object.values(CANVAS)) {
+  if (!html.includes(`name="theme-color" content="${color}"`)) problems.push(`marketing theme-color differs from canonical canvas ${color}`);
+}
 if (tokenBlock?.trim() !== DESIGN_TOKENS.trim()) problems.push('marketing tokens differ from src/style.js; run node tools/build-marketing.mjs --sync');
 
 // Tags that must balance. Void elements (br, input, link, meta, img, hr) are excluded because they never close.

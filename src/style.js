@@ -7,10 +7,9 @@
  * practice runs this on their own machine, and every dependency is something they must install,
  * trust and update. The sheet is inlined into each page, so it costs one request and can never 404.
  *
- * Where the ideas come from: Cal.com for the shadow-first monochrome and multi-layer elevation,
- * Stripe for tabular numerals and depth tinted with the ink rather than with black, Wise for the
- * single friendly green. Everything chromatic in here is a *state*. If a colour is ever decorative,
- * it is a mistake.
+ * The visual contract is DESIGN.md: a quiet working ledger, measured text, restrained green
+ * identity, tabular numerals and local typography. State families retain fixed meanings.
+ * Product behavior, form selectors and browser cryptography remain independent of styling.
  *
  * The rule that keeps it small: **no class is needed to render a page correctly.** `table`, `button`,
  * `input`, `h1`, `h2`, `.note` and `.warning` are styled by element or by names the product already
@@ -37,16 +36,11 @@ const TOKENS = `
     --line: #dfe6de;
     --line-2: #7b8f80;
 
-    /* Ink, in four weights. Headings are a very dark navy rather than black: it reads as
-       considered rather than default, and it is what makes a white page feel expensive. */
+    /* Ink, in four weights: green-black headings, readable body copy and measured secondary labels. */
     --ink: #172d25;
     --ink-2: #30443b;
     --soft: #4e625a;
-    /* The quietest ink, and the only one whose whole job is small type: table headers, eyebrows, the footer.
-       It was #8b95a3, which measures 2.9:1 on the canvas — a label a person has to work to read is not a
-       subtle label, it is a missing one. #656e7b measures 4.9:1 on the canvas, 5.2 on a card and 4.7 on
-       the sunken fill, so the smallest type in the product clears AA on every surface it is actually used
-       on. Measured with the same formula the checkers would use, not chosen by eye. */
+    /* Quiet labels retain body-text contrast on every surface; checked in both themes. */
     --faint: #58675f;
 
     --link: #155e48;
@@ -104,8 +98,7 @@ const TOKENS = `
       --ink: #e8f0eb;
       --ink-2: #d0ded5;
       --soft: #a0b3a8;
-      /* The same rule as the light faint — 5.1:1 on the canvas, 4.8 on a card — so a table header is as
-         readable in the dark as it is in the light. */
+      /* Quiet ink in the dark theme follows the same measured contrast rule. */
       --faint: #9caaa1;
 
       --link: #83d6b0;
@@ -216,7 +209,7 @@ const BASE = `
   /* --- type -------------------------------------------------------------------------------- */
   h1, h2, h3 {
     color: var(--ink); font-weight: 600; letter-spacing: -.02em;
-    margin: 0 0 .5rem; text-wrap: balance;
+    margin: 0 0 .5rem; text-wrap: balance; overflow-wrap: anywhere;
   }
   h1 { font-family: var(--display); font-size: 2rem; font-weight: 500; line-height: 1.2; }
   h2 { font-size: var(--fs-lg); line-height: 1.35; letter-spacing: -.015em; }
@@ -357,7 +350,7 @@ const COMPONENTS = `
   button.danger, .btn.danger { color: var(--bad-ink); background: var(--bad-bg); border-color: var(--bad-line); }
   button.danger:hover:not(:disabled), .btn.danger:hover { background: color-mix(in srgb, var(--bad-ink) 8%, var(--bad-bg)); }
   .btn.sm, button.sm { height: var(--control-sm); padding: 0 .55rem; font-size: var(--fs-sm); border-radius: var(--r-xs); }
-  .btn.lg, button.lg { height: 40px; padding: 0 1.1rem; font-size: var(--fs-base); }
+  .btn.lg, button.lg { height: 48px; padding: 0 1.1rem; font-size: var(--fs-base); }
 
   /* A row of actions, so buttons never float in prose. */
   .actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-top: 1rem; }
@@ -830,6 +823,7 @@ const SHELL = `
   .workspace-label { color: var(--soft); font-size: var(--fs-sm); border-left: 1px solid var(--line); padding-left: 1rem; }
   .app-layout { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); min-height: calc(100vh - var(--header)); }
   .sidebar { position: sticky; top: var(--header); height: calc(100vh - var(--header)); overflow-y: auto; padding: 1.6rem 1rem; border-right: 1px solid var(--line); background: var(--surface); }
+  .sidebar nav .icon, .mobile-nav nav .icon { order: -1; }
   .nav-group + .nav-group { margin-top: 1.75rem; }
   .nav-label { font-size: var(--fs-xs); font-weight: 650; color: var(--soft); letter-spacing: .08em; text-transform: uppercase; padding: 0 .75rem; margin-bottom: .5rem; }
   .sidebar nav a, .mobile-nav nav a { display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .65rem .75rem; border-radius: var(--r-sm); color: var(--soft); font-size: var(--fs-md); font-weight: 550; text-decoration: none; }
@@ -841,6 +835,7 @@ const SHELL = `
   .mobile-nav { display: none; }
   .account-actions { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
   .account-actions form { margin: 0; }
+  .account-actions > a { display: inline-flex; align-items: center; min-height: 44px; }
   .request-summary { display: flex; align-items: center; gap: 1.5rem; justify-content: space-between; flex-wrap: wrap; margin: 1rem 0; }
   .request-summary progress { width: 15rem; height: .6rem; }
   .timeline { list-style: none; padding: 0 0 0 1.4rem; margin: 1rem 0; border-left: 1px solid var(--line-2); }

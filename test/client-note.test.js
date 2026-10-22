@@ -38,7 +38,7 @@ test('a note to the client is stored, shown first on their page, and escaped', a
     const page = await (await fetch(`${base}/r/${token}`)).text();
     const noteAt = page.indexOf('Hi Sarah, here is the list for your 2026 corporate tax filing.');
     assert.ok(noteAt !== -1, 'the note is on the client page in the practice\u2019s own words');
-    assert.ok(noteAt < page.indexOf('<table>'), 'and it is above the list, not buried below it');
+    assert.ok(noteAt < page.indexOf('<ol class="client-checklist"'), 'and it is above the checklist, not buried below it');
     assert.match(page, /class="greeting"/, 'in its own box, not a paragraph lost in the page');
 
     // A note is the practice's words rendered as text, never as markup.

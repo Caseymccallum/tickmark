@@ -191,7 +191,7 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
         <h1>${open.title}</h1>
         <p class="who">${open.client_name}${open.due_at ? html` · needed by ${open.due_at}` : ''}</p>
         <p class="note">Choose your documents below. No account needed.</p></div>
-        <details class="client-privacy"><summary>How your documents are protected</summary><p class="note"><strong>What you send is encrypted in this browser before it leaves it.</strong> Only the practice can open it. The server can still see the filename, the document it answers and when it arrived. Keep this private link safe.</p></details>
+        <details class="client-privacy"><summary>How your documents are protected</summary><p class="note"><strong>What you send is encrypted in this browser before it leaves it.</strong> Only the practice can open it. The server can still see the name of the file, the document it answers and when it arrived. Keep this private link safe.</p></details>
         ${url.searchParams.get('said') === '1'
           ? html`<p class="success"><strong>Message sent.</strong> The practice has it, and it is kept with
               this request — you will see it below, and they will see it beside the documents.</p>`
