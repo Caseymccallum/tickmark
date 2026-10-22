@@ -46,3 +46,7 @@ The public page now presents the checklist, review, outstanding-item, upload and
 6. Marketing may be indexed; application pages emit `noindex, nofollow`. The static host should set appropriate CSP, `nosniff`, HTTPS/HSTS and no-referrer headers. The app retains its nonced CSP, same-origin form actions, CSRF checks and host-only secure cookies. Do not widen cookie Domain to connect marketing and app.
 
 Build configuration accepts HTTPS origins only, rejects credentials, paths, query strings and fragments, and never reads a request's return URL. Default standalone output performs no external resource fetches. No DNS, provider, billing, deployment or legal-publication action is included.
+
+## Phase C: hosted account experience
+
+Signup and login use a two-column introduction/form-panel composition on desktop and stack below 48rem. TOTP/expired challenges, dashboard, billing walls and return/error screens retain the shared cards, states and readable facts. Labels, actions, methods, names, challenge tokens and billing meanings remain intact. Error notices announce as alerts; account confirmations announce as status. The TOTP input permits the keyboard needed for alphanumeric recovery codes and points to its explanatory text. No session, membership, billing or encryption implementation is changed.

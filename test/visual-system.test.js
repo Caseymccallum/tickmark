@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { publicOrigin } from '../src/public-urls.js';
+import { signupPage, loginCodePage } from '../src/tenancy/views.js';
 
 test('public navigation configuration accepts only an explicit HTTPS origin', () => {
   assert.equal(publicOrigin('https://www.example.test/'), 'https://www.example.test');
@@ -31,4 +32,23 @@ test('standalone marketing output configures sign-in without enabling paid signu
   });
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /must be an HTTPS origin/);
+});
+
+test('gateway presentation preserves signup fields, escaping and inactive billing disclosure', () => {
+  const page = signupPage({ values: { practice_name: '<script>bad</script>', email: 'owner@example.test' }, problem: '<b>refused</b>' }).value;
+  assert.match(page, /form method="post" action="\/signup"/);
+  for (const name of ['practice_name', 'email', 'password']) assert.ok(page.includes(`name="${name}"`));
+  assert.match(page, /role="alert">&lt;b&gt;refused&lt;\/b&gt;/);
+  assert.match(page, /value="&lt;script&gt;bad&lt;\/script&gt;"/);
+  assert.match(page, /Payments are not configured/);
+  assert.doesNotMatch(page, /\sstyle="|\sonclick="/);
+});
+
+test('hosted challenge retains scoped action and recovery-code explanation after layout changes', () => {
+  const page = loginCodePage({ codePath: '/t/example/signin/code', problem: 'Try again' }).value;
+  assert.match(page, /form method="post" action="\/t\/example\/signin\/code"/);
+  assert.match(page, /name="code" inputmode="text" aria-describedby="code-help"/);
+  assert.match(page, /autocomplete="one-time-code"/);
+  assert.match(page, /id="code-help"/);
+  assert.match(page, /recovery code works once/);
 });

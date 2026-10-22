@@ -61,7 +61,8 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
   return gatewayPage(
     'Sign up',
     html`
-      <div class="gateway">
+      <div class="gateway auth-layout">
+        <div class="auth-intro">
         <div class="hero">
           <p class="eyebrow">A workspace of your own</p>
           <h1>Start your practice</h1>
@@ -85,7 +86,9 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
           ${tick(html`Your own address for the workspace, and your own people in it`)}
         </ul>
 
-        ${problem ? html`<p class="error">${problem}</p>` : ''}
+        </div>
+        <div class="auth-panel">
+        ${problem ? html`<p class="error" role="alert">${problem}</p>` : ''}
         ${billingReady
           ? html`<p class="note"><strong>Hosted subscription: ${COMMERCIAL_PRICE.display}.</strong>
               Payment details are required at checkout and the first payment is due immediately. There is no free trial.</p>`
@@ -96,17 +99,18 @@ export function signupPage({ values = {}, problem = null, billingReady = false }
         <form method="post" action="/signup" class="card">
           <label for="practice_name">Your practice</label>
           <input id="practice_name" name="practice_name" required value="${values.practice_name ?? ''}"
-            placeholder="Acme Accounting" autofocus>
-          <p class="note">This name is used to create your workspace address.</p>
+            placeholder="Acme Accounting" aria-describedby="practice-address-help" autofocus>
+          <p class="note" id="practice-address-help">This name is used to create your workspace address.</p>
           <label for="email">Your email</label>
           <input id="email" name="email" type="email" required value="${values.email ?? ''}" spellcheck="false"
             autocomplete="username">
           <label for="password">A password <span class="note">at least 12 characters</span></label>
-          <input id="password" name="password" type="password" required autocomplete="new-password">
+          <input id="password" name="password" type="password" required minlength="12" autocomplete="new-password">
           <button type="submit" class="primary">Create the workspace</button>
         </form>
 
         <p class="aside">Already have one? <a href="/login">Sign in</a>.</p>
+        </div>
       </div>`,
   );
 }
@@ -116,14 +120,17 @@ export function loginPage({ values = {}, problem = null, loginPath = '/login', s
   return gatewayPage(
     'Sign in',
     html`
-      <div class="gateway">
+      <div class="gateway auth-layout">
+        <div class="auth-intro">
         <div class="hero">
           <p class="eyebrow">Welcome back</p>
           <h1>Sign in</h1>
           <p class="lead">Your workspace, and the documents waiting in it.</p>
         </div>
 
-        ${problem ? html`<p class="error">${problem}</p>` : ''}
+        </div>
+        <div class="auth-panel">
+        ${problem ? html`<p class="error" role="alert">${problem}</p>` : ''}
 
         <form method="post" action="${loginPath}" class="card">
           <label for="email">Your email</label>
@@ -137,6 +144,7 @@ export function loginPage({ values = {}, problem = null, loginPath = '/login', s
         <p class="aside">No workspace yet? <a href="${signupPath}">Start one</a>.</p>
         <p class="aside">${icon('key')} Your passphrase is not asked for here. It opens the documents, in your
         browser, and the server never sees it.</p>
+        </div>
       </div>`,
     // The header's "Sign in" is suppressed here, because this *is* the sign-in page: a link to where you already are
     // is noise. On `/signup` it stays, where it is a genuine shortcut for somebody who came to the wrong page.
@@ -152,11 +160,11 @@ export function loginCodePage({ problem = null, expired = false, codePath = '/si
       ${expired
         ? html`<p>${problem ?? 'Nothing was signed in. Start again with your password.'}</p>
             <p><a class="btn" href="${loginPath}">Sign in again</a></p>`
-        : html`<p>Enter the code from your authenticator app, or use one of your recovery codes.</p>
-            ${problem ? html`<p class="error">${problem}</p>` : ''}
+        : html`<p id="code-help">Enter the code from your authenticator app, or use one of your recovery codes.</p>
+            ${problem ? html`<p class="error" role="alert">${problem}</p>` : ''}
             <form method="post" action="${codePath}" class="stack">
               <label for="code">Code</label>
-              <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required
+              <input id="code" name="code" inputmode="text" aria-describedby="code-help" autocomplete="one-time-code" required
                 maxlength="20" spellcheck="false" autocapitalize="none" autofocus>
               <button type="submit" class="primary">Continue</button>
             </form>
@@ -191,7 +199,7 @@ export function dashboardPage({
           </div>
         </div>
 
-        ${notice ? html`<p class="${noticeTone}">${icon(noticeTone === 'success' ? 'tick' : 'key')} ${notice}</p>` : ''}
+        ${notice ? html`<p class="${noticeTone}" role="status">${icon(noticeTone === 'success' ? 'tick' : 'key')} ${notice}</p>` : ''}
         ${!tenant
           ? html`<div class="state">
                 ${icon('person', 22, 'off')}
