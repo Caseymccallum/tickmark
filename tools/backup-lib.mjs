@@ -38,7 +38,9 @@
  */
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFile, lstat } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { openDatabase } from '../src/db.js';
 
@@ -60,14 +62,18 @@ function digestOf(file) {
 }
 
 /** Every file under a directory, as paths relative to it, with forward slashes. */
-export function filesUnder(root) {
+export function filesUnder(root, { maxFiles = 100_000 } = {}) {
   if (!existsSync(root)) return [];
   const found = [];
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`refusing to follow a symbolic link inside ${root}`);
       if (entry.isDirectory()) walk(path);
-      else found.push(relative(root, path).split(sep).join('/'));
+      else if (entry.isFile()) {
+        found.push(relative(root, path).split(sep).join('/'));
+        if (found.length > maxFiles) throw new RangeError(`directory exceeds the ${maxFiles} file scan limit`);
+      }
     }
   };
   walk(root);
@@ -90,9 +96,15 @@ async function snapshotDatabase(source, to, { say }) {
   mkdirSync(to, { recursive: true });
 
   const target = join(to, basename(source));
-  const db = openDatabase(source);
-  db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
-  db.close();
+  // This is a read-only snapshot connection. Running the application's opener here would execute
+  // schema DDL/migrations and could conflict with an export's transactionally held writer lock.
+  const db = new DatabaseSync(source);
+  db.exec('PRAGMA busy_timeout = 5000');
+  try {
+    db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+  } finally {
+    db.close();
+  }
   say(`database   ${basename(source)}, ${(readFileSync(target).length / 1024 / 1024).toFixed(1)} MB`);
   return { file: basename(source), path: target };
 }
@@ -116,7 +128,7 @@ function practiceCounts(db) {
  * therefore leaves a directory with no manifest, which verification refuses, rather than a manifest describing
  * something that is not there.
  */
-export async function takeBackup(dataDir, to, { say = () => {} } = {}) {
+export async function takeBackup(dataDir, to, { say = () => {}, fileFilter = () => true, includeBlobIntegrity = false } = {}) {
   const { file, path } = await snapshotDatabase(join(dataDir, 'tickmark.db'), to, { say });
 
   const db = openDatabase(path);
@@ -127,14 +139,18 @@ export async function takeBackup(dataDir, to, { say = () => {} } = {}) {
   // The documents, after the rows that point at them. See the note at the top of this file for why that order is
   // the one that cannot lose a document.
   const blobs = join(dataDir, 'blobs');
-  const blobFiles = filesUnder(blobs);
+  const blobFiles = filesUnder(blobs).filter(fileFilter);
   let bytes = 0;
+  const blobIntegrity = [];
   for (const name of blobFiles) {
-    const contents = readFileSync(join(blobs, name));
+    const source = join(blobs, name);
+    const info = await lstat(source);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error(`refusing non-regular blob file ${name}`);
     const copy = join(to, 'blobs', name);
     mkdirSync(dirname(copy), { recursive: true });
-    writeFileSync(copy, contents);
-    bytes += contents.length;
+    await copyFile(source, copy);
+    bytes += info.size;
+    if (includeBlobIntegrity) blobIntegrity.push({ path: name, bytes: info.size, sha256: await digestOf(source) });
   }
   say(`documents  ${blobFiles.length} files, ${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
@@ -143,7 +159,7 @@ export async function takeBackup(dataDir, to, { say = () => {} } = {}) {
     at: new Date().toISOString(),
     from: dataDir,
     database: { file, bytes: readFileSync(path).length, sha256: await digestOf(path) },
-    blobs: { files: blobFiles.length, bytes },
+    blobs: { files: blobFiles.length, bytes, ...(includeBlobIntegrity ? { integrity: blobIntegrity } : {}) },
     counts,
   };
   writeFileSync(join(to, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
