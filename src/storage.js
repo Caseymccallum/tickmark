@@ -49,10 +49,6 @@ export function releaseStorageReservation(db, uploadId) {
   db.prepare('DELETE FROM upload_reservation WHERE id = ?').run(uploadId);
 }
 
-/** Convert a reservation to a committed upload in the same transaction as the document row. */
-export function settleStorageReservation(db, uploadId) {
-  db.prepare('DELETE FROM upload_reservation WHERE id = ?').run(uploadId);
-}
 import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 

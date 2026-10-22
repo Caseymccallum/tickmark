@@ -10,8 +10,3 @@ export const COMMERCIAL_PRICE = Object.freeze({
   unitAmount: monthlyAmountPence,
   display: monthlyDisplay,
 });
-
-export const COMMERCIAL_TRIAL = Object.freeze({
-  enabled: false,
-  explanation: 'The current subscription Checkout requires payment details and starts billing immediately.',
-});

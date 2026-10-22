@@ -344,9 +344,6 @@ export async function booksSignalsForConnections({ accessToken, connections }) {
 // doubt — it is Xero's own documented Client object.
 export const XERO_PM_CLIENTS_URL = 'https://api.xero.com/practicemanager.xro/2.0/clients';
 
-/** What a Practice Manager import asks for. `practicemanager` is the gated scope. */
-export const XERO_PM_SCOPES = ['openid', 'email', 'profile', 'offline_access', 'practicemanager'].join(' ');
-
 /**
  * The practice's Practice Manager client list — name *and* email, unlike `connections`.
  *

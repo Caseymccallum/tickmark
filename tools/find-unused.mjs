@@ -7,11 +7,17 @@
  * wrong — during the audit that produced this file I claimed three dead things and two of them were live.
  */
 import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const read = (dir) =>
   readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.(js|mjs)$/.test(entry.name))
-    .map((entry) => [entry.name, readFileSync(`${dir}/${entry.name}`, 'utf8')]);
+    .flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return read(path);
+      return entry.isFile() && /\.(js|mjs)$/.test(entry.name)
+        ? [[path, readFileSync(path, 'utf8')]]
+        : [];
+    });
 
 const source = read('src');
 const corpus = [...source, ...read('test'), ...read('tools'), ...read('web')]
@@ -26,7 +32,7 @@ for (const [file, text] of source) {
 }
 
 // Exports kept deliberately with nothing referring to them — each name here is a decision, not a
-// silence. The list is empty today.
+// silence. Keep this empty unless a stable external entry point requires an otherwise-unused name.
 const ADMITTED = [];
 
 let dead = 0;
