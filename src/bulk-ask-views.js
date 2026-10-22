@@ -148,7 +148,7 @@ export function askEveryonePage({ db, response, practitioner, practiceId, url, m
               <h2>Attachment</h2>
               <p class="note">Optional: a file that goes with every ask — a signed engagement letter, a template to
               fill in. It rides each email and is kept nowhere, exactly as on a single ask.</p>
-              <input type="file" name="attachment">
+              <input type="file" name="attachment" aria-label="Optional attachment included with every client request">
 
               <h2>Who to ask</h2>
               <p class="note">${reachable.length} of ${clients.length}

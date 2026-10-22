@@ -200,6 +200,7 @@ test('a client with no email address is named, not asked and not quietly dropped
     );
 
     const page = await (await client.get('/ask-everyone')).text();
+    assert.match(page, /type="file" name="attachment" aria-label="Optional attachment included with every client request"/, 'the shared attachment input has an accessible name');
     assert.match(page, /1 of 2\s+clients can be emailed/, 'the page says who can be written to before anything happens');
     assert.match(page, /Paper Only Ltd[\s\S]{0,200}no email address — add one on their page first/, 'and why not');
 
