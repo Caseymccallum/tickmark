@@ -9,6 +9,7 @@ import { openDatabase } from '../src/db.js';
 import { openRegistry } from '../src/tenancy/registry.js';
 import { completeTenantDeletion, requestTenantDeletion, setTenantRetentionHold, suspendTenantDatabase, verifyTenantOwner } from '../src/tenancy/offboarding.js';
 import { createPracticeExport } from '../src/tenancy/practice-export.js';
+import { requireFreshHostedBackup } from '../src/tenancy/backup-status.js';
 
 const { values } = parseArgs({
   options: {
@@ -41,6 +42,7 @@ try {
     }
     console.log(`A retention hold was recorded for practice ${values.tenant} until ${new Date(values['hold-until']).toISOString()}.`);
   } else if (values.action === 'purge') {
+    await requireFreshHostedBackup(join(dataDir, 'hosted-backup-status.json'));
     const result = await completeTenantDeletion(registry, {
       tenantId: values.tenant,
       tenantsRoot,
