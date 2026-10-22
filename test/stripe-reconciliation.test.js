@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { reconcileStripeSubscription } from '../src/tenancy/billing.js';
+import { applyStripeEvent, reconcileStripeSubscription } from '../src/tenancy/billing.js';
 import { openRegistry } from '../src/tenancy/registry.js';
 import { retrieveSubscription, stripeFromEnvironment } from '../src/tenancy/stripe.js';
 
@@ -70,6 +70,57 @@ test('unavailable Stripe retrieval leaves local state and audit unchanged', asyn
   }
 });
 
+test('unsupported Stripe states and a newer local watermark cannot be reconciled', async () => {
+  const { directory, registry } = fixture();
+  const common = { tenantId: 'tenant-one', customerId: 'cus_one', operator: 'casey' };
+  try {
+    await assert.rejects(reconcileStripeSubscription(registry, {
+      ...common,
+      subscriptionId: 'sub_old',
+      retrieve: async () => ({ id: 'sub_old', customer: 'cus_one', status: 'unknown_status' }),
+    }), /unsupported subscription status/);
+    assert.equal(registry.prepare('SELECT status FROM tenant WHERE id = ?').get('tenant-one').status, 'cancelled');
+
+    registry.prepare('UPDATE tenant SET stripe_event_created = ? WHERE id = ?').run(1792661000, 'tenant-one');
+    await assert.rejects(reconcileStripeSubscription(registry, {
+      ...common,
+      subscriptionId: 'sub_old',
+      retrieve: async () => ({ id: 'sub_old', customer: 'cus_one', status: 'active' }),
+      at: () => TIME,
+    }), /later billing event is already recorded/);
+    assert.equal(registry.prepare('SELECT count(*) AS n FROM stripe_reconciliation').get().n, 0);
+  } finally {
+    registry.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a webhook received during reconciliation wins and its state cannot be overwritten by the lookup', async () => {
+  const { directory, registry } = fixture();
+  let eventResult;
+  try {
+    await assert.rejects(reconcileStripeSubscription(registry, {
+      tenantId: 'tenant-one', customerId: 'cus_one', subscriptionId: 'sub_new', operator: 'casey',
+      retrieve: async () => {
+        eventResult = applyStripeEvent(registry, {
+          id: 'evt-during-reconcile',
+          type: 'customer.subscription.created',
+          created: 1792660001,
+          data: { object: { id: 'sub_new', customer: 'cus_one', status: 'active', metadata: { tenant_id: 'tenant-one' } } },
+        }, { at: TIME });
+        return { id: 'sub_new', customer: 'cus_one', status: 'past_due' };
+      },
+      at: () => new Date('2026-10-22T08:00:02.000Z'),
+    }), /billing state changed during Stripe retrieval/);
+    assert.equal(eventResult?.outcome, 'applied');
+    assert.equal(registry.prepare('SELECT status FROM tenant WHERE id = ?').get('tenant-one').status, 'active');
+    assert.equal(registry.prepare('SELECT count(*) AS n FROM stripe_reconciliation').get().n, 0);
+  } finally {
+    registry.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('subscription retrieval uses explicit Stripe API id and returns only reconciliation fields', async () => {
   const previous = globalThis.fetch;
   let called = null;
@@ -83,6 +134,27 @@ test('subscription retrieval uses explicit Stripe API id and returns only reconc
     assert.equal(called.url, 'https://api.stripe.com/v1/subscriptions/sub_test');
     assert.equal(called.authorization, 'Bearer sk_test_reconcile');
     assert.deepEqual(result, { id: 'sub_test', customer: 'cus_test', status: 'past_due' });
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test('subscription retrieval rejects invalid inputs and never returns provider error bodies as a successful snapshot', async () => {
+  const previous = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 429, json: async () => ({ error: { type: 'rate_limit_error', message: 'synthetic private provider detail' } }) };
+  };
+  try {
+    await assert.rejects(retrieveSubscription({ secretKey: 'bad', valid: true }, 'sub_test'), /credentials are unavailable or invalid/);
+    await assert.rejects(retrieveSubscription(stripeFromEnvironment({ STRIPE_SECRET_KEY: 'sk_test_reconcile' }), 'invalid'), /explicit Stripe subscription id/);
+    assert.equal(calls, 0, 'invalid credentials and ids make no request');
+    await assert.rejects(
+      retrieveSubscription(stripeFromEnvironment({ STRIPE_SECRET_KEY: 'sk_test_reconcile' }), 'sub_test'),
+      (error) => error.status === 429 && error.type === 'rate_limit_error' && /synthetic private provider detail/.test(error.message),
+    );
+    assert.equal(calls, 1);
   } finally {
     globalThis.fetch = previous;
   }

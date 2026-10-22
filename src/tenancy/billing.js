@@ -156,10 +156,10 @@ export function applyStripeEvent(registry, event, { at = new Date() } = {}) {
 }
 
 /**
- * Retrieve Stripe's current subscription while holding the registry write lock, then reconcile
- * local access from that verified snapshot. The caller supplies a fetch function, never a status;
- * API or association failures roll back without changing tenant state. Each result is auditable and
- * contains identifiers/status only, not the API response or credentials.
+ * Retrieve Stripe's current subscription outside a write transaction, then reconcile local access
+ * only if no webhook or operator reconciliation changed the billing snapshot during the lookup.
+ * The caller supplies a fetch function, never a status. Failures leave tenant state unchanged; each
+ * committed result is auditable and contains identifiers/status only, not the API response or credentials.
  */
 export async function reconcileStripeSubscription(registry, {
   tenantId, customerId, subscriptionId, operator, retrieve, at = () => new Date(),
@@ -168,21 +168,37 @@ export async function reconcileStripeSubscription(registry, {
     throw new TypeError('tenant, customer, subscription, operator and Stripe retrieval are required');
   }
 
+  const before = registry.prepare('SELECT * FROM tenant WHERE id = ?').get(tenantId);
+  if (!before) throw new Error('the explicitly named tenant does not exist');
+  if (before.lifecycle_state !== 'active') throw new Error('a tenant in deletion lifecycle cannot be reconciled');
+  if (before.stripe_customer_id !== customerId) throw new Error('the Stripe customer id does not match the tenant association');
+  const knownSubscription = before.stripe_subscription_id === subscriptionId;
+  const newSubscription = before.status === 'cancelled' && !knownSubscription;
+  if (!knownSubscription && !newSubscription) throw new Error('the Stripe subscription id does not match the tenant association');
+  for (const [column, id] of [['stripe_customer_id', customerId], ['stripe_subscription_id', subscriptionId]]) {
+    const conflict = registry.prepare(`SELECT id FROM tenant WHERE ${column} = ? AND id != ?`).get(id, tenantId);
+    if (conflict) throw new Error(`the Stripe ${column === 'stripe_customer_id' ? 'customer' : 'subscription'} is associated with another tenant`);
+  }
+  const eventCount = registry.prepare('SELECT count(*) AS n FROM stripe_event WHERE tenant_id = ?').get(tenantId).n;
+  const reconciliationCount = registry.prepare('SELECT count(*) AS n FROM stripe_reconciliation WHERE tenant_id = ?').get(tenantId).n;
+
+  // Network I/O stays outside the SQLite write transaction. Webhooks can commit while Stripe is
+  // queried; the final locked compare below detects them and asks the operator to retrieve again.
+  const current = await retrieve();
   registry.exec('BEGIN IMMEDIATE');
   try {
     const tenant = registry.prepare('SELECT * FROM tenant WHERE id = ?').get(tenantId);
-    if (!tenant) throw new Error('the explicitly named tenant does not exist');
-    if (tenant.lifecycle_state !== 'active') throw new Error('a tenant in deletion lifecycle cannot be reconciled');
-    if (tenant.stripe_customer_id !== customerId) throw new Error('the Stripe customer id does not match the tenant association');
-    const knownSubscription = tenant.stripe_subscription_id === subscriptionId;
-    const newSubscription = tenant.status === 'cancelled' && !knownSubscription;
-    if (!knownSubscription && !newSubscription) throw new Error('the Stripe subscription id does not match the tenant association');
-    for (const [column, id] of [['stripe_customer_id', customerId], ['stripe_subscription_id', subscriptionId]]) {
-      const conflict = registry.prepare(`SELECT id FROM tenant WHERE ${column} = ? AND id != ?`).get(id, tenantId);
-      if (conflict) throw new Error(`the Stripe ${column === 'stripe_customer_id' ? 'customer' : 'subscription'} is associated with another tenant`);
+    if (!tenant) throw new Error('the explicitly named tenant no longer exists');
+    if (tenant.lifecycle_state !== 'active') throw new Error('a tenant entered deletion lifecycle during Stripe retrieval');
+    if (tenant.status !== before.status || tenant.stripe_customer_id !== before.stripe_customer_id ||
+        tenant.stripe_subscription_id !== before.stripe_subscription_id || tenant.stripe_event_created !== before.stripe_event_created) {
+      throw new Error('tenant billing state changed during Stripe retrieval; retrieve Stripe again');
+    }
+    if (registry.prepare('SELECT count(*) AS n FROM stripe_event WHERE tenant_id = ?').get(tenantId).n !== eventCount ||
+        registry.prepare('SELECT count(*) AS n FROM stripe_reconciliation WHERE tenant_id = ?').get(tenantId).n !== reconciliationCount) {
+      throw new Error('a billing event arrived during Stripe retrieval; retrieve Stripe again');
     }
 
-    const current = await retrieve();
     if (current?.id !== subscriptionId || current?.customer !== customerId) {
       throw new Error('Stripe returned a different customer or subscription than the explicit association');
     }
@@ -194,11 +210,11 @@ export async function reconcileStripeSubscription(registry, {
     const eventCreated = Math.floor(timestamp.getTime() / 1000);
     if (eventCreated < tenant.stripe_event_created) throw new Error('a later billing event is already recorded; retrieve Stripe again before reconciling');
 
-    const before = tenant.status;
+    const previousStatus = tenant.status;
     const pastDueSince = status === 'past_due'
-      ? (before === 'past_due' ? tenant.past_due_since : timestamp.toISOString())
+      ? (previousStatus === 'past_due' ? tenant.past_due_since : timestamp.toISOString())
       : null;
-    const outcome = before === status && knownSubscription ? 'confirmed' : 'corrected';
+    const outcome = previousStatus === status && knownSubscription ? 'confirmed' : 'corrected';
     registry.prepare(
       `UPDATE tenant SET status = ?, past_due_since = ?, stripe_subscription_id = ?,
          stripe_event_created = ? WHERE id = ?`,
@@ -208,10 +224,10 @@ export async function reconcileStripeSubscription(registry, {
         (id, tenant_id, customer_id, subscription_id, stripe_status, previous_status,
          resulting_status, outcome, operator, reconciled_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(newId(), tenantId, customerId, subscriptionId, current.status, before, status,
+    ).run(newId(), tenantId, customerId, subscriptionId, current.status, previousStatus, status,
       outcome, String(operator).trim().slice(0, 120), timestamp.toISOString());
     registry.exec('COMMIT');
-    return { outcome, before, after: status, tenantId, customerId, subscriptionId, at: timestamp.toISOString() };
+    return { outcome, before: previousStatus, after: status, tenantId, customerId, subscriptionId, at: timestamp.toISOString() };
   } catch (error) {
     try { registry.exec('ROLLBACK'); } catch { /* preserve the original failure */ }
     throw error;

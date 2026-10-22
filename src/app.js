@@ -525,7 +525,7 @@ export function createApp(db, {
           onInviteIssued,
           prepareHostedInvite,
           completeHostedInvite,
-          reconcileHostedInvite,
+          onInviteReconcile: reconcileHostedInvite,
           onInviteEmail: hostedInviteEmail,
           revokeHostedInvite,
           removeHostedMembership,

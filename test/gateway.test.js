@@ -194,6 +194,48 @@ test('signing up with Stripe redirects to checkout, with the tenant id in the me
   }
 });
 
+test('checkout and billing portal failures stay closed and never log provider response text', async () => {
+  const realFetch = globalThis.fetch;
+  const realError = console.error;
+  const logs = [];
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).startsWith('https://api.stripe.com')) return realFetch(url, init);
+    if (String(url).includes('/prices/')) {
+      return { ok: true, status: 200, json: async () => ({ active: true, currency: 'gbp', unit_amount: 4900, recurring: { interval: 'month', interval_count: 1 } }) };
+    }
+    return { ok: false, status: 503, json: async () => ({ error: { type: 'api_error', message: 'synthetic private provider detail sk_test_do_not_log' } }) };
+  };
+  console.error = (...values) => logs.push(values.join(' '));
+  try {
+    await withSaas(async ({ base, registry }) => {
+      const client = agent(base);
+      const created = await signup(client);
+      assert.equal(created.headers.get('location'), '/dashboard', 'a checkout creation failure returns to an owned account');
+      const tenant = tenantRow(registry);
+      registry.prepare('UPDATE tenant SET stripe_customer_id = ? WHERE id = ?').run('cus_synthetic', tenant.id);
+
+      const checkout = await client.post('/billing/checkout', {});
+      assert.equal(checkout.status, 503);
+      assert.match(await checkout.text(), /Checkout is unavailable/);
+      const portal = await client.post('/billing/portal', {});
+      assert.equal(portal.status, 502);
+      assert.match(await portal.text(), /Billing settings are unavailable/);
+      assert.ok(!logs.join('\n').includes('synthetic private provider detail'));
+      assert.ok(!logs.join('\n').includes('sk_test_do_not_log'));
+    }, {
+      env: {
+        STRIPE_SECRET_KEY: 'sk_test_local',
+        STRIPE_PRICE_ID: 'price_test_local',
+        STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET,
+        TICKMARK_PUBLIC_URL: 'http://localhost:3000',
+      },
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+    console.error = realError;
+  }
+});
+
 
 test('the webhook refuses a forged signature, and one that is too old to trust', async () => {
   await withSaas(
@@ -976,4 +1018,46 @@ test('hosted staff invitations create repeatable accounts, enforce tenant member
     assert.ok(!logText.includes('another long enough password'), 'passwords are not recorded in request logs');
     assert.match(logText, /\/invite\/\[redacted\]/);
   }, { log: (...entry) => logged.push(entry) });
+});
+
+test('an interrupted cross-database invitation acceptance completes from the committed tenant claim', async () => {
+  await withSaas(async ({ base, registry, pool }) => {
+    const platformHost = new URL(base).host;
+    await signup(agent(base));
+    const tenant = tenantRow(registry);
+    setTenantBilling(registry, tenant.id, { status: 'active' });
+    registry.prepare('INSERT INTO tenant_host (host, tenant_id) VALUES (?, ?)').run('recovery.example', tenant.id);
+    const owner = await askWithHost(base, '/signin', 'recovery.example', {
+      method: 'POST', form: { email: 'sam@acme.example', password: PASSWORD },
+    });
+    const ownerJar = owner.cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+    const made = await askWithHost(base, '/members/invite', 'recovery.example', {
+      method: 'POST', cookie: ownerJar, form: { email: 'pat@acme.example', role: 'assistant' },
+    });
+    assert.equal(made.status, 201);
+    const token = JSON.parse(made.body).token;
+    const tokenHash = (await import('../src/crypto.js')).hashToken(token);
+    registry.exec(`CREATE TRIGGER fail_hosted_invite_completion BEFORE UPDATE OF state ON hosted_invite
+      WHEN NEW.state = 'accepted' BEGIN SELECT RAISE(ABORT, 'synthetic registry failure'); END`);
+    const interrupted = await askWithHost(base, `/invite/${token}`, platformHost, {
+      method: 'POST', form: { email: 'pat@acme.example', password: 'pat synthetic password long' },
+    });
+    assert.notEqual(interrupted.status, 303, 'the registry completion failure does not report a finished join');
+    assert.equal(registry.prepare('SELECT state FROM hosted_invite WHERE token_hash = ?').get(tokenHash).state, 'accepting');
+    assert.equal(registry.prepare('SELECT count(*) AS n FROM tenant_member WHERE tenant_id = ? AND account_id = (SELECT id FROM account WHERE email = ?)')
+      .get(tenant.id, 'pat@acme.example').n, 0);
+    assert.ok(pool.get(tenant.id).prepare('SELECT id FROM practitioner WHERE email = ? AND removed_at IS NULL').get('pat@acme.example'),
+      'the tenant database has committed the invite claim');
+
+    registry.exec('DROP TRIGGER fail_hosted_invite_completion');
+    const recoveredPage = await askWithHost(base, `/invite/${token}`, platformHost);
+    assert.equal(recoveredPage.status, 410, 'the single-use invite is now shown as completed');
+    assert.equal(registry.prepare('SELECT state FROM hosted_invite WHERE token_hash = ?').get(tokenHash).state, 'accepted');
+    assert.equal(registry.prepare('SELECT count(*) AS n FROM tenant_member WHERE tenant_id = ? AND account_id = (SELECT id FROM account WHERE email = ?)')
+      .get(tenant.id, 'pat@acme.example').n, 1, 'the retry reconciles exactly one membership');
+    const memberLogin = await askWithHost(base, '/signin', 'recovery.example', {
+      method: 'POST', form: { email: 'pat@acme.example', password: 'pat synthetic password long' },
+    });
+    assert.equal(memberLogin.location, '/requests');
+  });
 });
