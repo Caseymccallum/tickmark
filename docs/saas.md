@@ -426,10 +426,10 @@ while client links (`/r/<token>`) keep working.
 | `TICKMARK_TRUSTED_PROXIES` | empty | comma-separated proxy peer IPs allowed to supply `X-Forwarded-For` for login throttling |
 | `TICKMARK_SMTP_URL` / `TICKMARK_MAIL_FROM` | unset | one relay for the process (per-tenant relays are not built yet) |
 
-Back up a hosted install with the verified fleet tools, not a recursive copy while SQLite is running:
-`node tools/backup-all.mjs --data data --to <new-backup-directory>` and then
-`node tools/backup-all.mjs --verify <backup-directory>`. The registry and each practice directory form one
-recovery set. See [`operations.md`](operations.md) and [`phase-2-data-custody.md`](phase-2-data-custody.md).
+For hosted installation, use the quiescent Restic backup, freshness monitoring, retention and tombstone-aware
+restore procedure in [`phase-3-hosted-operations.md`](phase-3-hosted-operations.md). `backup-all.mjs` makes a
+verified local fleet bundle, but does not by itself provide off-site protection or cross-database consistency.
+Phase 2's export/offboarding details remain in [`phase-2-data-custody.md`](phase-2-data-custody.md).
 
 ## Phase 1 hosted identity
 

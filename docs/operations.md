@@ -163,6 +163,11 @@ that step is first.
 
 ## Multi-tenant installs
 
+**Hosted operations are different from the single-practice procedure above.** Use the quiescent encrypted Restic
+workflow, deletion ledger and maintenance schedules in [`phase-3-hosted-operations.md`](phase-3-hosted-operations.md).
+The live `backup-all.mjs` commands below create and verify a *local fleet bundle*; by themselves they do not create
+an off-site backup or guarantee a cross-database recovery point.
+
 With `MULTI_TENANT=1`, `data/` holds a registry database and a directory per practice:
 
 ```
@@ -171,17 +176,17 @@ data/tenants/<id>/tickmark.db
 data/tenants/<id>/blobs/
 ```
 
-**Each practice is backed up separately, and all of them in one command:**
+**A local fleet bundle for inspection or transfer:**
 
 ```
 node tools/backup-all.mjs --data data --to /wherever/backups/2026-09-23
 node tools/backup-all.mjs --verify /wherever/backups/2026-09-23
 ```
 
-That walks every directory under `data/tenants` that holds a database, takes each practice's backup, **verifies it
-before moving to the next one**, then takes the registry, and finally writes `fleet.json` — the file that says which
-practices this backup holds. `node tools/backup.mjs --verify` checks a fleet backup too, from the top, so you do not
-have to remember which tool checks which kind.
+That walks tenant directories, verifies each tenant backup, captures registry and lifecycle metadata, and writes a
+versioned `fleet.json`. For hosted operations, the scheduled wrapper stops the single app process before this command,
+uploads the bundle to Restic, checks the repository and enforces retention only after upload succeeds. See the Phase 3
+runbook for setup and restore instructions.
 
 The reasons for the shape, in the order they matter:
 
@@ -201,10 +206,9 @@ The reasons for the shape, in the order they matter:
 - **Free re-take for one practice:** `--only <id>` backs up a named practice into a fresh directory, which is how
   one failed practice is re-taken without rewriting the backup you already have.
 
-**Restoring a fleet** is restoring one practice at a time — each practice's directory in this backup *is* a complete
-copy of that practice, in the layout `data/tenants/<id>/` expects — plus the registry's `saas.db` into `data/`, or
-nobody can sign in to any of them. Restore the practice whose day is on fire first, and take your time over the
-rest.
+Do not use manual file copying as the normal hosted restore. `tools/restore-hosted.mjs` restores a complete Restic
+snapshot to a fresh data directory, verifies it, replays the newest deletion ledger, and leaves the service stopped.
+The old hand-copy description above does not include anti-resurrection or consistency safeguards.
 
 ## Running it in production: the checklist
 
@@ -227,18 +231,19 @@ Strict-Transport-Security: max-age=31536000; includeSubDomains
 The app's own `Referrer-Policy`, `X-Content-Type-Options` and `X-Frame-Options` travel on every response already;
 HSTS is the one that is deliberately left to the proxy.
 
-### Backups: schedule them, and drill the restore
+### Backups: schedule them, and drill the restore (single-tenant only)
 
 Take one every night, onto another machine, and verify it in the same job:
 
 ```
-# /etc/cron.d/tickmark — 2am nightly, one directory per day
-0 2 * * *  node /app/tools/backup-all.mjs --data /data --to /backups/$(date +\%F) && node /app/tools/backup-all.mjs --verify /backups/$(date +\%F)
+# Single-tenant/self-hosted example only. Do not use for MULTI_TENANT=1.
+0 2 * * *  node /app/tools/backup.mjs --data /data --to /backups/$(date +\%F) && node /app/tools/backup.mjs --verify /backups/$(date +\%F)
 ```
 
 (`backup.mjs` for a single-tenant install.) **A backup you have never restored is a hope, not a backup** — so once
 a month, run "What a restore involves" above against a scratch directory and open a practice. The test suite drills
-the *mechanics* (`test/backup.test.js`, `test/backup-all.test.js`); this drills *your* backup, on *your* disk.
+the *mechanics* (`test/backup.test.js`, `test/backup-all.test.js`); this drills *your* backup, on *your* disk. Hosted
+installations must use the Phase 3 timer and a remote-repository restore drill instead of this cron example.
 
 ### Uptime: watch the one address that needs no sign-in
 
