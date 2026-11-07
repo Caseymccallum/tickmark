@@ -121,6 +121,34 @@ moves the row to the new path, so **a backup taken mid-pass can capture a row po
 to be unlinked**. `--verify` catches it — that is precisely the check it performs — but the way to avoid it is
 to take backups outside the pass.
 
+## A member whose role is unrecognised
+
+Every member's `role` column holds one of `owner`, `accountant` or `assistant` — or **nothing at all**, which is what
+rows created before roles existed hold, and which reads as owner because that is what every member had at the time.
+
+Anything else in that column is a value this version does not understand: a truncated field, a typo made with a SQL
+prompt, a row restored from a mangled dump. It is treated as **no permission at all** — the member can sign in and see
+the board, and nothing else, and holds no copy of the key. It is never read as the owner.
+
+That is a deliberate change. Reading an unrecognised value as the owner meant a single corrupted character in a
+database could hand somebody the keys to every document in the practice, and it also disagreed with the database:
+`store.js` has always counted an owner as `role = 'owner' OR role IS NULL`, so the SQL and the application held
+different opinions about the same row.
+
+**The members page says so.** An owner who opens `/members` sees a warning naming every affected row, and the picker
+on that row reads *"Unrecognised — choose a role"* instead of silently showing whichever role happened to sort first.
+
+To repair it, set a real role from that picker. If the practice has no working owner left — five corrupted rows and
+nobody to fix them — the same thing from a shell, with the server stopped:
+
+```sql
+-- Back up first: node tools/backup.mjs --data data --to /wherever/backups/before-role-repair
+UPDATE practitioner SET role = 'owner' WHERE email = 'the.owner@practice.example';
+```
+
+Do not use `role = NULL` to mean "make them an owner": null is the legacy reading and will work, but it hides the
+history of why the row needed repairing. Write the role you actually mean.
+
 ## Upgrading
 
 **There is nothing to install and nothing to compile.** No dependencies is not a slogan here — it means an upgrade

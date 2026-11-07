@@ -16,7 +16,7 @@ import { endAllSessions } from './auth.js';
 import { dateIn, monthIn } from './clock.js';
 // For the one question a role change asks of the model rather than of the database: whether the new role
 // holds the key. Store and policy stay separate — this imports the answer, it does not restate it.
-import { holdsKey } from './roles.js';
+import { assertKnownRole, holdsKey } from './roles.js';
 
 /**
  * How much of a client's own words to keep.
@@ -87,6 +87,7 @@ export function inTransaction(db, fn) {
  */
 export function createInvite(db, { practiceId, createdBy, keyId = null, sealedKey = null, role = null, tokenHash, expiresAt, at = now() }) {
   const id = newId();
+  assertKnownRole(role);
   db.prepare(
     `INSERT INTO invite (id, practice_id, created_by, key_id, token_hash, sealed_key, expires_at, created_at, role)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -255,6 +256,7 @@ export function createPractice(db, { name, at = now() }) {
  */
 export function createPractitioner(db, { practiceId, email, passwordHash, role = null, at = now() }) {
   const id = newId();
+  assertKnownRole(role);
   db.prepare(
     'INSERT INTO practitioner (id, practice_id, email, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(id, practiceId, email, passwordHash, at, role);
@@ -2093,6 +2095,7 @@ export function ownersOf(db, practiceId) {
  * their new accountant still cannot open anything.
  */
 export function setRole(db, practiceId, practitionerId, role) {
+  assertKnownRole(role);
   return inTransaction(db, () => {
     const member = memberIn(db, practiceId, practitionerId);
     if (!member || member.removed_at) return { state: 'no-such-member' };

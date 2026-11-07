@@ -40,6 +40,14 @@
  */
 export const ROLES = ['assistant', 'accountant', 'owner'];
 
+/**
+ * What a stored value that is *not* one of the three is called when it has to be shown.
+ *
+ * It is not in `ROLES`, so it can never be chosen, offered in a `<select>`, or written back: it exists only
+ * so the members page can name the problem out loud instead of mislabelling the row "Owner".
+ */
+export const UNKNOWN_ROLE = 'unknown';
+
 /** Higher wins. A route names the least a member needs, and the check is one comparison. */
 const RANKS = { assistant: 1, accountant: 2, owner: 3 };
 
@@ -47,6 +55,7 @@ export const ROLE_WORDS = {
   owner: 'Owner',
   accountant: 'Accountant',
   assistant: 'Assistant',
+  [UNKNOWN_ROLE]: 'Unrecognised',
 };
 
 /**
@@ -59,20 +68,69 @@ export const ROLE_WORDS = {
 export const DEFAULT_ROLE = 'owner';
 
 /**
- * A member's rank, with corruption reading as capable rather than as downgraded.
+ * A member's rank.
  *
- * An unrecognised value can only arrive by somebody hand-editing the database, and both possible readings
- * are wrong in some way. Failing *closed* would silently strip a member of access to a practice's records
- * — a thing they would notice only later, and only if it was them. Failing open restores exactly what
- * every member had before roles existed. The second is the recoverable mistake, so it is the one made.
+ * Three readings, and the difference between them is the whole of this function:
+ *
+ * - **`null` is a legacy row** — a member created, or an invitation issued, before roles existed. Reading
+ *   that as owner is the documented migration contract (`db.js` deliberately leaves the column null and
+ *   says so), and it is what every member had at the time. Preserved.
+ * - **A name in `ROLES`** is a real role, and gets its rank.
+ * - **Anything else** — a truncated value, a typo, a corrupted column, a bad import — gets **no
+ *   privileges at all**. It cannot reach a gated route and it cannot hold the key.
+ *
+ * The last line used to read as *owner*, on the argument that failing closed would silently strip a
+ * member of access. That reasoning was wrong in the one direction that matters: an unrecognised value can
+ * only arrive by someone editing the database or a bad restore, and the correct response to "I do not
+ * know what this person is" is not "then they are the owner". The old behaviour also disagreed with the
+ * database: `ownersOf` (`store.js`) has always counted only `role = 'owner' OR role IS NULL`, so the SQL
+ * and the application held different opinions about the same row. They now agree.
+ *
+ * A practice whose data is corrupt enough to hit this can repair it with one statement — see
+ * `docs/operations.md`, "A member whose role is unrecognised".
  */
-const rankOf = (role) => RANKS[role] ?? RANKS[DEFAULT_ROLE];
+const rankOf = (role) => {
+  if (role === null) return RANKS[DEFAULT_ROLE];
+  const rank = RANKS[role];
+  return typeof rank === 'number' ? rank : 0;
+};
 
 /** Whether this member's role is enough for something that needs `minimum`. */
 export const roleMeets = (role, minimum) => rankOf(role) >= rankOf(minimum);
 
-/** A role name that is safe to show, for a value that should not be corrupt but is. */
-export const roleName = (role) => (ROLES.includes(role) ? role : DEFAULT_ROLE);
+/** A role name that is safe to show. `null` is the legacy owner; anything unrecognised says so. */
+export const roleName = (role) => {
+  if (role === null) return DEFAULT_ROLE;
+  return ROLES.includes(role) ? role : UNKNOWN_ROLE;
+};
+
+/**
+ * Whether a stored value is one this code understands.
+ *
+ * `null` counts as understood — it is the documented legacy reading, not corruption — so this is the
+ * question "would anything here be guessing?", which is what the members page asks to decide whether to
+ * warn an owner.
+ */
+export const isKnownRole = (role) => role === null || ROLES.includes(role);
+
+/** Whether a stored value is present, undeclared and therefore being denied (rather than merely absent). */
+export const isUnrecognisedRole = (role) => role !== null && !ROLES.includes(role);
+
+/**
+ * Refuse to *write* a role this code does not understand.
+ *
+ * `rankOf` already denies any unrecognised value it is given, so this is not the security boundary — it is
+ * the boundary that stops one being stored in the first place. Every route that writes a role validates the
+ * form field first (`members-views.js`), so this only fires on a corrupted invitation being claimed or a
+ * programming mistake, and both deserve to fail loudly rather than to write a row nobody can interpret.
+ *
+ * `null` is allowed: it is the documented legacy value, written by a sign-up or an invitation that predates
+ * roles, and it reads as owner by contract.
+ */
+export function assertKnownRole(role) {
+  if (role === null || ROLES.includes(role)) return role;
+  throw new TypeError(`unrecognised role ${JSON.stringify(role)} — expected one of ${ROLES.join(', ')} or null`);
+}
 
 /** Whether this role holds a copy of the practice key. The assistant is the one that does not. */
 export const holdsKey = (role) => roleMeets(role, 'accountant');

@@ -24,7 +24,7 @@ import { hashPassword, hashToken, newToken } from './crypto.js';
 import { now } from './db.js';
 import { field, formFields, readBody } from './http.js';
 import { tellOwners } from './notices.js';
-import { ROLE_WORDS, ROLES, roleName } from './roles.js';
+import { ROLE_WORDS, ROLES, isUnrecognisedRole, roleName } from './roles.js';
 import {
   claimInvite,
   createInvite,
@@ -92,6 +92,9 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
   // Whose role cannot be changed: the only owner. Computed once for the whole table rather than per row.
   const owners = ownersOf(db, practiceId);
   const soleOwner = (person) => owners.length === 1 && owners[0].id === person.id;
+  // Anyone whose stored role is neither null (legacy) nor one of the three. They are being denied, so the
+  // page says so and offers the fix — see src/roles.js for why this is a denial rather than a promotion.
+  const unrecognised = members.filter((person) => isUnrecognisedRole(person.role));
 
   return sendPage(response, 200, page({
     title: 'Members',
@@ -157,6 +160,14 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
         request page shows the real names.</p>
         <div class="actions"><button type="submit">Save</button></div>
       </form>
+      ${unrecognised.length > 0
+        ? html`<p class="warning" role="alert"><strong>${unrecognised.length === 1 ? 'One member has' : `${unrecognised.length} members have`}
+            a role this version does not recognise</strong> — ${unrecognised.map((person) => person.email).join(', ')}.
+            The stored value is not one of owner, accountant or assistant, so it is treated as <strong>no
+            permission at all</strong>: they can sign in and see the board, and nothing else. Set a real role
+            on the row below to restore what they should have. The old behaviour was to read an unrecognised
+            value as the owner, which is why this page now says so out loud instead.</p>`
+        : null}
       <div class="scroll" tabindex="0" role="region" aria-label="Scrollable practice members"><table class="members">
         <colgroup><col class="w34"><col class="w14"><col class="w34"><col class="w18"></colgroup>
         <thead>
@@ -169,6 +180,9 @@ export function membersPage({ db, response, practitioner, practiceId, url, maile
                 ? html`<span class="cell-s">${ROLE_WORDS[roleName(person.role)]} — the only owner, so this cannot be changed. Make somebody else an owner first.</span>`
                 : html`<form method="post" action="/members/${person.id}/role" class="inline">
                     <select name="role" aria-label="What ${person.email} may do">
+                      ${isUnrecognisedRole(person.role)
+                        ? html`<option value="" selected disabled>Unrecognised — choose a role</option>`
+                        : ''}
                       ${ROLES.map((role) => html`<option value="${role}"${roleName(person.role) === role ? ' selected' : ''}>${ROLE_WORDS[role]}</option>`)}
                     </select>
                     <button type="submit">Set</button>
