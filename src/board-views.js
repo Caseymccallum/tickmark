@@ -1133,7 +1133,7 @@ export function viewRequest({ db, request, response, practitioner, params, pract
           </section>`
         : ''}
       <section class="card">
-        <h2>The file itself</h2>
+        <h2>Close this request, or do it again</h2>
         ${found.closed_at
           ? html`<p>Closed ${found.closed_at}. It stays on the list of closed requests, and
                 nothing has been deleted.</p>

@@ -412,6 +412,8 @@ export function createApp(db, {
   const effectiveMinFreeBytes = Number.isSafeInteger(minFreeBytes) && minFreeBytes >= 0
     ? minFreeBytes
     : 512 * 1024 * 1024;
+  // Read once, at construction, because it decides what an unauthenticated address may disclose below.
+  const hosted = process.env.MULTI_TENANT === '1';
   return createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
 
@@ -462,9 +464,15 @@ export function createApp(db, {
     if (url.pathname === '/healthz') {
       try {
         const practices = healthCheck ? healthCheck() : db.prepare('SELECT COUNT(*) AS n FROM practitioner').get().n;
+        // In hosted mode this address is on the public internet and answers without signing in, so it says
+        // only whether the process is up and can read its own schema. The version is a fingerprint and the
+        // count of practices is somebody's business rather than a stranger's. The database is still touched
+        // above — a health check that skipped its only real check would be a green light with nothing behind it.
+        if (hosted) return sendJson(response, 200, { ok: true });
         // The version is on the health check because that is the one address an operator can reach without
         // signing in, and "which build is running" is the first question anybody asks when something is wrong.
-        // It costs one string and it turns a guess into an answer.
+        // It costs one string and it turns a guess into an answer. On a self-hosted install the operator *is*
+        // the audience for it; in hosted mode (above) it is not.
         return sendJson(response, 200, { ok: true, version: VERSION, practices });
       } catch (error) {
         return sendJson(response, 503, { ok: false, error: error.message });

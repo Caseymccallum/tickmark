@@ -589,6 +589,11 @@ function reminderPage({
         <div class="field">
           <label for="file">Attach a file <span class="note">optional — a template, a letter, a spreadsheet. It goes out with this message and is not kept anywhere.</span></label>
           <input id="file" name="file" type="file">
+          <p class="warning"><strong>What you attach here is not encrypted by Tickmark.</strong> It travels as an
+            ordinary email attachment, so your mail provider and the recipient's mailbox both keep a copy, and
+            neither can be called back. Send a client's own documents through the request instead — those are
+            encrypted in the client's browser before they are sent and stored where only this practice can open
+            them. Use this for the letter, not for anything that came in through a link.</p>
         </div>
         ${canSend
           ? html`<button type="submit">Send it to ${found.client_email}</button>`
