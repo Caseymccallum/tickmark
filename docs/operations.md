@@ -55,6 +55,28 @@ The shape of it:
 
 If step 5 fails, the backup is not usable and the moved-aside directory is still there.
 
+### One step that a restore to a different directory needs
+
+`upload.storage_path` holds an **absolute** path, recorded on the machine the backup was taken on. `--verify` knows
+this and compares only the last two segments of each path, which are the request id and the upload id — the part a copy
+preserves. But the application reads `storage_path` **directly** (`createReadStream`, `stat`, `dirname`).
+
+So: restoring into the *same* location needs nothing, and restoring somewhere else needs one statement, run once with
+the server stopped:
+
+```sql
+-- Replace the old data directory's blob root with the new one. Both are absolute paths.
+-- Windows examples are shown; on Linux the separator is "/" and there is no drive letter.
+UPDATE upload
+   SET storage_path = 'D:\tickmark\data\blobs\' || substr(storage_path, length('C:\tickmark\data\blobs\') + 1)
+ WHERE storage_path LIKE 'C:\tickmark\data\blobs\%';
+```
+
+Skipping it is the quiet failure this note exists to prevent: the database opens, every request page renders, and every
+download fails with a missing file — a restore that looks complete and delivers nothing. `docs/reviews/evidence/r1-restore-drill.mjs`
+performs exactly the procedure above on fictional data and decrypts a document out of the result, so the statement is
+known to work rather than believed to.
+
 **This whole shape is drilled on every run.** `test/backup.test.js` takes a backup while the server is
 running, deletes the original, performs these steps, and decrypts a document out of the result — step
 5 automated, which is the only end-to-end proof that the key, the envelope and the bytes all came
