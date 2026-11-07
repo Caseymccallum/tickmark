@@ -164,6 +164,7 @@ export function clientPage({ db, response, params, maxUploadBytes, url }) {
               read in a different order from the field itself. */ ''}
         <input type="file" name="file" multiple accept="image/*,application/pdf" required
           aria-label="Upload one or more files for: ${item.label}">
+        <span class="hint">A photo or a PDF is fine, and you can choose more than one at a time.</span>
         <input type="text" name="note" placeholder="anything we should know? (optional)" maxlength="500"
           aria-label="A note about this document (optional)">
         <div class="row">

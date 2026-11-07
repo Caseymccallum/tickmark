@@ -423,10 +423,24 @@ const TABLES = `
      re-read every time. */
   .scroll {
     overflow-x: auto; overscroll-behavior-x: contain;
-    background: var(--surface); border: 1px solid var(--line);
+    /* A table that scrolls with no edge to it looks complete and is not: the last column simply stops, and a
+       practice scrolling a request on a tablet has no way to know a review button is waiting off-screen. The
+       two gradients are painted *under* the content and pinned to it (local) so they travel with it, and the
+       two shadows are fixed to the box (scroll) so they appear only while there is something to scroll to. */
+    background:
+      linear-gradient(to right, var(--surface), transparent) left center / 2.5rem 100% no-repeat local,
+      linear-gradient(to left, var(--surface), transparent) right center / 2.5rem 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--ink) 13%, transparent), transparent) left center / .85rem 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--ink) 13%, transparent), transparent) right center / .85rem 100% no-repeat scroll,
+      var(--surface);
+    border: 1px solid var(--line);
     border-radius: var(--r-lg); box-shadow: var(--sh-1); margin: 0 0 1rem;
   }
   .scroll > table { margin: 0; }
+  /* A review control is a phrase, not a word. Squeezed into a column it wraps onto a second line rather than
+     breaking "Withdraw" across the middle, which is what it did below about 44rem. */
+  td button, td .btn { white-space: nowrap; }
+  td .inline { flex-wrap: wrap; row-gap: .35rem; }
   table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); }
   thead th {
     position: sticky; top: 0; z-index: 2;
@@ -648,6 +662,30 @@ const CLIENT_AND_MISC = `
   .unlock label { margin: 0; }
   .unlock input { width: auto; min-width: 15rem; }
   .unlock .note { flex-basis: 100%; margin: 0; }
+  .unlock p { margin: 0; }
+  /* The passphrase field, folded away until something needs it. A practice that has opened a request to see
+     whether anything has arrived should not be met by a password box: the panel takes the space of its own
+     summary until a save needs a key, and the page's script opens it at that moment. */
+  .unlock .disclosure { flex-basis: 100%; }
+  .unlock .disclosure > summary {
+    display: inline-flex; align-items: center; gap: .4rem;
+    min-height: 44px; padding: 0 .2rem;
+    font-size: var(--fs-md); font-weight: 600; color: var(--ink); cursor: pointer;
+    list-style: none;
+  }
+  .unlock .disclosure > summary::-webkit-details-marker { display: none; }
+  .unlock .disclosure > summary::after {
+    content: ""; width: .45rem; height: .45rem; margin-top: -.15rem;
+    border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    transform: rotate(45deg); transition: transform .14s ease;
+  }
+  .unlock .disclosure[open] > summary::after { transform: rotate(-135deg); margin-top: .2rem; }
+  .unlock .disclosure > summary:hover { color: var(--soft); }
+  .unlock .disclosure-body {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    padding-top: .35rem;
+  }
+  .unlock .disclosure-body .note { flex-basis: 100%; margin: 0; }
   /* A secret somebody is going to type, and the codes they have to write down. */
   .secret {
     font-family: var(--mono); font-size: var(--fs-md); letter-spacing: .08em;
@@ -877,6 +915,9 @@ const SHELL = `
   .client .upload { display: flex; flex-direction: column; margin: 0; padding: 1rem; background: var(--sunken); border: 1px dashed var(--line-2); border-radius: var(--r-md); gap: .75rem; }
   .client .upload input { max-width: 100%; }
   .client .upload input[type=file] { padding: .5rem; background: var(--surface); }
+  /* What the accept attribute allows is invisible on screen: the picker filters, and nothing says why a file
+     was greyed out. */
+  .client .upload .hint { font-size: var(--fs-sm); color: var(--faint); margin: -.4rem 0 0; }
   .client .upload button[type=submit] { color: var(--primary-ink); background: var(--primary); border-color: var(--primary); }
   .client .says { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; }
   .client .says button { min-height: 44px; white-space: normal; text-align: left; }

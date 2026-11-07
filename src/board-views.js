@@ -967,18 +967,23 @@ export function viewRequest({ db, request, response, practitioner, params, pract
         : ''}
       ${keys.length > 0 && fileCount > 0
         ? html`<div class="unlock">
-            <label for="passphrase">Your passphrase, to open what has arrived</label>
-            <input id="passphrase" type="password" autocomplete="current-password">
-            <button type="button" id="unlock">Unlock</button>
             ${fileCount > 1
-              ? html`<button type="button" id="download-all" disabled>Download everything
-                  (${fileCount} files)</button>`
+              ? html`<p><button type="button" id="download-all" disabled>Download everything
+                  (${fileCount} files)</button>
+                  <span id="download-all-status" class="status note" role="status" aria-live="polite" aria-atomic="true"></span></p>`
               : ''}
-            <span id="download-all-status" class="status note" role="status" aria-live="polite" aria-atomic="true"></span>
-            <p id="unlock-status" class="note">It is used in this browser and sent nowhere. Unlocking
-            keeps the keys in this tab so that saving several files does not mean typing it again.
-            “Download everything” opens each file here and packs it into one archive — the plaintext
-            never leaves this tab.</p>
+            <details class="disclosure" id="unlock-panel">
+              <summary>Open what has arrived</summary>
+              <div class="disclosure-body">
+                <label for="passphrase">Your passphrase</label>
+                <input id="passphrase" type="password" autocomplete="current-password">
+                <button type="button" id="unlock">Unlock</button>
+                <p id="unlock-status" class="note">It is used in this browser and sent nowhere. Unlocking
+                keeps the keys in this tab so that saving several files does not mean typing it again.
+                “Download everything” opens each file here and packs it into one archive — the plaintext
+                never leaves this tab.</p>
+              </div>
+            </details>
           </div>`
         : ''}
       <div class="scroll" tabindex="0" role="region" aria-label="Scrollable request data"><table class="items">

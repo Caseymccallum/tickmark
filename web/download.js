@@ -31,6 +31,21 @@ const unlockStatus = document.getElementById('unlock-status');
 const downloadAllButton = document.getElementById('download-all');
 const downloadAllStatus = document.getElementById('download-all-status');
 const fileListElement = document.getElementById('file-list');
+// The passphrase field is folded away until something needs it: a practice that has only come to look at
+// whether documents have arrived should not be asked for a secret to do so. It is a plain disclosure rather
+// than a dialog, so there is no focus trap to get wrong and Escape is the browser's own.
+const unlockPanel = document.getElementById('unlock-panel');
+
+/** Show the passphrase field, because an action just needed a key and there is not one. */
+function openUnlockPanel() {
+  if (unlockPanel && unlockPanel.open !== true) {
+    unlockPanel.open = true;
+    // Move the reader there as well as opening it, or the field they are being asked for is somewhere off
+    // the top of the screen on a phone.
+    unlockPanel.scrollIntoView?.({ block: 'nearest' });
+    passphraseField?.focus?.();
+  }
+}
 
 /** The unwrapped private keys, for this page only. Never stored, never sent. */
 let privateKeys = [];
@@ -52,6 +67,7 @@ function setUnlocked(unlocked) {
 async function unlock() {
   const passphrase = passphraseField?.value ?? '';
   if (passphrase.length === 0) {
+    openUnlockPanel();
     setStatus(unlockStatus, 'Type your passphrase first.');
     return false;
   }

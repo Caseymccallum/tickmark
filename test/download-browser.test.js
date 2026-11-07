@@ -27,6 +27,25 @@ const OTHER = 'a different passphrase entirely';
 const SECRET = 'Bank statement, Q1 2025. Closing balance: 12,345.67';
 const bytes = (value) => new TextEncoder().encode(value);
 
+test('the passphrase panel stays folded until something actually needs a key', async () => {
+  const { wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
+  const browser = installBrowser({ wrappedKey: wrappedPrivateKey, fetch: async () => answer() });
+
+  await browser.load('../web/download.js');
+  assert.equal(browser.unlockPanel.open, false, 'it starts folded away — a reader checking on a request is not asked for a secret');
+
+  // Pressing save with nothing typed opens the panel, moves the reader to it and says what to do. That is the
+  // whole of the progressive disclosure: the field appears at the moment it is the next thing to do.
+  await browser.saveButton.fire('click');
+  assert.equal(browser.unlockPanel.open, true, 'and opens when a save needs a key');
+  assert.match(browser.unlockStatus.textContent, /Type your passphrase first/);
+
+  browser.passphrase.value = PASSPHRASE;
+  await browser.unlockButton.fire('click');
+  assert.match(browser.unlockStatus.textContent, /Key unlocked for this tab/);
+  assert.equal(browser.saveButton.disabled, false);
+});
+
 test('the download page: unlock, save and pack, through every state it has', async () => {
   // Two keys, because a practice that rotated has two and the page has a branch for a passphrase that opens only
   // some of them. Everything sealed to `older` is what this practice's passphrase opens.

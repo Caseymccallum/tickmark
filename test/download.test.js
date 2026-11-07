@@ -126,7 +126,10 @@ test('a request with nothing received offers no unlock, and no script', async ()
     const page = await (await client.get(`/requests/${requestId}`)).text();
 
     assert.ok(!page.includes('id="passphrase"'), 'there is nothing to open, so nothing to type');
-    assert.ok(!page.includes('download.js'), 'and no script is loaded for it');
+    assert.ok(
+      !page.includes('src="/assets/download.js"'),
+      'and no script is loaded for it — asserted against the tag, because the filename also appears in the stylesheet',
+    );
   });
 });
 

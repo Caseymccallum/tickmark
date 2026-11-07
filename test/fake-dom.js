@@ -56,6 +56,8 @@ export function element({ children = {}, ...fields } = {}) {
     appended: [],
     submitted: 0,
     classList: { toggle() {}, add() {}, remove() {} },
+    focus() {},
+    scrollIntoView() {},
     querySelector: (selector) => children[selector] ?? null,
     querySelectorAll: () => [],
     addEventListener(kind, handler) {
@@ -243,6 +245,10 @@ export function installBrowser({
       textContent: JSON.stringify({ keys: (wrappedKeys ?? [wrappedKey]).map((wrapped) => ({ wrapped })) }),
     });
 
+  // The folded-away passphrase panel. `open` is the state the page reads and writes, and `focus`/`scrollIntoView`
+  // are the two things it does when it opens it, so a test can see that it did.
+  const unlockPanel = keyRecordsElement === null ? null : element({ open: false, focus() {}, scrollIntoView() {} });
+
   const document = {
     getElementById: (id) =>
       ({
@@ -250,6 +256,7 @@ export function installBrowser({
         'upload-limit': maxBytes === null ? null : element({ textContent: JSON.stringify({ maxBytes }) }),
         'already-sent': alreadySent === null ? null : element({ textContent: JSON.stringify(alreadySent) }),
         'key-records': keyRecordsElement,
+        'unlock-panel': unlockPanel,
         passphrase,
         unlock: unlockButton,
         'unlock-status': unlockStatus,
@@ -296,6 +303,7 @@ export function installBrowser({
     /** The page itself, so one instance can be driven through several states instead of loading the module again. */
     document,
     keyRecords: keyRecordsElement,
+    unlockPanel,
     fileListElement,
     uploadForm,
     uploadStatus,
