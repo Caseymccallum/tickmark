@@ -31,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { practitionerFor } from './auth.js';
-import { RequestError, acceptableBody, withEncoding } from './http.js';
+import { RequestError, acceptableBody, crossOriginProblem, withEncoding } from './http.js';
 import { SECURITY_HEADERS, fail, requireSignIn, sendJson } from './views.js';
 import { log as logEvent } from './log.js';
 
@@ -117,6 +117,9 @@ const ASSETS = new Map([
   ['invite.js', 'application/javascript; charset=utf-8'],
   ['reencrypt.js', 'application/javascript; charset=utf-8'],
 ]);
+
+/** Methods that cannot change state, and so are never refused for their origin. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const ROUTES = [
   ['GET', '/', home],
@@ -424,6 +427,31 @@ export function createApp(db, {
         status: response.statusCode,
         ms: Date.now() - started,
       }));
+    }
+
+    // **Cross-origin protection, and why it is here rather than in fifteen handlers.** `SameSite=Lax` stops
+    // another site's form from carrying the session cookie, which is a real defence — but it is a browser
+    // behaviour, and the server itself checked nothing. This is the server's own decision, made once, before
+    // any route, tenant or handler is reached, so a route added in a year's time inherits it without knowing.
+    //
+    // A refusal is logged with the reason rather than the browser being told which check failed: the reason is
+    // for the operator's log, and the person reading the page gets a sentence they can act on.
+    if (!SAFE_METHODS.has(request.method)) {
+      const problem = crossOriginProblem(request);
+      if (problem) {
+        log('warn', 'request.cross_origin_refused', {
+          method: request.method,
+          path: logPath(url.pathname),
+          origin: request.headers.origin ?? null,
+          secFetchSite: request.headers['sec-fetch-site'] ?? null,
+          reason: problem,
+        });
+        return fail(
+          response,
+          403,
+          'That form came from another site, so nothing was changed. Open Tickmark in its own tab and try again.',
+        );
+      }
     }
 
     // A health check that touches the database, because a process that is up and cannot

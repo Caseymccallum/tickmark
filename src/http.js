@@ -404,5 +404,78 @@ export function clientRowsFromCsv(text) {
 export const originOf = (request) => {
   const configured = String(process.env.TICKMARK_PUBLIC_URL ?? '').trim().replace(/\/+$/, '');
   if (configured) return configured;
-  return `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
+  return headerOrigin(request);
 };
+
+/** Where the request itself says it is, ignoring any configured address. */
+function headerOrigin(request) {
+  return `${String(request.headers['x-forwarded-proto'] ?? 'http').split(',')[0].trim()}://${request.headers.host ?? 'localhost'}`;
+}
+
+/**
+ * The origin a browser would have sent in `Origin`, for this request.
+ *
+ * `originOf` above is built to make *links* and may include a path; an `Origin` header never does, so this
+ * reduces the configured URL to its origin. `TICKMARK_PUBLIC_URL` wins whenever it is set **and parses**,
+ * because it is the operator's declaration of where this install lives — and because the `Host` header is
+ * attacker-chosen on a directly-exposed server.
+ *
+ * A value that does not parse falls back to the request's own headers rather than being used as-is. That
+ * matters: `originOf` returns the raw string, so a typo would otherwise be compared against every browser's
+ * real origin, refuse every form in the product, and look like a broken deployment rather than a bad
+ * environment variable.
+ */
+export function browserOriginOf(request) {
+  const configured = String(process.env.TICKMARK_PUBLIC_URL ?? '').trim();
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin;
+    } catch {
+      // A malformed value is not a reason to stop serving; fall through to the request's own headers.
+    }
+  }
+  return headerOrigin(request);
+}
+
+/**
+ * Whether a request that changes state came from somewhere it should not have.
+ *
+ * `SameSite=Lax` stops another site's form from carrying the session cookie, and that is a real defence — but
+ * it is a *browser behaviour*, and the server never checked anything. This is the server's own decision. It
+ * answers `null` when the request is fine and a short reason when it is not, so the caller can log which of
+ * the conditions failed rather than a bare 403.
+ *
+ * The policy, and why each half is there:
+ *
+ * - **Safe methods are never refused.** No GET in this product changes material state, and refusing a GET
+ *   would break links.
+ * - **`Sec-Fetch-Site: cross-site` or `same-site` is refused.** A sibling subdomain is `same-site` but is a
+ *   different origin, and it must not be able to drive this one. This check runs first because it is the one
+ *   a modern browser cannot get wrong.
+ * - **`Origin: null` is refused.** It means a sandboxed iframe, a `file://` document or a redirect stripped of
+ *   its origin. No form in this product is legitimately served from any of those.
+ * - **A present `Origin` must equal the trusted origin exactly.** Scheme and port included, so `http` cannot
+ *   stand in for `https`, and no prefix or suffix matching is done.
+ * - **An absent `Origin` is allowed.** A browser sends `Origin` on *every* mutating request; what does not is a
+ *   non-browser client — `curl`, an operator tool, a provider webhook. Those cannot be induced by a third-party
+ *   page, because a page is a browser and a browser would have sent the header. Refusing them would break the
+ *   documented tools and the Stripe webhook while adding no protection, since the credential they present is
+ *   one an attacker's page cannot read.
+ * - **A conflicting pair is refused**, because the origin comparison runs after the metadata check: a request
+ *   claiming `same-origin` while carrying a foreign `Origin` fails.
+ */
+export function crossOriginProblem(request) {
+  const method = String(request.method ?? 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return null;
+
+  const site = String(request.headers['sec-fetch-site'] ?? '').toLowerCase();
+  if (site === 'cross-site' || site === 'same-site') return `fetch metadata says ${site}`;
+
+  const origin = request.headers.origin;
+  if (origin === undefined) return null;
+  if (origin === 'null') return 'the request says its origin is null';
+  const expected = browserOriginOf(request);
+  if (origin !== expected) return `${origin} is not ${expected}`;
+  return null;
+}

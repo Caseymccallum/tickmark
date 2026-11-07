@@ -224,10 +224,17 @@ Recorded so the next audit does not have to redo it:
 - **Secrets in logs: none.** Nothing logs a token, a password or a key.
 - **Sessions:** 256-bit tokens stored as digests, `HttpOnly`, `SameSite=Lax`, `Secure` unless an operator
   explicitly opts out for a local trial (`TICKMARK_INSECURE_COOKIES`).
-- **CSRF:** `SameSite=Lax` means a cross-site form post does not carry the session cookie, which covers the
-  state-changing routes — all of which are POST. **No GET route changes anything that matters**: the one write on a
-  GET is the `file.opened` audit entry, which is a log line rather than a state change. An `Origin` check would be
-  belt-and-braces and is not there.
+- **CSRF:** two layers, and they are different kinds of defence. `SameSite=Lax` means a cross-site form post does
+  not carry the session cookie, which covers the state-changing routes — all of which are POST. **No GET route
+  changes anything that matters**: the one write on a GET is the `file.opened` audit entry, which is a log line
+  rather than a state change. The second layer is the server's own decision, in the dispatcher before any route:
+  a mutating request whose `Origin` is foreign, `null`, or contradicted by `Sec-Fetch-Site` is refused with `403`
+  and logged as `request.cross_origin_refused` (`src/http.js`, `crossOriginProblem`). The trusted origin comes from
+  `TICKMARK_PUBLIC_URL` when it is set — which a real deployment must set — and otherwise from the request's own
+  `Host` and `x-forwarded-proto`. A request with **no** `Origin` at all is allowed: a browser sends one on every
+  mutating request, so what does not is a non-browser client (`curl`, an operator tool, the Stripe webhook), and
+  none of those can be induced by a third-party page. `test/cross-origin.test.js` covers each of those cases,
+  including a sibling subdomain and a proxy-terminated TLS connection.
 - **Rate limiting** on the password path, per account rather than per address — deliberately, so that an attacker
   behind a reverse proxy cannot lock a whole practice out of its own software.
 - **No dependencies at all**, so there is no supply chain to audit: `package.json` has empty `dependencies`.
