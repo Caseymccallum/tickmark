@@ -137,22 +137,68 @@ test('clearing the picker puts the page back, and a refusal from the server is s
   assert.equal(browser.reloads.count, 0, 'with no reload, because there is nothing new to show');
 });
 
-test('the practice\u2019s page opens the envelope in the tab and saves the document', async () => {
+/**
+ * The practice's page, walked through every state in one instance.
+ *
+ * These were four tests that each loaded `download.js` afresh. `test/fake-dom.js` loads a page through a
+ * cache-busting query, so each was a separate instrumented script and only the first was ever measured — meaning
+ * the file's reported coverage described one test rather than the four. The page also holds its unlocked keys in a
+ * module variable, so a single tab walked in order is the more faithful model anyway: this is what somebody at a
+ * desk actually does.
+ *
+ * Every assertion the four tests made is still here, in the order a person would meet them.
+ */
+test('the practice’s page: unlock, open one file, open them all, and refuse what it cannot open', async () => {
   const { publicKey, wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
-  const envelope = await encryptFile(publicKey, bytes(SECRET));
+  const good = await encryptFile(publicKey, bytes(SECRET));
+  const second = await encryptFile(publicKey, bytes('the second document'));
+  // What the page is served, switched per phase below.
+  let served = good;
+
   const browser = installBrowser({
     wrappedKey: wrappedPrivateKey,
-    fetch: async () => ({ ok: true, status: 200, arrayBuffer: async () => envelope.slice().buffer }),
+    fileList: {
+      archive: '2025 return.zip',
+      files: [
+        { name: 'Bank statements/first.pdf', url: '/files/one/download' },
+        { name: 'Photo ID/second.pdf', url: '/files/two/download' },
+      ],
+    },
+    fetch: async (request) => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => (request.url.includes('files/two') ? second.slice().buffer : served.slice().buffer),
+    }),
   });
 
   await browser.load('../web/download.js');
-  assert.equal(browser.saveButton.disabled, true, 'the page starts with no key, so nothing can be saved');
 
+  // --- nothing is open yet --------------------------------------------------------------------------
+  assert.equal(browser.saveButton.disabled, true, 'the page starts with no key, so nothing can be saved');
+  assert.equal(browser.downloadAllButton.disabled, true, 'and the bulk control starts disabled, like the saves');
+
+  // --- a wrong passphrase ---------------------------------------------------------------------------
+  browser.passphrase.value = 'not the passphrase at all';
+  await browser.unlockButton.fire('click');
+  assert.equal(browser.unlockStatus.textContent, "That passphrase does not open any of this practice's keys.");
+  assert.equal(browser.saveButton.disabled, true, 'so there is still nothing to save with');
+  assert.equal(browser.passphrase.value, '', 'and the page does not keep what was typed into it');
+
+  // Pressing save anyway asks for the passphrase rather than fetching a file it cannot open: the difference
+  // between a page that refuses and one that wastes the practice's bandwidth on an envelope it will not read.
+  await browser.saveButton.fire('click');
+  assert.equal(browser.sent.length, 0, 'nothing was fetched');
+  assert.equal(browser.saved.length, 0, 'and nothing was handed to the browser');
+  assert.equal(browser.unlockStatus.textContent, 'Type your passphrase first.');
+
+  // --- the right passphrase ---------------------------------------------------------------------------
   browser.passphrase.value = PASSPHRASE;
   await browser.unlockButton.fire('click');
   assert.equal(browser.unlockStatus.textContent, 'Key unlocked for this tab. You can save files now.');
   assert.equal(browser.saveButton.disabled, false, 'and the saves open');
+  assert.equal(browser.downloadAllButton.disabled, false, 'both of them');
 
+  // --- one file ---------------------------------------------------------------------------------------
   await browser.saveButton.fire('click');
 
   assert.equal(browser.sent.length, 1, 'the page fetched the file it was asked to open');
@@ -168,97 +214,33 @@ test('the practice\u2019s page opens the envelope in the tab and saves the docum
   );
   assert.equal(browser.saveStatus.textContent, `Saved statements.pdf (${bytes(SECRET).length} bytes).`);
 
-  // One minute, and not zero: revoking the blob URL the moment the anchor is clicked cancels the download in some
-  // browsers, which is the reason the delay is there. Asserted rather than waited for.
+  // One minute, and not zero: revoking the blob URL the moment the anchor is clicked cancels the download in
+  // some browsers, which is the reason the delay is there. Asserted rather than waited for.
   assert.equal(browser.timers.length, 1, 'the object URL is released once');
   assert.equal(browser.timers[0].ms, 60000, 'a minute after the save rather than during it');
   browser.timers[0].fn();
   assert.deepEqual(browser.revoked, [download.url], 'and releasing it is what the timer does');
-});
 
-test('download everything opens every envelope here and packs them into one archive', async () => {
-  const { publicKey, wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
-  const first = await encryptFile(publicKey, bytes(SECRET));
-  const second = await encryptFile(publicKey, bytes('the second document'));
-  const browser = installBrowser({
-    wrappedKey: wrappedPrivateKey,
-    fileList: {
-      archive: '2025 return.zip',
-      files: [
-        { name: 'Bank statements/first.pdf', url: '/files/one/download' },
-        { name: 'Photo ID/second.pdf', url: '/files/two/download' },
-      ],
-    },
-    fetch: async (request) => ({
-      ok: true,
-      status: 200,
-      arrayBuffer: async () => (request.url.includes('files/one') ? first.slice().buffer : second.slice().buffer),
-    }),
-  });
-
-  await browser.load('../web/download.js');
-  assert.equal(browser.downloadAllButton.disabled, true, 'it starts disabled, like the single saves');
-
-  browser.passphrase.value = PASSPHRASE;
-  await browser.unlockButton.fire('click');
-  assert.equal(browser.downloadAllButton.disabled, false, 'and opens with the key');
-
+  // --- all of them ------------------------------------------------------------------------------------
   await browser.downloadAllButton.fire('click');
 
-  assert.equal(browser.sent.length, 2, 'both envelopes were fetched');
-  assert.equal(browser.saved.length, 1, 'and one archive reached the browser, not two loose files');
+  assert.equal(browser.sent.length, 3, 'both envelopes were fetched, on top of the single save');
+  assert.equal(browser.saved.length, 2, 'and one archive reached the browser, not two loose files');
 
-  const [download] = browser.saved;
-  assert.equal(download.name, '2025 return.zip', 'under the name the request page chose');
+  const archive = browser.saved[1];
+  assert.equal(archive.name, '2025 return.zip', 'under the name the request page chose');
 
-  // The archive is a real zip holding both documents as themselves. Store-mode keeps each file's
-  // bytes verbatim, so both plaintexts are in there — the proof that both were decrypted in this tab
-  // and packed, rather than the envelopes being handed over as they arrived.
-  const packed = new Uint8Array(await download.blob.arrayBuffer());
+  // The archive is a real zip holding both documents as themselves. Store-mode keeps each file's bytes
+  // verbatim, so both plaintexts are in there — the proof that both were decrypted in this tab and packed,
+  // rather than the envelopes being handed over as they arrived.
+  const packed = new Uint8Array(await archive.blob.arrayBuffer());
   assert.deepEqual(Array.from(packed.slice(0, 4)), [0x50, 0x4b, 0x03, 0x04], 'it is a zip');
   assert.ok(Buffer.from(packed).includes(SECRET), 'the first document is in there, decrypted');
   assert.ok(Buffer.from(packed).includes('the second document'), 'and so is the second');
   assert.equal(browser.downloadAllStatus.textContent, 'Saved 2025 return.zip — 2 files.');
-});
 
-test('a wrong passphrase opens nothing, and saves nothing', async () => {
-  const { publicKey, wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
-  const envelope = await encryptFile(publicKey, bytes(SECRET));
-  const browser = installBrowser({
-    wrappedKey: wrappedPrivateKey,
-    fetch: async () => ({ ok: true, status: 200, arrayBuffer: async () => envelope.slice().buffer }),
-  });
-
-  await browser.load('../web/download.js');
-  browser.passphrase.value = 'not the passphrase at all';
-  await browser.unlockButton.fire('click');
-
-  assert.equal(browser.unlockStatus.textContent, "That passphrase does not open any of this practice's keys.");
-  assert.equal(browser.saveButton.disabled, true, 'so there is still nothing to save with');
-  assert.equal(browser.passphrase.value, '', 'and the page does not keep what was typed into it');
-
-  // Pressing save anyway asks for the passphrase rather than fetching a file it cannot open: the difference between
-  // a page that refuses and a page that wastes the practice's bandwidth on an envelope it will not read.
-  await browser.saveButton.fire('click');
-  assert.equal(browser.sent.length, 0, 'nothing was fetched');
-  assert.equal(browser.saved.length, 0, 'and nothing was handed to the browser');
-  assert.equal(browser.unlockStatus.textContent, 'Type your passphrase first.');
-});
-
-test('an envelope changed in storage is refused by the page rather than opened wrongly', async () => {
-  const { publicKey, wrappedPrivateKey } = await generatePracticeKey(PASSPHRASE);
-  const good = await encryptFile(publicKey, bytes(SECRET));
-  let served = good;
-  const browser = installBrowser({
-    wrappedKey: wrappedPrivateKey,
-    fetch: async () => ({ ok: true, status: 200, arrayBuffer: async () => served.slice().buffer }),
-  });
-
-  await browser.load('../web/download.js');
-  browser.passphrase.value = PASSPHRASE;
-  await browser.unlockButton.fire('click');
-  assert.equal(browser.saveButton.disabled, false, 'the key is open, so any refusal below is about the file');
-
+  // --- an envelope changed in storage -----------------------------------------------------------------
+  // The key is open, so any refusal below is about the file rather than about the passphrase.
   for (const [what, index] of [
     ['a byte of the ciphertext', HEADER_BYTES],
     ['a byte of the header — the ephemeral key an attacker would want to substitute', 10],
@@ -272,5 +254,5 @@ test('an envelope changed in storage is refused by the page rather than opened w
     assert.match(browser.saveStatus.textContent, /could not be opened/, `${what} must not open`);
   }
 
-  assert.equal(browser.saved.length, 0, 'and nothing was handed to the browser at any point');
+  assert.equal(browser.saved.length, 2, 'and nothing further was handed to the browser at any point');
 });

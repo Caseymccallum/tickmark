@@ -191,6 +191,8 @@ export function installBrowser({
   publicKey = null,
   keyId = null,
   wrappedKey = null,
+  /** Several wrapped keys, for a practice that rotated: the page tries one passphrase against each. */
+  wrappedKeys = null,
   maxBytes = null,
   alreadySent = null,
   files = [],
@@ -233,14 +235,21 @@ export function installBrowser({
   const downloadAllStatus = element();
   const fileListElement = fileList === null ? null : element({ textContent: JSON.stringify(fileList) });
 
+  // Hoisted rather than built inside `getElementById`, because a page reads its elements once at import and a test
+  // that changes one afterwards (to model a practice that has not rotated, say) has to hand it *that* object.
+  const keyRecordsElement = wrappedKey === null && wrappedKeys === null
+    ? null
+    : element({
+      textContent: JSON.stringify({ keys: (wrappedKeys ?? [wrappedKey]).map((wrapped) => ({ wrapped })) }),
+    });
+
   const document = {
     getElementById: (id) =>
       ({
         'practice-key': publicKey && element({ textContent: JSON.stringify({ keyId, publicKey }) }),
         'upload-limit': maxBytes === null ? null : element({ textContent: JSON.stringify({ maxBytes }) }),
         'already-sent': alreadySent === null ? null : element({ textContent: JSON.stringify(alreadySent) }),
-        'key-records':
-          wrappedKey === null ? null : element({ textContent: JSON.stringify({ keys: [{ wrapped: wrappedKey }] }) }),
+        'key-records': keyRecordsElement,
         passphrase,
         unlock: unlockButton,
         'unlock-status': unlockStatus,
@@ -284,6 +293,10 @@ export function installBrowser({
     revoked,
     reloads,
     timers: timers.scheduled,
+    /** The page itself, so one instance can be driven through several states instead of loading the module again. */
+    document,
+    keyRecords: keyRecordsElement,
+    fileListElement,
     uploadForm,
     uploadStatus,
     fileInput,
