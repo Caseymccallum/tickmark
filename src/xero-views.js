@@ -224,7 +224,7 @@ export async function xeroBooksSignal({ db, request, response, practitioner, pra
 export async function xeroBooksCheck({ db, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = xeroFromEnvironment();
-  if (!config) return fail(response, 500, 'Xero is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'Xero is not set up on this install.', practitioner);
   const connection = connectionFor(db, practiceId, 'xero');
   if (!connection) return fail(response, 409, 'This practice has not connected to Xero yet.', practitioner);
   if (!booksSignalOn(connection)) {
@@ -260,7 +260,7 @@ export async function xeroBooksCheck({ db, response, practitioner, practiceId })
 export function xeroConnect({ response, practitioner }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = xeroFromEnvironment();
-  if (!config) return fail(response, 500, 'Xero is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'Xero is not set up on this install.', practitioner);
 
   const state = randomBytes(24).toString('hex');
   return redirect(response, authorizationUrl({ config, state }), [stateCookie(state)]);
@@ -276,7 +276,7 @@ export function xeroConnect({ response, practitioner }) {
 export async function xeroCallback({ db, request, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = xeroFromEnvironment();
-  if (!config) return fail(response, 500, 'Xero is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'Xero is not set up on this install.', practitioner);
 
   const returned = url.searchParams.get('state') ?? '';
   const expected = parseCookies(request.headers.cookie)[STATE_COOKIE] ?? '';
@@ -325,7 +325,7 @@ export function xeroDisconnect({ db, response, practitioner, practiceId }) {
 export async function xeroImport({ db, request, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = xeroFromEnvironment();
-  if (!config) return fail(response, 500, 'Xero is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'Xero is not set up on this install.', practitioner);
   const connection = connectionFor(db, practiceId, 'xero');
   if (!connection) return fail(response, 409, 'This practice has not connected to Xero yet.', practitioner);
 

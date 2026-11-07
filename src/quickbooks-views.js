@@ -200,7 +200,7 @@ export async function quickBooksBooksSignal({ db, request, response, practitione
 export function quickBooksConnect({ response, practitioner }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = quickBooksFromEnvironment();
-  if (!config) return fail(response, 500, 'QuickBooks is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'QuickBooks is not set up on this install.', practitioner);
 
   const state = randomBytes(24).toString('hex');
   return redirect(response, authorizationUrl({ config, state }), [stateCookie(state)]);
@@ -214,7 +214,7 @@ export function quickBooksConnect({ response, practitioner }) {
 export async function quickBooksCallback({ db, request, response, practitioner, practiceId, url }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = quickBooksFromEnvironment();
-  if (!config) return fail(response, 500, 'QuickBooks is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'QuickBooks is not set up on this install.', practitioner);
 
   const returned = url.searchParams.get('state') ?? '';
   const expected = parseCookies(request.headers.cookie)[STATE_COOKIE] ?? '';
@@ -255,7 +255,7 @@ export async function quickBooksCallback({ db, request, response, practitioner, 
 export async function quickBooksImport({ db, request, response, practitioner, practiceId }) {
   if (!requireSignIn({ practitioner, response })) return;
   const config = quickBooksFromEnvironment();
-  if (!config) return fail(response, 500, 'QuickBooks is not set up on this install.', practitioner);
+  if (!config) return fail(response, 409, 'QuickBooks is not set up on this install.', practitioner);
   const connection = connectionFor(db, practiceId, PROVIDER);
   if (!connection) return fail(response, 409, 'This practice has not connected to QuickBooks yet.', practitioner);
 
