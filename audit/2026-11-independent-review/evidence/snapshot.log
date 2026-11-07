@@ -1,0 +1,44 @@
+wrote 42 pages to tmp-snapshot
+
+200  landing, signed out          / -> landing-signed-out.html
+200  sign-in form                 /signin -> sign-in-form.html
+200  sign-up form                 /signup -> sign-up-form.html
+200  board                        /requests -> board.html
+200  board, closed tab            /requests?closed=1 -> board-closed-tab.html
+200  clients                      /clients -> clients.html
+200  client                       /clients/abe96f92-c879-4952-8003-8cd2b9bdc86c -> client.html
+200  request                      /requests/45f0c32f-10e6-4dfc-b736-2eb291e09b65 -> request.html
+200  edit request                 /requests/45f0c32f-10e6-4dfc-b736-2eb291e09b65/edit -> edit-request.html
+200  close several                /requests/close -> close-several.html
+200  templates                    /templates -> templates.html
+200  template                     /templates/d123b362-b619-47c0-bc11-f50c480cf7ae -> template.html
+200  ask everyone                 /ask-everyone?template=d123b362-b619-47c0-bc11-f50c480cf7ae -> ask-everyone.html
+200  new request                  /requests/new -> new-request.html
+200  new request, duplicated      /requests/new?from=45f0c32f-10e6-4dfc-b736-2eb291e09b65 -> new-request-duplicated.html
+200  keys                         /keys -> keys.html
+200  members                      /members -> members.html
+200  setup, key already made      /setup -> setup-key-already-made.html
+200  chase                        /chase -> chase.html
+200  mail test                    /admin/test-email -> mail-test.html
+200  client page                  /r/[redacted] -> client-page.html
+200  client page, one sent        /r/[redacted] -> client-page-one-sent.html
+200  request, one received        /requests/45f0c32f-10e6-4dfc-b736-2eb291e09b65 -> request-one-received.html
+200  request, a call recorded     /requests/45f0c32f-10e6-4dfc-b736-2eb291e09b65?contacted=1 -> request-a-call-recorded.html
+200  client page, one answered    /r/[redacted] -> client-page-one-answered.html
+200  board, with an answer to read /requests -> board-with-an-answer-to-read.html
+200  request, client answered     /requests/45f0c32f-10e6-4dfc-b736-2eb291e09b65 -> request-client-answered.html
+404  link that does not exist     /r/[redacted] -> link-that-does-not-exist.html
+200  client page, with the practice's note /r/[redacted] -> client-page-with-the-practice-s-note.html
+200  documents                    /files -> documents.html
+200  documents, searched          /files?q=statements -> documents-searched.html
+200  client page, after writing a message /r/[redacted]?said=1 -> client-page-after-writing-a-message.html
+200  client page, message sent    /r/[redacted] -> client-page-message-sent.html
+200  request, with a message from the client /requests/efb70f78-43bd-4399-bf59-0c068660b65e -> request-with-a-message-from-the-client.html
+200  clients, due to be asked     /clients?due=1 -> clients-due-to-be-asked.html
+200  ask everyone, due pre-ticked /ask-everyone?due=1 -> ask-everyone-due-pre-ticked.html
+200  board, the season coming round /requests -> board-the-season-coming-round.html
+200  two-factor, not set up       /account/two-factor -> two-factor-not-set-up.html
+200  two-factor, half done        /account/two-factor -> two-factor-half-done.html
+200  two-factor, recovery codes      /account/two-factor (post) -> two-factor-recovery-codes.html
+200  two-factor, on               /account/two-factor -> two-factor-on.html
+200  board, first run             /requests -> board-first-run.html

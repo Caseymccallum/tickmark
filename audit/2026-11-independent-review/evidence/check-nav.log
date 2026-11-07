@@ -1,0 +1,41 @@
+navigation, per page
+
+  /signup
+      header: /  /signin
+      page:   /  /signin  /login  (post) /signup
+  /login
+      header: /
+      page:   /  /signup  (post) /login
+  /dashboard
+      header: /dashboard  (post) /logout
+      page:   /dashboard  http://acme.localhost:3000  (post) /logout  (post) /billing/checkout
+  /dashboard (active)
+      header: /dashboard  (post) /logout
+      page:   /dashboard  http://acme.localhost:3000  (post) /logout
+  /dashboard (no workspace)
+      header: /dashboard  (post) /logout
+      page:   /dashboard  /signup  (post) /logout
+  /subscription (wall)
+      header: /  /signin
+      page:   /  /signin  /dashboard  (post) /billing/portal  (post) /billing/checkout
+  /subscription (wall, signed in)
+      header: /dashboard  (post) /logout
+      page:   /dashboard  (post) /logout  (post) /billing/portal  (post) /billing/checkout
+  /error
+      header: /  /signin
+      page:   /  /signin  /dashboard
+  /error (signed in)
+      header: /dashboard  (post) /logout
+      page:   /dashboard  (post) /logout
+
+is every page reachable from somewhere?
+
+  reached  /signup              sign up
+  reached  /login               sign in
+  reached  /dashboard           the account dashboard
+  reached  /billing/portal      the payment-details button
+  reached  /billing/checkout    the subscribe button
+  reached  /logout              sign out
+
+  every page is reachable and none is a dead end
+

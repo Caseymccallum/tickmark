@@ -1,0 +1,148 @@
+{"ts":"2026-11-07T18:51:31.869Z","level":"info","event":"request","method":"GET","path":"/requests","status":303,"ms":2}
+{"ts":"2026-11-07T18:51:31.877Z","level":"info","event":"request","method":"GET","path":"/files","status":303,"ms":1}
+{"ts":"2026-11-07T18:51:31.880Z","level":"info","event":"request","method":"GET","path":"/chase","status":303,"ms":1}
+{"ts":"2026-11-07T18:51:31.881Z","level":"info","event":"request","method":"GET","path":"/members","status":303,"ms":0}
+{"ts":"2026-11-07T18:51:31.886Z","level":"info","event":"request","method":"GET","path":"/keys","status":303,"ms":1}
+{"ts":"2026-11-07T18:51:31.901Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":303,"ms":0}
+{"ts":"2026-11-07T18:51:31.906Z","level":"info","event":"request","method":"GET","path":"/requests/cc2e6bd3-95aa-48e8-badc-03d20edc0a0c/files/015bf902-516c-41f7-8e2b-80f1afde891a","status":303,"ms":0}
+{"ts":"2026-11-07T18:51:32.114Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":198}
+{"ts":"2026-11-07T18:51:32.134Z","level":"info","event":"request","method":"GET","path":"/requests/fb842a09-452d-43ba-b3d8-8af10bedefa9","status":404,"ms":4}
+{"ts":"2026-11-07T18:51:32.147Z","level":"info","event":"request","method":"GET","path":"/requests/fb842a09-452d-43ba-b3d8-8af10bedefa9/edit","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.162Z","level":"info","event":"request","method":"GET","path":"/requests/fb842a09-452d-43ba-b3d8-8af10bedefa9/files/2d3aa23d-d32a-47e7-a608-d7eab2ac056e","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.178Z","level":"info","event":"request","method":"GET","path":"/clients/fb842a09-452d-43ba-b3d8-8af10bedefa9","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.194Z","level":"info","event":"request","method":"GET","path":"/templates/fb842a09-452d-43ba-b3d8-8af10bedefa9","status":404,"ms":2}
+{"ts":"2026-11-07T18:51:32.197Z","level":"info","event":"request","method":"GET","path":"/assets/..%2F..%2Fpackage.json","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.208Z","level":"info","event":"request","method":"GET","path":"/assets/%2e%2e%2fpackage.json","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.224Z","level":"info","event":"request","method":"GET","path":"/assets/upload.js","status":200,"ms":2}
+{"ts":"2026-11-07T18:51:32.239Z","level":"info","event":"request","method":"GET","path":"/assets/not-a-real-file.js","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.254Z","level":"info","event":"request","method":"GET","path":"/src/db.js","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.256Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.270Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":404,"ms":1}
+{"ts":"2026-11-07T18:51:32.326Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/946155c1-8783-43ae-aba5-7911022706e2","status":400,"ms":42}
+{"ts":"2026-11-07T18:51:32.332Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/b76de671-a359-4987-91ed-17826d88f56f","status":404,"ms":2}
+{"ts":"2026-11-07T18:51:32.384Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/946155c1-8783-43ae-aba5-7911022706e2","status":400,"ms":39}
+{"ts":"2026-11-07T18:51:32.585Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":192}
+{"ts":"2026-11-07T18:51:32.787Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":195}
+{"ts":"2026-11-07T18:51:32.978Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":185}
+{"ts":"2026-11-07T18:51:33.174Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":181}
+{"ts":"2026-11-07T18:51:33.363Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":183}
+{"ts":"2026-11-07T18:51:33.552Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":173}
+{"ts":"2026-11-07T18:51:33.735Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":172}
+{"ts":"2026-11-07T18:51:33.929Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":178}
+{"ts":"2026-11-07T18:51:34.109Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":173}
+{"ts":"2026-11-07T18:51:34.297Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":174}
+{"ts":"2026-11-07T18:51:34.311Z","level":"info","event":"request","method":"POST","path":"/signin","status":429,"ms":1}
+{"ts":"2026-11-07T18:51:34.326Z","level":"info","event":"request","method":"POST","path":"/signin","status":429,"ms":1}
+{"ts":"2026-11-07T18:51:34.330Z","level":"info","event":"request","method":"POST","path":"/signin","status":429,"ms":2}
+{"ts":"2026-11-07T18:51:34.704Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":373}
+{"ts":"2026-11-07T18:51:34.715Z","level":"info","event":"request","method":"POST","path":"/signin","status":429,"ms":1}
+{"ts":"2026-11-07T18:51:34.918Z","level":"info","event":"request","method":"POST","path":"/signup","status":200,"ms":188}
+{"ts":"2026-11-07T18:51:34.934Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":200,"ms":2}
+{
+  "unauthenticated": {
+    "/requests": {
+      "status": 303,
+      "location": "/signin"
+    },
+    "/files": {
+      "status": 303,
+      "location": "/signin"
+    },
+    "/chase": {
+      "status": 303,
+      "location": "/signin"
+    },
+    "/members": {
+      "status": 303,
+      "location": "/signin"
+    },
+    "/keys": {
+      "status": 303,
+      "location": "/signin"
+    },
+    "/requests.csv": {
+      "status": 303,
+      "location": "/signin"
+    },
+    "/requests/cc2e6bd3-95aa-48e8-badc-03d20edc0a0c/files/015bf902-516c-41f7-8e2b-80f1afde891a": {
+      "status": 303,
+      "location": "/signin"
+    }
+  },
+  "signin": {
+    "status": 303,
+    "cookieFlags": "tickmark_session=mVXcaMXjcrSg-V0O4XRWjwAtERkkDbvKgEvWi4KBvWM; Path=/; HttpOnly; SameSite=Lax; Max-Age=1209600; Secure"
+  },
+  "idor": {
+    "/requests/fb842a09-452d-43ba-b3d8-8af10bedefa9": 404,
+    "/requests/fb842a09-452d-43ba-b3d8-8af10bedefa9/edit": 404,
+    "/requests/fb842a09-452d-43ba-b3d8-8af10bedefa9/files/2d3aa23d-d32a-47e7-a608-d7eab2ac056e": 404,
+    "/clients/fb842a09-452d-43ba-b3d8-8af10bedefa9": 404,
+    "/templates/fb842a09-452d-43ba-b3d8-8af10bedefa9": 404
+  },
+  "traversal": {
+    "/assets/..%2F..%2Fpackage.json": {
+      "status": 404,
+      "type": "text/html; charset=utf-8"
+    },
+    "/assets/%2e%2e%2fpackage.json": {
+      "status": 404,
+      "type": "text/html; charset=utf-8"
+    },
+    "/assets/upload.js": {
+      "status": 200,
+      "type": "application/javascript; charset=utf-8"
+    },
+    "/assets/not-a-real-file.js": {
+      "status": 404,
+      "type": "text/html; charset=utf-8"
+    },
+    "/assets/../src/db.js": {
+      "status": 404,
+      "type": "text/html; charset=utf-8"
+    }
+  },
+  "links": {
+    "xxxxxxxxxxxx": 404,
+    "notatoken": 404
+  },
+  "uploadRefusals": {
+    "forgedEnvelope": 400,
+    "itemNotOnThisLink": 404
+  },
+  "nastyFilename": {
+    "status": 400
+  },
+  "rateLimit": {
+    "statuses": [
+      401,
+      401,
+      401,
+      401,
+      401,
+      401,
+      401,
+      401,
+      401,
+      401,
+      429,
+      429,
+      429
+    ],
+    "firstBlockedAt": 11
+  },
+  "enumeration": {
+    "unknownAddress": 401,
+    "wrongPassword": 429,
+    "sameLength": false
+  },
+  "signupOnExistingAddress": {
+    "status": 200,
+    "saysTaken": true
+  },
+  "csv": {
+    "status": 200,
+    "type": "text/csv; charset=utf-8",
+    "disposition": "attachment; filename=\"tickmark-requests.csv\""
+  }
+}

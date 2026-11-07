@@ -1,0 +1,33 @@
+{"ts":"2026-11-07T18:51:44.350Z","level":"info","event":"request","method":"POST","path":"/signup","status":200,"ms":221}
+{"ts":"2026-11-07T18:51:44.563Z","level":"info","event":"request","method":"POST","path":"/signup","status":200,"ms":197}
+{"ts":"2026-11-07T18:51:44.803Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":220}
+{"ts":"2026-11-07T18:51:45.191Z","level":"info","event":"request","method":"POST","path":"/signin","status":401,"ms":386}
+{
+  "taken": {
+    "status": 200,
+    "bytes": 54681,
+    "mentionsCheckEmail": true
+  },
+  "free": {
+    "status": 200,
+    "bytes": 54685,
+    "mentionsCheckEmail": true
+  },
+  "identicalAfterNonceStrip": false,
+  "firstDifference": {
+    "at": 49947,
+    "taken": ">Sign in</a> </div> </header> <div class=\"app-layout public-layout\"> <main class=\"wrap\" id=\"main\" tabindex=\"-N\"> <div class=\"center\"> <div class=\"card narrow\"> <hN>Check your email</hN> <p>We have sent a link to <strong>owner@fictional.tickmark.invalid</strong>. Open it to finish creating the practice ÔÇö nothing is created until you do.</p> <p class=\"warning\"><strong>No mail server is configured</strong>, so the link could not be sent. In a real install it is in that inbox and nowhere else; for this trial, here it is:</p> <p><a class=\"",
+    "free": ">Sign in</a> </div> </header> <div class=\"app-layout public-layout\"> <main class=\"wrap\" id=\"main\" tabindex=\"-N\"> <div class=\"center\"> <div class=\"card narrow\"> <hN>Check your email</hN> <p>We have sent a link to <strong>brand-new-person@fictional.invalid</strong>. Open it to finish creating the practice ÔÇö nothing is created until you do.</p> <p class=\"warning\"><strong>No mail server is configured</strong>, so the link could not be sent. In a real install it is in that inbox and nowhere else; for this trial, here it is:</p> <p><a class"
+  },
+  "signin": {
+    "wrongPassword": {
+      "status": 401,
+      "bytes": 54282
+    },
+    "unknownAddress": {
+      "status": 401,
+      "bytes": 54281
+    },
+    "identicalAfterNonceStrip": false
+  }
+}

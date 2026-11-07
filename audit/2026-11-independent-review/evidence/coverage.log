@@ -1,0 +1,869 @@
+Ô£ö sign-up does not answer whether an address is already here (1491.5234ms)
+Ô£ö nothing is created until the link is opened (690.0993ms)
+Ô£ö with a mail server the link is sent and not shown (706.4751ms)
+Ô£ö an account-mail delivery failure is logged without its address or bearer link (846.8707ms)
+Ô£ö a taken address is told so in its own mailbox, and the form-filler is told nothing (1016.0371ms)
+Ô£ö a sign-up link works once, and a spent one says so rather than making a second practice (681.8935ms)
+Ô£ö a lost password is set again by way of the mailbox, and every old session dies with it (1549.615ms)
+Ô£ö a reset link is refused the second time, so a reset cannot be replayed (950.7591ms)
+Ô£ö asking for a reset does not say whether the address is here (822.8846ms)
+Ô£ö with no mail server, a reset points at the operator and hands out no link (601.8772ms)
+Ô£ö a sign-up link can be sent again, and the re-sent one finishes the same sign-up (626.4775ms)
+Ô£ö a reset link can be sent again too (1132.5075ms)
+Ô£ö re-sending does not say whether the address is here (730.0087ms)
+Ô£ö a password can be changed, and everything holding the old one stops working (2767.9502ms)
+Ô£ö an address change needs the password and refuses one already taken (2427.6711ms)
+Ô£ö the sessions page names this one and ends only sessions belonging to this practitioner (1337.8962ms)
+Ô£ö an invitation can be taken back before it is used (1160.5866ms)
+Ô£ö the practice is told when the keys or the people change (2655.2173ms)
+Ô£ö an answer is a state of its own, not the same screen as silence (1968.9115ms)
+Ô£ö answers sort ahead of waiting, because somebody owes them a decision (1902.8168ms)
+Ô£ö a client answering tells the practice, in the clientÔÇÖs own words (2150.947ms)
+Ô£ö one notice a day covers both triggers ÔÇö a file and an answer are the same requestÔÇÖs news (2582.1815ms)
+Ô£ö a practice can be created, and lands on its own dashboard (838.6494ms)
+Ô£ö a password shorter than the floor is refused, and nothing is created (290.2155ms)
+Ô£ö a wrong password and an unknown email are refused identically (1553.7942ms)
+Ô£ö signing out actually revokes the session, which is why sessions are in the database (815.1597ms)
+Ô£ö the session cookie is HttpOnly, SameSite, and Secure by default (606.5507ms)
+Ô£ö a signed-out visitor is sent to sign in rather than shown an error (535.9855ms)
+Ô£ö one practice cannot see another practice's request, and cannot tell that it exists (1164.1772ms)
+Ô£ö a client name that looks like markup is escaped, on every page that shows it (803.2706ms)
+Ô£ö the items of a request are cleaned up: blanks dropped, duplicates collapsed, order kept (2.1071ms)
+Ô£ö a request is created with its client, its items, and a record of the fact (844.6073ms)
+Ô£ö a request that breaks the rules is refused with the form still filled in (651.4726ms)
+Ô£ö a body larger than the endpoint accepts is refused rather than read into memory (458.9904ms)
+Ô£ö a practice can sign in again after signing out (964.0597ms)
+Ô£ö the health check reports the number of practices, and which version is answering (515.9707ms)
+Ô£ö one action asks every client, and each gets a link of their own (1460.8527ms)
+Ô£ö a file rides every ask ÔÇö attached to each, sent, and kept nowhere (1281.5985ms)
+Ô£ö a client with no email address is named, not asked and not quietly dropped (1433.6632ms)
+Ô£ö only the ticked clients are asked when the practice ticks names (1480.4468ms)
+Ô£ö a relay that refuses one recipient does not stop the others, and the failure is reported (1282.3808ms)
+Ô£ö with no mail server configured, nothing is made and the page says why (1071.2094ms)
+Ô£ö the request page offers to email it, and the draft carries the list and a link that opens (1990.6817ms)
+Ô£ö what is sent is what is in the fields, and the record says the request was sent (1957.9916ms)
+Ô£ö with no mail server, the page says what is missing and offers no button that would fail (1973.7237ms)
+Ô£ö a client with no address is somebody the request cannot be emailed to, and it says so (1868.7412ms)
+Ô£ö the upload preflight module is served to the client before encrypted submission (538.8574ms)
+Ô£ö a repeat visit costs a 304, and a validator that does not match costs a download (168.9128ms)
+Ô£ö the validator follows the bytes, so a deployed script can never be served stale (298.0764ms)
+Ô£ö the scripts are compressed for a client that asks, and left alone for one that does not (253.2091ms)
+Ô£ö a file rides the reminder, is attached, and is kept nowhere (1989.2384ms)
+Ô£ö a reminder with no file is unchanged ÔÇö the message is still plain, with no parts to spare (1850.3765ms)
+Ô£ö one command backs up every practice and the registry, and one document decrypts out of the copy (4775.8076ms)
+Ô£ö a practice that lost a document is named, and one broken practice does not cost the others their backup (5341.1397ms)
+Ô£ö an interrupted run is refused from the top, and a practice the registry has forgotten is still backed up (5414.4553ms)
+Ô£ö irreversible tenant purge requires a recent successful off-site backup (28.2387ms)
+Ô£ö a backup taken while the server is running restores, and one document decrypts out of it (2501.8689ms)
+tickmark backup: C:\Users\Casey\AppData\Local\Temp\tickmark-drill-iJCBFn\backup already has something in it. Backups are never overwritten ÔÇö choose a new directory.
+
+This backup has problems:
+  - 1 of 1 documents are not in this backup. The rows that name them are, so a restore would look complete and be missing files. First few: upload.bin (3e1133d9-3c30-4dc4-b488-4ec8568b2104/d7908edf-3574-4cea-81f6-e5c50852d261.bin)
+Ô£ö --verify has teeth, and backups are never overwritten (2291.1141ms)
+Ô£ö billing state and durable receipt commit together and deduplicate after reopening registry (676.763ms)
+Ô£ö an invitation that carries a key seals it to a secret the server is never given (1121.1815ms)
+Ô£ö an assistant invitation carries no key, so it stops asking for a passphrase (3.7404ms)
+Ô£ö accepting an invitation re-seals the key, and the fragment never enters the form (1910.5539ms)
+Ô£ö a link with no fragment is refused, and says which part is missing (557.5917ms)
+Ô£ö the first key is refused until the passphrase is confirmed, long enough and typed twice (5.6768ms)
+Ô£ö the key is made in the browser, and the passphrase is not sent (1046.2536ms)
+Ô£ö changing a passphrase is the same key, sealed differently, and only the record is sent (2996.8108ms)
+Ô£ö a fresh passphrase that is short or mistyped is refused, and a wrong old one sends nothing (372.6959ms)
+Ô£ö a file is moved onto the current key, and the server only ever gets an envelope (1882.789ms)
+Ô£ö a file that does not open stops the run before anything is replaced (873.2338ms)
+Ô£ö a current key under a different passphrase is asked for before anything is touched (2654.1429ms)
+Ô£ö the clientÔÇÖs page encrypts the file before anything is sent (631.5347ms)
+Ô£ö a client can send several files at once, each as its own envelope (469.3771ms)
+Ô£ö a file over the practiceÔÇÖs limit is refused before it is encrypted (460.7818ms)
+Ô£ö clearing the picker puts the page back, and a refusal from the server is shown as words (518.6827ms)
+Ô£ö the practiceÔÇÖs page opens the envelope in the tab and saves the document (991.3885ms)
+Ô£ö download everything opens every envelope here and packs them into one archive (1056.2059ms)
+Ô£ö a wrong passphrase opens nothing, and saves nothing (792.5386ms)
+Ô£ö an envelope changed in storage is refused by the page rather than opened wrongly (1042.7278ms)
+Ô£ö the list before the button names everyone, and says who cannot be reached (1527.1409ms)
+Ô£ö the run sends one message per client, each with its own working link (1247.8078ms)
+Ô£ö one dead mailbox does not stop the run, and the report says which failed (1530.037ms)
+Ô£ö a run that takes too long stops and says where it got to (2076.998ms)
+Ô£ö with no mail server configured, the page says so and the button does nothing (1397.1482ms)
+Ô£ö the board links to the chase list, and back (1408.9003ms)
+Ô£ö a practice sets a cadence, and the run respects it and names who it held back (1383.7064ms)
+Ô£ö setting the cadence back to zero restores sending, so the setting cannot become a trap (1280.2044ms)
+Ô£ö one request by hand is never held back, because there you are looking at that client (1342.4004ms)
+Ô£ö no email address is reported as that, not as being held back by the cadence (1130.3016ms)
+Ô£ö a cadence that is not a whole number of days is refused, and nothing changes (1463.4846ms)
+Ô£ö a cadence belongs to one practice and does not reach another (2291.0525ms)
+Ô£ö a client who has sent everything is not chased ÔÇö their files wait for review, not them (2010.7457ms)
+Ô£ö one rejected document puts the client back on the chase list, with the reason in the message (1735.3066ms)
+Ô£ö the draft says how many are outstanding, names them, and carries a link (3.0154ms)
+Ô£ö a reminder names the outstanding items, and its link opens the client page (2191.2142ms)
+Ô£ö a reminder creates a fresh link, because the old one cannot be recovered (1858.9265ms)
+Ô£ö there is nothing to chase once everything has arrived (2147.0263ms)
+Ô£ö a reminder cannot be drafted for another practice's request (2218.6769ms)
+Ô£ö closing a request takes it off the open list and puts it on the closed one (1761.4529ms)
+Ô£ö reopening puts it back, so a mistake is not permanent (1820.0433ms)
+Ô£ö closing twice, and closing somebody else's, are both refused (2292.4036ms)
+Ô£ö closing a request does not quietly revoke its link (1883.006ms)
+Ô£ö forwarded addresses are ignored when the socket peer is not trusted (1.8698ms)
+Ô£ö a trusted proxy chain stops at the first untrusted hop and ignores spoofed values to its left (0.2832ms)
+Ô£ö invalid forwarding data falls back to the trusted peer (8.3326ms)
+Ô£ö IPv4-mapped IPv6 peers match an IPv4 trusted-proxy entry (2.12ms)
+Ô£ö a note to the client is stored, shown first on their page, and escaped (2037.8609ms)
+Ô£ö a request with no note shows no empty box (1832.4548ms)
+Ô£ö a note longer than its cap is refused with a sentence, not truncated in silence (1781.4106ms)
+Ô£ö the client page carries the practiceÔÇÖs upload ceiling, so the browser can catch it early (1791.1275ms)
+Ô£ö the upload rebuild carries every file across, pointed at its request (445.0068ms)
+Ô£ö a client can send a document nobody asked for, and the practice gets it (4883.4306ms)
+Ô£ö an extra upload is held to the same rules as an answer (2100.0414ms)
+Ô£ö a client can say something that is not a file (1838.2316ms)
+Ô£ö a message is refused when empty or too long, rather than cut (1759.4614ms)
+Ô£ö what a client writes is escaped, because it is their text on the practiceÔÇÖs page (1759.2607ms)
+Ô£ö the practiceÔÇÖs contact details reach the clientÔÇÖs page, and only when given (1982.4616ms)
+Ô£ö a rename that does not mention the contact details leaves them alone (1940.5969ms)
+Ô£ö an address typed later is kept, so a client is never permanently unreachable (1906.6865ms)
+Ô£ö the clients page lists a client with what they owe, and a request can be started from it (1584.6922ms)
+Ô£ö a request created from a client page is filed against that client, not against a name (1490.2782ms)
+Ô£ö a client can be renamed, and their whole history moves with them (1887.4377ms)
+Ô£ö two clients cannot end up with one name, and an address can be cleared on purpose (1790.6459ms)
+Ô£ö another practice has no client at that address, and no way to tell one is there (3286.0052ms)
+Ô£ö the count on the client list is what is still wanted, not what has arrived (2053.6698ms)
+Ô£ö the client page shows their filing profile when a connection has read one (1987.5535ms)
+Ô£ö a client whose books look behind is flagged on their page, and only the summary is named (1618.5479ms)
+Ô£ö raising a request for a client starts from their filing profile (1990.904ms)
+Ô£ö a page is compressed when the browser asks, and the numbers add up (1837.3434ms)
+Ô£ö a client that does not want its response altered gets it unaltered (1935.2067ms)
+Ô£ö an encrypted document is never compressed, however loudly the client asks (5837.6914ms)
+Ô£ö a small answer is left alone rather than wrapped in gzip for nothing (1869.7345ms)
+Ô£ö a CSV export is compressed too, and still opens (2817.835ms)
+Ô£ö recording a call writes it in the record and sends the client nothing at all (2402.2467ms)
+Ô£ö a contact with no words is refused, because the note is the record (1928.5349ms)
+Ô£ö recording a contact keeps the chase off that client until the cadence lets it back (1831.1835ms)
+Ô£ö the clients list and its export call the column what it now means (1815.3191ms)
+Ô£ö a contact is the practiceÔÇÖs own record, so it needs a signed-in practice (1874.2474ms)
+Ô£ö a file encrypted to the practice key comes back out byte for byte (725.0653ms)
+Ô£ö the envelope the server stores does not contain the file (1054.2118ms)
+Ô£ö changing one byte of the ciphertext is detected rather than decrypted wrongly (637.8963ms)
+Ô£ö the header cannot be rewritten, so nobody can substitute their own ephemeral key (932.5905ms)
+Ô£ö the wrong passphrase does not open the key, and says so (1270.6359ms)
+Ô£ö another practice cannot open an envelope that was not encrypted to them (1618.9825ms)
+Ô£ö the wrapped key holds neither the passphrase nor anything readable (771.0635ms)
+Ô£ö the same file encrypted twice is different bytes, because the keys are ephemeral (875.463ms)
+Ô£ö the server can tell an envelope from a plain file without being able to open either (1047.6162ms)
+Ô£ö a key record handed to somebody cannot demand unbounded work from them (0.8026ms)
+Ô£ö a passphrase below the floor is refused when the key is made (557.689ms)
+Ô£ö a passphrase differing only in Unicode normalisation is the same passphrase (724.2429ms)
+Ô£ö an invitation carries the practice key, and only the secret opens it (1545.4989ms)
+Ô£ö a member invited after a file was sent can still open that file (2204.9768ms)
+Ô£ö the new member cannot open the practice key with the invitation secret alone (2108.6638ms)
+Ô£ö a page carries a policy whose nonce matches its own markup (213.1911ms)
+Ô£ö nothing the product renders uses an inline style attribute or an inline event handler (1692.0046ms)
+Ô£ö the copyable fields select themselves without an inline handler (1826.821ms)
+Ô£ö the browser-side modules still load under the policy (1787.9644ms)
+Ô£ö a client is due when their last ask was this month of an earlier year and nothing is open (1518.1236ms)
+Ô£ö asking a client takes them off the list, which is what makes it a to-do list (1349.1339ms)
+Ô£ö the board tells the practice the year has come round, because that is the page they open (1463.6896ms)
+Ô£ö the board says nothing when nobody is due (1308.0074ms)
+Ô£ö the clients page counts who is due, filters to them, and says the rule out loud (1390.6944ms)
+Ô£ö the first setup page warns hard, and the key cannot be made without confirming it is saved (1355.9814ms)
+Ô£ö a request duplicates with its title and checklist, and the client is left to be chosen (1596.9725ms)
+Ô£ö the mail test page needs a session, and says so plainly when sending is not configured (707.9669ms)
+Ô£ö the mail test page sends through the configured relay, and says the relay accepted it (1628.7976ms)
+Ô£ö a relay that cannot be reached is reported as the step that failed, not as a shrug (1898.1723ms)
+Ô£ö every document is in one list, and the search says what it can look at (2128.125ms)
+Ô£ö a document index is not for an assistant, who can open none of it (1872.139ms)
+Ô£ö opening a document is recorded, so a firm can say who has seen a client file (1815.9808ms)
+Ô£ö a document that was never there is not recorded as opened (1962.729ms)
+Ô£ö the envelope route hands back the bytes the client sent, encrypted (2123.3567ms)
+Ô£ö another practice cannot fetch an envelope, even with the upload id (2137.514ms)
+Ô£ö an upload id that is not in this request is not found (3359.6145ms)
+Ô£ö the request page carries what the browser needs to open a file (2008.8366ms)
+Ô£ö a request with nothing received offers no unlock, and no script (1816.01ms)
+Ô£ö the decrypting script is served, and is the module the tests just used (491.0417ms)
+Ô£ö a store whose file has been removed says so rather than 404ing (1739.6071ms)
+Ô£ö a request with documents offers to download them all, named into one archive (2014.8282ms)
+Ô£ö a file sent without being asked is packed too, and is a save rather than a raw link (3078.9735ms)
+Ô£ö a request whose only file was sent without being asked still offers the download (2753.5608ms)
+Ô£ö a practice can add a document for a client who could not send it themselves (2719.2527ms)
+ÔûÂ the database is in write-ahead logging, and waits for a lock rather than failing on one
+  Ô£ö a cached statement survives the schema changing underneath it (442.2984ms)
+Ô£ö the database is in write-ahead logging, and waits for a lock rather than failing on one (950.2242ms)
+Ô£ö a second process waits for the lock instead of failing (718.8712ms)
+Ô£ö a backup can be taken while the data is in use, and it verifies (1056.3848ms)
+Ô£ö verify refuses a directory that is not a finished backup (430.1951ms)
+ÔûÂ a backup missing a document fails verification, which is the whole point of verifying
+  Ô£ö a link refuses a file that would take it past its ceiling, and stores nothing (2104.3487ms)
+  Ô£ö a link refuses once it has had enough files, whatever their size (1866.0807ms)
+  Ô£ö the ceiling counts everything the client has sent, answers and extras alike (1758.2105ms)
+Ô£ö a backup missing a document fails verification, which is the whole point of verifying (7343.4305ms)
+Ô£ö a request can be edited after it is made, and the record says what changed (1630.2726ms)
+Ô£ö an edit that changes nothing is not an event, because a form submitted twice is not history (1566.7692ms)
+Ô£ö a due date can be cleared, which is how "there is no deadline" is said (1929.3898ms)
+Ô£ö a request filed against the wrong client can be moved, and it moves rather than copying (1629.5653ms)
+Ô£ö an edit is refused when it would leave the request without a title, or with a nonsense date (1460.2498ms)
+Ô£ö another practice cannot edit a request it cannot see (2750.024ms)
+Ô£ö a client gathers several entities, and a name finds the same one twice (481.0198ms)
+Ô£ö requests hang off an entity, and the client page groups them that way (554.6175ms)
+Ô£ö an entity belongs to one client, never another (358.6816ms)
+Ô£ö the board can be searched by client, by request and by address, and the filters compose (1842.9459ms)
+Ô£ö nothing found says so, and offers the way back rather than an empty table (1930.4649ms)
+Ô£ö the board can be ordered by due date and by client, and says which order it is in (1990.2569ms)
+Ô£ö the board exports as a spreadsheet, honouring the filters it was made from (1829.5753ms)
+Ô£ö a cell with a comma or a quote in it survives the round trip (1621.1055ms)
+Ô£ö the clients list exports too, and searches by name or address (2196.2141ms)
+Ô£ö both exports need a session, and the refusal leaks nothing (2803.4025ms)
+Ô£ö a new practice is told what to do first (1277.0478ms)
+Ô£ö once the essentials are done the card is gone, and email being unset does not bring it back (1919.1048ms)
+Ô£ö the first-run card never follows somebody into a filtered view (836.1268ms)
+{"ts":"2026-11-07T18:48:28.932Z","level":"info","event":"request","method":"POST","path":"/login","status":303,"ms":352}
+{"ts":"2026-11-07T18:48:29.315Z","level":"info","event":"request","method":"POST","path":"/login","status":303,"ms":373}
+{"ts":"2026-11-07T18:48:29.895Z","level":"info","event":"request","method":"POST","path":"/setup","status":303,"ms":13}
+{"ts":"2026-11-07T18:48:30.382Z","level":"info","event":"request","method":"POST","path":"/members/invite","status":201,"ms":54}
+{"ts":"2026-11-07T18:48:30.393Z","level":"info","event":"request","method":"GET","path":"/invite/[redacted]","status":200,"ms":5}
+{"ts":"2026-11-07T18:48:31.184Z","level":"info","event":"request","method":"POST","path":"/invite/[redacted]","status":303,"ms":390}
+{"ts":"2026-11-07T18:48:31.480Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":18}
+{"ts":"2026-11-07T18:48:31.542Z","level":"info","event":"request","method":"POST","path":"/requests/2e209a47-311e-4abf-8157-a093426f490c/link","status":200,"ms":49}
+{"ts":"2026-11-07T18:48:31.588Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/0d3a97f4-9052-4b2e-9475-5225c3ede2e6","status":201,"ms":32}
+{"ts":"2026-11-07T18:48:31.619Z","level":"info","event":"request","method":"POST","path":"/requests/2e209a47-311e-4abf-8157-a093426f490c/items/0d3a97f4-9052-4b2e-9475-5225c3ede2e6/check","status":303,"ms":17}
+{"ts":"2026-11-07T18:48:31.636Z","level":"info","event":"request","method":"GET","path":"/requests","status":303,"ms":2}
+{"ts":"2026-11-07T18:48:31.651Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":2}
+{"ts":"2026-11-07T18:48:36.426Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":327}
+{"ts":"2026-11-07T18:48:36.657Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":303,"ms":228}
+{"ts":"2026-11-07T18:48:36.668Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":4}
+{"ts":"2026-11-07T18:48:36.916Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":236}
+{"ts":"2026-11-07T18:48:37.141Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":303,"ms":214}
+{"ts":"2026-11-07T18:48:37.147Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":2}
+{"ts":"2026-11-07T18:48:37.149Z","level":"info","event":"request","method":"GET","path":"/t/retired/requests","status":404,"ms":1}
+{"ts":"2026-11-07T18:48:37.163Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":200,"ms":2}
+Ô£ö hosted application, identity, TOTP, staff membership and encrypted documents survive a full isolated restore (11056.4084ms)
+Ôä╣ full-host synthetic evidence: 2 practices provisioned; 1 keyed staff invitation accepted; owner+staff TOTP login passed after recovery; 1 request, 2 checklist items, 4 events; ciphertext SHA-256 5684b8ac72748691c3cc868ba83a0fb00b22818211af49b8af09eb775a05f57d; decrypted 51 bytes; selected snapshot 11111111; deletion ledger replayed 1; malformed-ledger restore refused without promotion; fake Restic transport; browser UI/device testing not part of this run.
+{"ts":"2026-11-07T18:48:28.839Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":892}
+{"ts":"2026-11-07T18:48:28.858Z","level":"info","event":"request","method":"GET","path":"/dashboard","status":200,"ms":6}
+{"ts":"2026-11-07T18:48:28.876Z","level":"info","event":"request","method":"GET","path":"/t/acme-accounting/requests","status":402,"ms":5}
+Ô£ö signing up creates a practice that is real but not yet paid for (1364.3679ms)
+{"ts":"2026-11-07T18:48:29.821Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":705}
+Ô£ö signing up with Stripe redirects to checkout, with the tenant id in the metadata (933.1475ms)
+{"ts":"2026-11-07T18:48:31.010Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":694}
+{"ts":"2026-11-07T18:48:31.028Z","level":"info","event":"request","method":"POST","path":"/billing/checkout","status":503,"ms":3}
+{"ts":"2026-11-07T18:48:31.047Z","level":"info","event":"request","method":"POST","path":"/billing/portal","status":502,"ms":3}
+Ô£ö checkout and billing portal failures stay closed and never log provider response text (1229.2643ms)
+{"ts":"2026-11-07T18:48:32.499Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":946}
+tickmark: a Stripe webhook was refused ÔÇö the signature does not match
+{"ts":"2026-11-07T18:48:32.504Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":400,"ms":1}
+tickmark: a Stripe webhook was refused ÔÇö the signature is older than the tolerance window
+{"ts":"2026-11-07T18:48:32.522Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":400,"ms":0}
+{"ts":"2026-11-07T18:48:32.537Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":400,"ms":0}
+Ô£ö the webhook refuses a forged signature, and one that is too old to trust (1499.3147ms)
+{"ts":"2026-11-07T18:48:34.109Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":901}
+tickmark: stripe checkout.session.completed ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 pending_payment ÔåÆ pending_payment
+{"ts":"2026-11-07T18:48:34.149Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":36}
+tickmark: stripe customer.subscription.created ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 pending_payment ÔåÆ active
+{"ts":"2026-11-07T18:48:34.179Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":22}
+{"ts":"2026-11-07T18:48:34.192Z","level":"info","event":"request","method":"GET","path":"/requests","status":303,"ms":5}
+{"ts":"2026-11-07T18:48:34.763Z","level":"info","event":"request","method":"POST","path":"/login","status":303,"ms":559}
+{"ts":"2026-11-07T18:48:34.781Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":7}
+{"ts":"2026-11-07T18:48:35.361Z","level":"info","event":"request","method":"POST","path":"/setup","status":303,"ms":58}
+{"ts":"2026-11-07T18:48:35.491Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":112}
+{"ts":"2026-11-07T18:48:35.682Z","level":"info","event":"request","method":"POST","path":"/requests/311db050-7b99-40b2-90eb-3041a4baa28d/link","status":200,"ms":179}
+{"ts":"2026-11-07T18:48:35.819Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/bff440fe-d66a-42ea-ba0e-88671869f198","status":201,"ms":114}
+{"ts":"2026-11-07T18:48:35.973Z","level":"info","event":"request","method":"POST","path":"/requests/311db050-7b99-40b2-90eb-3041a4baa28d/link","status":200,"ms":146}
+{"ts":"2026-11-07T18:48:36.043Z","level":"info","event":"request","method":"POST","path":"/requests/311db050-7b99-40b2-90eb-3041a4baa28d/revoke","status":303,"ms":62}
+tickmark: stripe customer.subscription.updated ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 active ÔåÆ active
+{"ts":"2026-11-07T18:48:36.173Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":124}
+{"ts":"2026-11-07T18:48:36.189Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":200,"ms":4}
+tickmark: stripe customer.subscription.updated ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 active ÔåÆ past_due
+{"ts":"2026-11-07T18:48:36.335Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":145}
+{"ts":"2026-11-07T18:48:36.346Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":200,"ms":3}
+tickmark: stripe customer.subscription.updated ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 past_due ÔåÆ active
+{"ts":"2026-11-07T18:48:36.498Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":141}
+tickmark: stripe customer.subscription.deleted ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 active ÔåÆ cancelled
+{"ts":"2026-11-07T18:48:36.650Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":138}
+{"ts":"2026-11-07T18:48:36.666Z","level":"info","event":"request","method":"GET","path":"/t/acme-accounting/requests","status":402,"ms":2}
+{"ts":"2026-11-07T18:48:36.682Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":403,"ms":2}
+tickmark: stripe customer.subscription.created ÔÇö tenant df06173f-a4ce-4356-8427-b09c6ce87c35 cancelled ÔåÆ active
+{"ts":"2026-11-07T18:48:36.891Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":195}
+{"ts":"2026-11-07T18:48:36.898Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":200,"ms":2}
+{"ts":"2026-11-07T18:48:36.913Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":410,"ms":1}
+Ô£ö client links follow billing access and keep revoked links and submitted ciphertext closed (4475.971ms)
+{"ts":"2026-11-07T18:48:41.334Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":2246}
+tickmark: stripe customer.subscription.created ÔÇö tenant 422c53e7-0c9c-4dec-9804-0bde75f548c4 pending_payment ÔåÆ active
+{"ts":"2026-11-07T18:48:41.484Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":149}
+tickmark: stripe customer.subscription.updated ÔÇö tenant 422c53e7-0c9c-4dec-9804-0bde75f548c4 active ÔåÆ past_due
+{"ts":"2026-11-07T18:48:41.638Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":136}
+tickmark: stripe customer.subscription.updated ÔÇö tenant 422c53e7-0c9c-4dec-9804-0bde75f548c4 past_due ÔåÆ active
+{"ts":"2026-11-07T18:48:41.786Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":145}
+tickmark: stripe checkout.session.completed ignored ÔÇö unknown tenant
+{"ts":"2026-11-07T18:48:41.948Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":152}
+Ô£ö a failing card marks the practice past due, and paying opens it again (4987.8119ms)
+{"ts":"2026-11-07T18:48:45.777Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":2330}
+tickmark: stripe customer.subscription.created ÔÇö tenant 5c5e9197-1d7e-4339-8661-9f82de169fd1 pending_payment ÔåÆ active
+{"ts":"2026-11-07T18:48:45.906Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":127}
+tickmark: stripe customer.subscription.created ignored ÔÇö event already recorded
+{"ts":"2026-11-07T18:48:45.914Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":1}
+tickmark: stripe customer.subscription.deleted ÔÇö tenant 5c5e9197-1d7e-4339-8661-9f82de169fd1 active ÔåÆ cancelled
+{"ts":"2026-11-07T18:48:46.034Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":119}
+tickmark: stripe invoice.payment_succeeded ÔÇö tenant 5c5e9197-1d7e-4339-8661-9f82de169fd1 cancelled ÔåÆ cancelled
+{"ts":"2026-11-07T18:48:46.167Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":116}
+tickmark: stripe customer.subscription.updated ignored ÔÇö older than the latest applied billing event
+{"ts":"2026-11-07T18:48:46.282Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":114}
+tickmark: stripe customer.subscription.updated ignored ÔÇö same-second event cannot reopen a cancelled subscription
+{"ts":"2026-11-07T18:48:46.411Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":127}
+tickmark: stripe customer.subscription.updated ignored ÔÇö customer does not match tenant association
+{"ts":"2026-11-07T18:48:46.530Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":106}
+tickmark: stripe customer.subscription.created ÔÇö tenant 5c5e9197-1d7e-4339-8661-9f82de169fd1 cancelled ÔåÆ active
+{"ts":"2026-11-07T18:48:46.686Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":139}
+Ô£ö webhook receipts survive replays, stale delivery and wrong-customer events, then allow re-subscription (4755.9458ms)
+{"ts":"2026-11-07T18:48:51.155Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":2245}
+tickmark: stripe customer.subscription.created ÔÇö tenant a2e78dd8-c36c-4df6-b1c9-a81da90a88c8 pending_payment ÔåÆ active
+{"ts":"2026-11-07T18:48:51.306Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":149}
+tickmark: stripe customer.subscription.updated ÔÇö tenant a2e78dd8-c36c-4df6-b1c9-a81da90a88c8 active ÔåÆ past_due
+{"ts":"2026-11-07T18:48:51.391Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":81}
+{"ts":"2026-11-07T18:48:51.405Z","level":"info","event":"request","method":"GET","path":"/requests","status":303,"ms":1}
+Ô£ö a failing card keeps the documents open for the grace window, so a fixable hiccup is not a lockout (4657.4315ms)
+{"ts":"2026-11-07T18:48:55.096Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":2116}
+tickmark: stripe customer.subscription.created ÔÇö tenant 08b8b477-11af-480a-9cd2-cdf9cb10a493 pending_payment ÔåÆ active
+{"ts":"2026-11-07T18:48:55.246Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":147}
+{"ts":"2026-11-07T18:48:55.781Z","level":"info","event":"request","method":"POST","path":"/login","status":303,"ms":529}
+{"ts":"2026-11-07T18:48:56.140Z","level":"info","event":"request","method":"POST","path":"/setup","status":303,"ms":47}
+{"ts":"2026-11-07T18:48:56.222Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":67}
+{"ts":"2026-11-07T18:48:56.377Z","level":"info","event":"request","method":"POST","path":"/requests/1b82876d-2650-4d70-82f5-486f875ab2d5/link","status":200,"ms":151}
+tickmark: stripe customer.subscription.updated ÔÇö tenant 08b8b477-11af-480a-9cd2-cdf9cb10a493 active ÔåÆ past_due
+{"ts":"2026-11-07T18:48:56.519Z","level":"info","event":"request","method":"POST","path":"/webhooks/stripe","status":200,"ms":129}
+{"ts":"2026-11-07T18:48:56.523Z","level":"info","event":"request","method":"GET","path":"/t/acme-accounting/requests","status":402,"ms":1}
+{"ts":"2026-11-07T18:48:56.529Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":403,"ms":1}
+Ô£ö with the grace window set to zero, a failing card locks the practice at once (5160.2031ms)
+{"ts":"2026-11-07T18:48:58.808Z","level":"info","event":"request","method":"GET","path":"/","status":303,"ms":1}
+{"ts":"2026-11-07T18:49:01.129Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":2319}
+{"ts":"2026-11-07T18:49:01.132Z","level":"info","event":"request","method":"GET","path":"/","status":303,"ms":1}
+{"ts":"2026-11-07T18:49:01.269Z","level":"info","event":"request","method":"GET","path":"/","status":402,"ms":1}
+{"ts":"2026-11-07T18:49:01.407Z","level":"info","event":"request","method":"GET","path":"/","status":200,"ms":1}
+Ô£ö the platform root sends you to signup or to your dashboard, and a practice root is the coreÔÇÖs (4881.2501ms)
+{"ts":"2026-11-07T18:49:04.940Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":1393}
+{"ts":"2026-11-07T18:49:05.740Z","level":"info","event":"request","method":"POST","path":"/login","status":303,"ms":331}
+{"ts":"2026-11-07T18:49:05.742Z","level":"info","event":"request","method":"GET","path":"/dashboard","status":200,"ms":1}
+{"ts":"2026-11-07T18:49:05.967Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":224}
+{"ts":"2026-11-07T18:49:05.970Z","level":"info","event":"request","method":"GET","path":"/signin/code","status":200,"ms":2}
+{"ts":"2026-11-07T18:49:06.017Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":401,"ms":46}
+{"ts":"2026-11-07T18:49:06.285Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":303,"ms":265}
+{"ts":"2026-11-07T18:49:06.288Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":2}
+{"ts":"2026-11-07T18:49:06.290Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":410,"ms":1}
+{"ts":"2026-11-07T18:49:06.521Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":230}
+{"ts":"2026-11-07T18:49:06.561Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":401,"ms":39}
+{"ts":"2026-11-07T18:49:06.599Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":401,"ms":37}
+{"ts":"2026-11-07T18:49:06.658Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":401,"ms":58}
+{"ts":"2026-11-07T18:49:06.697Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":401,"ms":38}
+{"ts":"2026-11-07T18:49:06.776Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":401,"ms":77}
+{"ts":"2026-11-07T18:49:06.778Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":410,"ms":1}
+{"ts":"2026-11-07T18:49:07.021Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":242}
+{"ts":"2026-11-07T18:49:07.060Z","level":"info","event":"request","method":"GET","path":"/signin/code","status":410,"ms":38}
+{"ts":"2026-11-07T18:49:07.281Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":220}
+{"ts":"2026-11-07T18:49:07.319Z","level":"info","event":"request","method":"POST","path":"/logout","status":303,"ms":37}
+{"ts":"2026-11-07T18:49:07.320Z","level":"info","event":"request","method":"GET","path":"/signin/code","status":410,"ms":1}
+{"ts":"2026-11-07T18:49:07.576Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":255}
+{"ts":"2026-11-07T18:49:07.677Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":410,"ms":40}
+{"ts":"2026-11-07T18:49:08.375Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":336}
+{"ts":"2026-11-07T18:49:08.544Z","level":"info","event":"request","method":"POST","path":"/signin/code","status":410,"ms":36}
+Ô£ö a practice with a second factor cannot be entered through the platform (7132.9723ms)
+{"ts":"2026-11-07T18:49:13.503Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":2617}
+{"ts":"2026-11-07T18:49:13.836Z","level":"info","event":"request","method":"GET","path":"/signin","status":303,"ms":1}
+{"ts":"2026-11-07T18:49:14.203Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":367}
+{"ts":"2026-11-07T18:49:14.206Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":2}
+Ô£ö the core sign-in path and the gateway sign-in are the same door (5691.3168ms)
+Ô£ö hosted login throttles failures before scrypt, expires them, and allows the legitimate account back in (4708.3855ms)
+{"ts":"2026-11-07T18:49:22.103Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":1616}
+{"ts":"2026-11-07T18:49:22.521Z","level":"info","event":"request","method":"POST","path":"/login","status":401,"ms":188}
+{"ts":"2026-11-07T18:49:22.697Z","level":"info","event":"request","method":"POST","path":"/login","status":401,"ms":175}
+{"ts":"2026-11-07T18:49:22.698Z","level":"info","event":"request","method":"POST","path":"/login","status":429,"ms":0}
+Ô£ö the source bucket catches changing email addresses without disclosing account existence (3739.3134ms)
+{"ts":"2026-11-07T18:49:25.799Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":1656}
+{"ts":"2026-11-07T18:49:25.980Z","level":"info","event":"request","method":"POST","path":"/login","status":401,"ms":179}
+{"ts":"2026-11-07T18:49:26.176Z","level":"info","event":"request","method":"POST","path":"/login","status":401,"ms":195}
+{"ts":"2026-11-07T18:49:26.177Z","level":"info","event":"request","method":"POST","path":"/login","status":429,"ms":0}
+Ô£ö the account bucket spans trusted proxy source addresses (3461.3581ms)
+Ô£ö hosted staff invitations create repeatable accounts, enforce tenant membership, and revoke access (4015.3187ms)
+{"ts":"2026-11-07T18:49:30.839Z","level":"info","event":"request","method":"POST","path":"/signup","status":303,"ms":402}
+{"ts":"2026-11-07T18:49:31.054Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":187}
+{"ts":"2026-11-07T18:49:31.071Z","level":"info","event":"request","method":"POST","path":"/members/invite","status":201,"ms":17}
+{"ts":"2026-11-07T18:49:31.266Z","level":"info","event":"request","method":"POST","path":"/invite/[redacted]","status":503,"ms":183}
+{"ts":"2026-11-07T18:49:31.286Z","level":"info","event":"request","method":"GET","path":"/invite/[redacted]","status":410,"ms":9}
+{"ts":"2026-11-07T18:49:31.469Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":182}
+Ô£ö an interrupted cross-database invitation acceptance completes from the committed tenant claim (1248.3893ms)
+Ô£ö a CSV export refuses to hand a spreadsheet a formula to execute (2058.8499ms)
+Ô£ö a CSV cell that needs no guard is left exactly as it was (1867.2765ms)
+Ô£ö a malformed cookie is ignored rather than taking the page down with it (500.7271ms)
+Ô£ö parseCookies keeps an undecodable value raw instead of throwing (0.7276ms)
+Ô£ö a configured public address wins over whatever host the request claims (1677.5486ms)
+Ô£ö the fallback password record verifies against nothing a person would guess (1561.0474ms)
+Ô£ö sign-up stops answering before it spends the machineÔÇÖs memory (2321.9594ms)
+Ô£ö a client link gets a small write allowance rather than an open tap (2731.7561ms)
+Ô£ö an invitation can only ever make one member (3081.208ms)
+Ô£ö the documents list pages, and the export still gives everything (2604.212ms)
+Ô£ö a removed member is not the one told when their client does something (2808.0479ms)
+Ô£ö the whole history comes out as a spreadsheet, saying what happened and to whom (1819.7829ms)
+Ô£ö hosted backup encrypts, verifies, prunes only after upload, and records remote success (2760.6015ms)
+Ô£ö an active retention hold defers expiry and an upload failure never prunes old snapshots (4803.8513ms)
+Ô£ö overlapping backup execution fails closed without replacing the running job status (4464.4537ms)
+Ô£ö hosted maintenance dry-run records outcomes and an overlapping lock fails without running jobs (2492.1275ms)
+Ô£ö a full hosted restore replays the latest deletion tombstone before exposing the service (5605.2486ms)
+Ôä╣ synthetic restore evidence: snapshotAt=2026-10-21T05:00:00.000Z, recoveryPointAgeMs=1518515679, restoreDurationMs=1259
+Ô£ö hosted restore refuses a symlink in the recovered tree and leaves the target unpromoted (7153.7645ms)
+Ô£ö hosted status reports service, storage, and backup age without tenant data (88.344ms)
+Ô£ö a styled message is plain text and a rendering of it, in that order (6.939ms)
+Ô£ö the rendering never trusts the text (0.5416ms)
+Ô£ö a URL on a line of its own is a button whose label is the URL (0.3264ms)
+Ô£ö a reminder through the product carries both parts, and the words are the ones on screen (1785.8074ms)
+Ô£ö the notes a practice sends itself stay plain (2419.6583ms)
+Ô£ö a reminder is signed by the practice, and says nothing it was not told (2.8097ms)
+Ô£ö the first ask is signed too, and it quotes the practice note above the list (0.4756ms)
+Ô£ö what goes out is signed with the current name, and the clientÔÇÖs page names the firm (1878.4313ms)
+Ô£ö a practice that has not renamed itself still sends something a client can place (1952.2059ms)
+tickmark test cleanup: C:\Users\Casey\AppData\Local\Temp\tickmark-import-jat3eg not removed ÔÇö EPERM
+Ô£ö an imported practice is a tenant, with its data, its blobs and its credentials (2494.8993ms)
+Ô£ö a CSV reads the way a spreadsheet writes it (2.6471ms)
+Ô£ö the columns are found by name, so a file from anywhere imports (0.5155ms)
+Ô£ö the preview says what an import would do, and changes nothing (556.0772ms)
+Ô£ö importing twice creates nothing twice, and fills in addresses (564.8771ms)
+Ô£ö the import page previews first, then imports, and never writes before the confirm (2223.492ms)
+Ô£ö an import brings the clientÔÇÖs filing profile along with their name (1862.601ms)
+Ô£ö a filing profile reads as one honest line, inventing nothing (0.3031ms)
+Ô£ö books are flagged behind on a pile of unreconciled lines, or on silence (0.2186ms)
+Ô£ö a request is suggested from the clientÔÇÖs own books (0.4134ms)
+Ô£ö a suggestion never invents a date it was not given (0.1571ms)
+Ô£ö integrations are reachable from the nav and say how bringing clients across works (1811.3527ms)
+Ô£ö the provider pages mark Integrations as the current section (1772.0472ms)
+Ô£ö Sync now brings the client book across and stamps when it last ran (2886.739ms)
+Ô£ö the quiet refresh runs when the book is stale, and not again within the hour (2556.3986ms)
+ÔûÂ a new member joins through the link and can open a file that predates them
+  Ô£ö an invitation that has been used cannot be used again, and says so (3883.268ms)
+  Ô£ö a submission from a browser that did not run the script is refused, not half-accepted (3384.9048ms)
+  Ô£ö a submission with something that is not a key record is refused (3011.7961ms)
+  Ô£ö the practice can be renamed, and a new member sees the real name (3240.2202ms)
+  Ô£ö a name that is empty, blank or absurd is refused, and the old name stays (2239.3037ms)
+  Ô£ö renaming touches one practice, and needs a session (3734.4529ms)
+  Ô£ö the members page refuses to make an invitation from a key the practice does not hold (3423.987ms)
+Ô£ö a new member joins through the link and can open a file that predates them (26388.3412ms)
+Ô£ö an invitation is open, and shows the practice and the sealed key to whoever holds the link (1051.3113ms)
+Ô£ö the member who accepts can open a document that arrived before they did (1264.8023ms)
+Ô£ö an invitation works once, and the second attempt says so rather than looking wrong (816.2797ms)
+Ô£ö an expired invitation is refused, and creates nobody (578.3112ms)
+Ô£ö an invitation belongs to one practice and cannot put a member in another (879.3466ms)
+Ô£ö the members page can list invitations, and who accepted them (1096.2944ms)
+Ô£ö documents can be added to a request that is already out with a client (2441.2466ms)
+Ô£ö an empty add is refused, and a closed request is refused with an explanation (2661.4463ms)
+Ô£ö withdrawing an item stops the client being asked, and keeps the record of the asking (2790.6177ms)
+Ô£ö a file sent for a withdrawn item is refused rather than stored (2325.0214ms)
+Ô£ö needs attention keeps an item outstanding even though a file came in (2892.3351ms)
+Ô£ö a flagged item is chased again, in its own paragraph, with the reason (1.4169ms)
+Ô£ö a reminder made only of flagged items still reads properly (0.3733ms)
+Ô£ö the reminder through the page asks for a flagged item again (2956.5606ms)
+Ô£ö the client's note travels with the file and is shown to the practice (2361.2114ms)
+Ô£ö an unknown action on an item is refused, and another practice cannot change one (3025.6684ms)
+Ô£ö files are counted against the key they were sealed to (746.1691ms)
+Ô£ö a file whose key is not known is counted as unknown, not as zero (296.2195ms)
+Ô£ö the count is per practice, not per installation (553.1619ms)
+Ô£ö a key belonging to another practice is not a valid claim for this request (521.2965ms)
+Ô£ö an upload records the key the browser named, so a practice can see what each key holds (2738.1158ms)
+Ô£ö an upload naming a key this practice does not have is refused, and nothing is written (2660.7198ms)
+Ô£ö an upload that names no key still arrives, and is counted as unknown (2276.4944ms)
+Ô£ö the old single-key columns become a key in the history, and the columns go (2251.0335ms)
+Ô£ö a new key does not orphan the files sent under the old one (3484.2264ms)
+Ô£ö after a rotation, a new upload is sealed to the new key and the old key cannot open it (4220.0765ms)
+Ô£ö the request page offers every key, current first, so an old file can still be opened (3729.7746ms)
+Ô£ö changing a passphrase keeps the key, so nothing has to be re-encrypted (3973.1855ms)
+Ô£ö one practice cannot change another's passphrase, and a malformed record is refused (2956.6339ms)
+Ô£ö the keys page shows the history and offers no way to delete a key (3072.2817ms)
+Ô£ö a link is shown once, and the token itself is never stored (2841.3008ms)
+Ô£ö the client page lists the documents, carries the key to encrypt to, and says what is still visible (2704.4088ms)
+Ô£ö an unknown, an expired and a revoked link get three different answers (2913.6618ms)
+Ô£ö what the client sends is encrypted, stored as sent, and opens with the passphrase alone (2895.136ms)
+Ô£ö a file that was never encrypted is refused, and nothing is stored (3036.8662ms)
+Ô£ö an envelope of a version this server does not know is refused (2694.9511ms)
+Ô£ö a filename that looks like a path stays a label and never becomes a path (2715.3544ms)
+Ô£ö an item belonging to another request cannot be uploaded to, even with a valid link (3759.0224ms)
+Ô£ö a revoked link refuses the upload, and leaves nothing behind (2766.8123ms)
+Ô£ö one practice cannot create or revoke a link on another practice's request (2979.5669ms)
+Ô£ö an upload that is not raw bytes is refused rather than stored as framing (2681.9923ms)
+Ô£ö an upload larger than the limit is refused, and nothing is stored (2916.6255ms)
+Ô£ö the history records the link being made and the file arriving, in order (3015.3872ms)
+Ô£ö tenant storage counts ciphertext bytes and concurrent uploads cannot cross the quota (2742.9972ms)
+Ô£ö a low global free-space threshold refuses before creating an upload (2397.1643ms)
+Ô£ö a line is one JSON object with a time, a level, and a stable event name (2.6519ms)
+Ô£ö a failure goes to the error stream, carrying its detail (0.2442ms)
+Ô£ö bearer paths, secret query values, and credential fields never reach structured logs (0.3739ms)
+Ô£ö text redaction covers token-bearing paths embedded in error details (0.1111ms)
+Ô£ö the null log writes nothing (0.158ms)
+Ô£ö smtps:// sends the message over TLS, and the certificate is checked (46.0906ms)
+Ô£ö STARTTLS: the message and the login both go over the upgraded connection (14.1803ms)
+Ô£ö STARTTLS with a certificate the client does not trust fails, and nothing follows in the clear (19.154ms)
+Ô£ö a certificate for the wrong name is refused even though no SNI is sent to an IP address (6.9247ms)
+Ô£ö a relay is trusted only when its CA is given, and a CA file that cannot be read is a startup error (1.0028ms)
+Ô£ö a certificate the client does not trust is refused, and no password is sent (5.5699ms)
+Ô£ö a message is sent, and the whole conversation is what SMTP asks for (33.002ms)
+Ô£ö a non-ASCII subject is encoded, and a body in any language survives (5.175ms)
+Ô£ö credentials are sent when the server offers AUTH PLAIN (5.5064ms)
+Ô£ö credentials fall back to AUTH LOGIN when that is all the server offers (4.0198ms)
+Ô£ö a password is not sent to a server that offers no encryption (4.6578ms)
+Ô£ö the client asks for STARTTLS, and a broken handshake fails cleanly rather than hanging (6.9951ms)
+Ô£ö a refusal names the step and quotes the server (4.9294ms)
+Ô£ö a server that says nothing produces a timeout rather than a wait (417.82ms)
+Ô£ö an address that is not one is refused before anything is dialled (1.4806ms)
+Ô£ö a line beginning with a dot is escaped, which is the one rule a body cannot be trusted with (0.1184ms)
+Ô£ö the configuration is read from the environment, and a half-set pair is refused (0.7733ms)
+ÔûÂ the message builder refuses nothing and invents nothing
+  Ô£ö the From line is the practice ÔÇö their name, and their own address when one is set (0.202ms)
+Ô£ö the message builder refuses nothing and invents nothing (0.5534ms)
+Ô£ö the practice is told what arrived, what has not, and where to look (2903.7069ms)
+Ô£ö a client sending several files in one sitting is announced once (3386.5158ms)
+Ô£ö when the whole list is already in, the message says so and says what to do (3161.9675ms)
+Ô£ö a request with everything in but one document rejected does not claim to be complete (3530.8939ms)
+Ô£ö the practice can turn it off, and then nothing is sent (3006.8624ms)
+tickmark: could not tell the practice about a change to cfd3d73a-e031-405d-ba25-bf0f5b306e98: MailError: the recipient (sam@practice.example): 550 no thanks
+    at expect (file:///C:/Users/Casey/Web%20Apps/Tickmark/src/mailer.js:421:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async sendMail (file:///C:/Users/Casey/Web%20Apps/Tickmark/src/mailer.js:576:5)
+    at async notifyPracticeOfChange (file:///C:/Users/Casey/Web%20Apps/Tickmark/src/notices.js:208:27)
+    at async receiveUpload (file:///C:/Users/Casey/Web%20Apps/Tickmark/src/client-portal.js:692:3)
+    at async Server.<anonymous> (file:///C:/Users/Casey/Web%20Apps/Tickmark/src/app.js:505:9) {
+  step: 'the recipient (sam@practice.example)'
+}
+Ô£ö a mail server that refuses everything still accepts the clientÔÇÖs file (2793.3769ms)
+Ô£ö a second sitting later the same day stays quiet, and a new day speaks again (4005.1129ms)
+Ô£ö a client writing a message tells the practice, and the subject does not pretend a file arrived (2680.5598ms)
+Ô£ö a file nobody asked for is named to the practice, and is not counted as received (2393.4083ms)
+Ô£ö owner-authorised offboarding revokes access, enforces retention and holds, then deletes idempotently (7992.3681ms)
+Ô£ö a documentÔÇÖs wording can be corrected without withdrawing and re-asking (2691.239ms)
+Ô£ö a correction that changes nothing is not an event, and an empty name is refused (2909.1019ms)
+Ô£ö the date a practice reads is their own, not GreenwichÔÇÖs (1.2328ms)
+Ô£ö an unknown zone falls back to UTC rather than breaking the page, and is refused when set (0.7471ms)
+Ô£ö a practice can set where it is, and a nonsense zone is refused rather than ignored (2681.7252ms)
+Ô£ö a lost password is replaced from the command line, and every session with it (3200.8465ms)
+Ô£ö signing up still enforces the length the reset tool enforces (1702.2554ms)
+Ô£ö several requests can be closed at once, and unfinished ones are the practiceÔÇÖs call (2768.7682ms)
+Ô£ö closing nothing says so instead of looking like it worked (2527.6059ms)
+Ô£ö an encrypted PDF is recognised from the marker its trailer leaves in plain text (1.5167ms)
+Ô£ö the PDF check only looks at PDFs, so a photo is never second-guessed (0.1828ms)
+Ô£ö the duplicate check compares the two facts the client can already see (0.2635ms)
+Ô£ö sizes are written the way a person reads them (0.1683ms)
+Ô£ö a PDF that stops before its own end is flagged as likely missing pages (0.2551ms)
+Ô£ö a PNG or JPEG gives its pixel size from the header alone (1.1577ms)
+Ô£ö a photo too small to read is warned about, and everything else is left alone (0.3864ms)
+Ô£ö the clientÔÇÖs page hands the browser what it already sent, and nothing more than that (2846.3045ms)
+Ô£ö the count on a list agrees with the count for one request, for every shape of request (13.8796ms)
+Ô£ö the number shown is the number of documents the chase is asking for (6.4807ms)
+Ô£ö the flagged document is counted, which is the bug this fixture was built for (5.6136ms)
+Ô£ö every list page agrees with the same counts, and with the documents (7.9399ms)
+Ô£ö a closed request keeps its counts but stops being anyoneÔÇÖs problem (6.5228ms)
+Ô£ö the counts are scoped, so a second practice is invisible (6.4772ms)
+Ô£ö a file nobody asked for changes no count (5.3332ms)
+Ô£ö a request with nothing at all on its list is ready, and says so consistently (6.3592ms)
+Ô£ö a file arriving makes a request "files to check", not "ready" (3321.6152ms)
+Ô£ö checking an item with nothing in it is refused (2664.422ms)
+Ô£ö a request is ready only when everything has arrived and been checked (3545.0823ms)
+Ô£ö a new file clears the check, because new material has not been looked at (2585.0158ms)
+Ô£ö the state is derived, so withdrawing an item moves it with nothing written (3251.186ms)
+Ô£ö the requests list marks overdue, names the state, and filters by it (3001.5322ms)
+Ô£ö the client can say why instead of sending, and the practice sees it (2820.4227ms)
+Ô£ö a client's answer goes when they change their mind, or when a file arrives (2975.3211ms)
+Ô£ö a new request can be filled in from an old one, which is the year-two pain (2836.2842ms)
+Ô£ö the authorization URL points at Intuit and carries the state (1.7774ms)
+Ô£ö configuration comes from the environment, and the redirect is derived from the base URL (0.2022ms)
+Ô£ö a code is traded for tokens over Basic auth, and the refresh lifetime is kept (4.7126ms)
+Ô£ö a refresh trades the old refresh token for a new pair (0.713ms)
+Ô£ö a refusal from QuickBooks is thrown with its own words (1.2358ms)
+Ô£ö the client list is queried against the realm, and the QueryResponse wrapper is read (0.5636ms)
+Ô£ö customers become client rows with their name and their email (1.1243ms)
+Ô£ö a forged QuickBooks callback is refused before anything is exchanged or stored (2781.377ms)
+Ô£ö the filing profile is read from CompanyInfo, and the year end is honest (0.8488ms)
+Ô£ö a January fiscal year wraps to a December end, and a missing one is unknown not guessed (0.1949ms)
+Ô£ö failures expire rather than locking anything, and a success wipes the slate (1.6658ms)
+Ô£ö the bucket is one account, so one guesser cannot lock out a colleague (0.238ms)
+Ô£ö eleven wrong passwords stop the endpoint answering, and the right one afterwards still works (3315.8692ms)
+Ô£ö signing in properly leaves no trace of suspicion behind (3602.2853ms)
+Ô£ö a client is told how many they have sent, and sees the name and date of each (2862.1411ms)
+Ô£ö when everything has arrived, the nagging stops and the page says thank you (3646.4301ms)
+Ô£ö the receipt is a clientÔÇÖs own record, and a withdrawn document is not on it (2662.3344ms)
+Ô£ö reconciliation dry-runs aged orphans and apply keeps active, referenced, recent and external files (1776.3983ms)
+Ô£ö reconciliation is tenant-root scoped and bounded by the file cap (1562.268ms)
+Ô£ö a recovery sheet seals the same key under a printed secret, and opens again with it (1748.0569ms)
+Ô£ö the recovery secret is not a second passphrase ÔÇö it is random and shown once (0.6228ms)
+Ô£ö the wrong secret does not open a sheet ÔÇö AES-GCM is the only judge (1315.9686ms)
+Ô£ö raising the same request again brings the list forward and rolls the year (2607.6002ms)
+Ô£ö a file sealed to an old key is moved to the current one, byte for byte (4808.1529ms)
+Ô£ö a file moved twice, or a body that is not an envelope, is refused (3193.014ms)
+Ô£ö a key that still opens something cannot be retired, and says how much (3088.6934ms)
+Ô£ö retiring a key destroys its copies and keeps the record (3848.4338ms)
+Ô£ö the hosted invite migration preserves existing accounts and memberships (3482.0945ms)
+Ô£ö removing a member ends their access, destroys their copies, and keeps the record (3661.5722ms)
+Ô£ö a wrong password tells a removed member nothing (3494.6124ms)
+Ô£ö removing yourself is refused, and the store refuses the last member (5216.3776ms)
+Ô£ö a removal aimed at the wrong practice is nothing, and doing it twice is nothing (4475.6972ms)
+Ô£ö the page warns when the person being removed is the last who can open the newest files (3828.2804ms)
+Ô£ö an invitation brings a removed member back, on the same row (5141.1395ms)
+Ô£ö an invitation to somebody in another practice is still refused (4828.1441ms)
+Ô£ö the store refuses a person from another practice, and a practice that does not exist (1047.0721ms)
+Ô£ö a database that predates the removal column gets it, and nobody in it is considered removed (1818.7352ms)
+Ô£ö a newer deletion tombstone prevents an older snapshot from restoring access or data (5944.2741ms)
+Ô£ö a flagged document keeps a request off "ready", because two screens must not disagree (3181.9738ms)
+Ô£ö one press checks off everything that has arrived, and each check is its own event (2947.7548ms)
+Ô£ö the bulk check touches only what has arrived, and says how many it found (2978.8665ms)
+Ô£ö checking a flagged document does not quietly drop it (3123.9922ms)
+Ô£ö pressing it when there is nothing to check says so, and writes nothing (2832.4913ms)
+Ô£ö checking off a request needs a signed-in practice (2428.4828ms)
+Ô£ö every sensitive route declares who may use it (2.8136ms)
+Ô£ö the model reads the way it says it does (0.3008ms)
+Ô£ö an assistant is refused the keys, the members, and the mail relay (2770.9765ms)
+Ô£ö an assistant is refused a client document, and told what that means (6267.7994ms)
+Ô£ö an assistant can still do the job they were given (3244.493ms)
+Ô£ö moving somebody to assistant takes the key away rather than hiding it (2871.1038ms)
+ÔûÂ the last owner cannot be moved or removed, and a practice cannot be left without one
+  ÔûÂ an assistant is invited without a key, and arrives with nothing that opens a file
+    Ô£ö an assistant invitation cannot smuggle a key, and a keyed one still carries one (2981.8865ms)
+    Ô£ö a member who joins with a key is told the opposite thing, on a page that has the fields (2379.7577ms)
+  Ô£ö an assistant is invited without a key, and arrives with nothing that opens a file (8940.5092ms)
+Ô£ö the last owner cannot be moved or removed, and a practice cannot be left without one (12466.8894ms)
+{"ts":"2026-11-07T18:48:56.246Z","level":"info","event":"request","method":"POST","path":"/login","status":303,"ms":417}
+{"ts":"2026-11-07T18:48:56.622Z","level":"info","event":"request","method":"POST","path":"/setup","status":303,"ms":46}
+{"ts":"2026-11-07T18:48:56.719Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":94}
+{"ts":"2026-11-07T18:48:56.903Z","level":"info","event":"request","method":"POST","path":"/requests/54b149cd-0196-4d6f-8aac-cd94a38a7b2a/link","status":200,"ms":174}
+{"ts":"2026-11-07T18:48:56.914Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":200,"ms":3}
+{"ts":"2026-11-07T18:48:57.046Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/9476a0b7-204f-4efc-9e25-ccf724ae902c","status":201,"ms":114}
+{"ts":"2026-11-07T18:48:57.051Z","level":"info","event":"request","method":"GET","path":"/requests/54b149cd-0196-4d6f-8aac-cd94a38a7b2a","status":200,"ms":4}
+Ô£ö a client can submit a document to a hosted practice, and it lands in that practiceÔÇÖs own files (5274.6696ms)
+{"ts":"2026-11-07T18:48:59.990Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":252}
+{"ts":"2026-11-07T18:49:00.049Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":55}
+{"ts":"2026-11-07T18:49:00.279Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":229}
+{"ts":"2026-11-07T18:49:00.352Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":72}
+{"ts":"2026-11-07T18:49:00.357Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":4}
+{"ts":"2026-11-07T18:49:00.360Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":1}
+{"ts":"2026-11-07T18:49:00.364Z","level":"info","event":"request","method":"GET","path":"/requests/fc4b0cef-9bea-49bf-8f1a-22c21ce102c3","status":404,"ms":2}
+Ô£ö two practices, two files: each host sees only its own data (7453.9682ms)
+{"ts":"2026-11-07T18:49:06.473Z","level":"info","event":"request","method":"GET","path":"/requests","status":404,"ms":1}
+Ô£ö a host with no practice is refused before any tenant file is opened (6131.5335ms)
+{"ts":"2026-11-07T18:49:14.193Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":235}
+{"ts":"2026-11-07T18:49:14.284Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":90}
+{"ts":"2026-11-07T18:49:14.286Z","level":"info","event":"request","method":"GET","path":"/setup","status":200,"ms":2}
+{"ts":"2026-11-07T18:49:14.565Z","level":"info","event":"request","method":"POST","path":"/setup","status":303,"ms":35}
+{"ts":"2026-11-07T18:49:14.844Z","level":"info","event":"request","method":"POST","path":"/requests/c343d0b8-878d-4d47-b532-608fd12d69f4/link","status":200,"ms":279}
+{"ts":"2026-11-07T18:49:14.847Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":200,"ms":2}
+{"ts":"2026-11-07T18:49:14.849Z","level":"info","event":"request","method":"GET","path":"/r/[redacted]","status":404,"ms":1}
+Ô£ö a client link finds its practice with no host hint, and a revoked one finds nothing (8334.2088ms)
+{"ts":"2026-11-07T18:49:20.020Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":203}
+{"ts":"2026-11-07T18:49:20.087Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":66}
+{"ts":"2026-11-07T18:49:20.285Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":197}
+{"ts":"2026-11-07T18:49:20.287Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":2}
+Ô£ö the slug path answers without a wildcard host (5439.7853ms)
+Ô£ö a plan injects its limits, and an unknown plan never reads as unlimited (4432.9708ms)
+Ô£ö one practice cannot reach another practiceÔÇÖs records by guessing an address (3824.1519ms)
+Ô£ö a client link opens one request and nothing else (3954.5371ms)
+Ô£ö a signed-out visitor gets nothing from a practice address (2571.2042ms)
+Ô£ö a wrong code at the second factor cannot be ground down (3117.1728ms)
+Ô£ö the second factor is asked for before a session exists, not after (3660.8321ms)
+Ô£ö every response carries the headers this product depends on (2823.813ms)
+Ô£ö the reminder page offers to send when a mail server is configured, and names it (2932.0354ms)
+Ô£ö what is sent is what is in the fields, edits and all (2876.5164ms)
+Ô£ö a refused recipient keeps what was typed and says what the server said (2791.5908ms)
+Ô£ö a relay that cannot be reached fails as a sentence, not as a stack trace (2777.5721ms)
+Ô£ö with no mail server, the page says so, offers no send button, and sending is refused (2853.6597ms)
+Ô£ö a request with no email address for the client says where the problem is (2952.0511ms)
+Ô£ö the send form refuses an empty subject or an empty message before dialling (2603.8952ms)
+Ô£ö one practice cannot send a reminder for another practice's request (3292.59ms)
+Ô£ö a reminder sent with no link in it says so, because it is one the client cannot act on (2237.9558ms)
+Ô£ö a reminder sent with its link says nothing extra (2062.6464ms)
+Ô£ö sending a reminder needs a session (1924.7803ms)
+Ô£ö a relay that cannot be reached fails as a sentence, not as a stack trace (1458.3398ms)
+Ô£ö the URL is split into an endpoint and its credentials, and never both in the request line (2.205ms)
+Ô£ö a half-set configuration refuses at startup and says which half is missing (0.6123ms)
+Ô£ö a phone number is reduced to the digits a gateway will dial (0.2085ms)
+Ô£ö a text goes out as one form-encoded POST, signed in (38.2621ms)
+Ô£ö a refused send quotes the gateway back, and a bad number never reaches it (5.2442ms)
+Ô£ö a deployment that takes the message itself stops the send (1.4049ms)
+Ô£ö the reminder is one line and a link, naming two documents and counting the rest (0.3893ms)
+Ô£ö the chase texts a client who has a number, beside the letter (3018.1286ms)
+Ô£ö a client with no number is emailed and never texted (2716.2935ms)
+Ô£ö the schema is exactly the tables this list names, and adding one is a decision (6.84ms)
+Ô£ö a row that points at nothing is refused, so the schema is enforced and not decorative (4.6134ms)
+Ô£ö a link token is never stored ÔÇö only its digest (5.841ms)
+Ô£ö a request round-trips, and the central read reports what is outstanding (4.484ms)
+Ô£ö the history records what happened, in the order it happened (3.5918ms)
+Ô£ö the database survives being closed and reopened from a file (1838.5517ms)
+{"ts":"2026-11-07T18:48:59.297Z","level":"info","event":"request","method":"GET","path":"/","status":200,"ms":3}
+{"ts":"2026-11-07T18:48:59.307Z","level":"info","event":"request","method":"GET","path":"/requests","status":303,"ms":1}
+{"ts":"2026-11-07T18:48:59.322Z","level":"info","event":"request","method":"GET","path":"/nope","status":404,"ms":1}
+Ô£ö the server answers /healthz, serves the page, and refuses everything else (79.0186ms)
+Ô£ö reservations enforce the exact tenant boundary and quota increases admit the remaining bytes (10.7122ms)
+Ô£ö content lengths accept only safe decimal byte counts (1.0027ms)
+Ô£ö storage accounting refuses an oversized ledger instead of scanning it without a bound (5.09ms)
+Ô£ö physical blob accounting bounds its walk and never follows symlinks (5.2845ms)
+Ô£ö hosted tenant quotas and byte reservations stay isolated between practices (5969.7532ms)
+Ô£ö public commercial copy stays aligned with the authoritative catalogue (2.5281ms)
+Ô£ö hosted billing fails closed for missing or contradictory configuration (0.534ms)
+Ô£ö Checkout verifies the server catalogue and explicitly requires payment details without a trial (0.8616ms)
+Ô£ö a wrong Stripe price is refused before a Checkout session is created (0.7083ms)
+Ô£ö Stripe reconciliation retrieves authoritative state, checks associations and is idempotent (2551.9918ms)
+Ô£ö unavailable Stripe retrieval leaves local state and audit unchanged (2093.8545ms)
+Ô£ö unsupported Stripe states and a newer local watermark cannot be reconciled (1599.718ms)
+Ô£ö a webhook received during reconciliation wins and its state cannot be overwritten by the lookup (2536.9151ms)
+Ô£ö subscription retrieval uses explicit Stripe API id and returns only reconciliation fields (1.8843ms)
+Ô£ö subscription retrieval rejects invalid inputs and never returns provider error bodies as a successful snapshot (0.9329ms)
+Ô£ö a list typed once can be used for the next client without retyping it (2275.945ms)
+Ô£ö a template is a starting point: changing one never reaches back into requests made from it (2305.3903ms)
+Ô£ö a template can really be deleted, and the requests made from it cannot be (2281.2596ms)
+Ô£ö a request can be saved as a list, which is how the first one usually appears (2785.3637ms)
+Ô£ö a list with no name, or with nothing on it, is refused (2559.3936ms)
+Ô£ö every practitioner gets a practice of their own, and their work is moved into it (3192.7888ms)
+Ô£ö the migration loses nothing: every row and every value is still there (3902.4006ms)
+Ô£ö running the migration twice changes nothing the second time (4479.9404ms)
+ÔûÂ a fresh database invents no practices, and its schema needs no migration
+  Ô£ö signing up creates a practice, and the person belongs to it (2472.1988ms)
+  Ô£ö two members of one practice share its client records, which the old shape could not express (4.3261ms)
+  Ô£ö a key belongs to the practice, so the other member can be sent files (3.5481ms)
+  Ô£ö a session carries the practice, so a page knows whose records it is showing (3.7907ms)
+Ô£ö a fresh database invents no practices, and its schema needs no migration (2488.0982ms)
+Ô£ö stage B removes the session column stage A added, because nothing read it (2038.9961ms)
+Ô£ö a member with no copy of a key sees none, rather than a colleague's (264.8364ms)
+Ô£ö one member changing their passphrase leaves the other member's copy alone (275.4028ms)
+Ô£ö one key, two members, two copies ÔÇö and either passphrase opens the same file (1542.872ms)
+Ô£ö an owner export is isolated, checksummed, restoreable and decrypts its original envelope (9726.4283ms)
+Ô£ö export verification refuses a ciphertext byte changed after export (4944.1372ms)
+Ô£ö an owner export consumes a fresh TOTP or one recovery code when the practice has second factor enabled (4502.0276ms)
+Ô£ö export verification and restore refuse a symlink without promoting a destination (3567.8455ms)
+Ô£ö two-factor is off until it is armed, and a wrong code does not arm it (3369.0609ms)
+Ô£ö a correct code arms it, and sign-in then wants two things (3929.4431ms)
+Ô£ö a code works once, and a challenge is spent when it is used (3725.4004ms)
+Ô£ö a recovery code stands in for the phone, once, and is refused afterwards (3259.5364ms)
+Ô£ö turning it off needs a code, and a recovery code is enough (2696.6939ms)
+Ô£ö new recovery codes need a code, and replace the old sheet rather than adding to it (2714.079ms)
+Ô£ö a secret held but never confirmed protects nothing, and says so (1823.0618ms)
+Ô£ö a stolen session cannot grind the two-factor actions (1556.8047ms)
+Ô£ö the code is the one the specification says it is (2.005ms)
+Ô£ö base32 survives a round trip, and forgives how people paste (1.4529ms)
+Ô£ö a code is accepted inside its window and refused outside it (1.2182ms)
+Ô£ö the otpauth URI is what an authenticator app expects (0.4585ms)
+Ô£ö recovery codes are unambiguous, and read the same however they are typed (0.6904ms)
+Ô£ö public navigation configuration accepts only an explicit HTTPS origin (1.7453ms)
+Ô£ö standalone marketing output configures sign-in without enabling paid signup or external assets (215.5174ms)
+Ô£ö gateway presentation preserves signup fields, escaping and inactive billing disclosure (1.1357ms)
+Ô£ö hosted challenge retains scoped action and recovery-code explanation after layout changes (0.3408ms)
+Ô£ö workspace shell keeps navigation and POST sign-out with an accessible native mobile menu (1.2748ms)
+Ô£ö client checklist keeps encrypted upload contracts and distinguishes receipt, review and replacement (3616.7019ms)
+Ô£ö the authorization URL carries what Xero needs, and the state that guards the callback (1.7571ms)
+Ô£ö configuration comes from the environment, and the redirect is derived from the base URL (0.2534ms)
+Ô£ö a code is traded for tokens over Basic auth (4.2274ms)
+Ô£ö a refresh trades the old refresh token for a new pair (0.4908ms)
+Ô£ö a refusal from Xero is thrown with its own words (0.8658ms)
+Ô£ö connections are fetched with the bearer, and a bare array is read (0.4436ms)
+Ô£ö connections become client rows for the pipeline (1.0437ms)
+Ô£ö a Xero link is saved, refreshed in place, and can be dropped (1754.1376ms)
+Ô£ö a forged callback is refused before anything is exchanged or stored (3066.1304ms)
+Ô£ö Practice Manager clients bring a name and an email, in the order that finds the person (0.4731ms)
+Ô£ö the Practice Manager client list is fetched with the bearer and the tenant (0.4735ms)
+Ô£ö fetchOrganisation reads one organisation, and the profile keeps the facts a request needs (0.526ms)
+Ô£ö a year end without both a day and a month is unknown, never guessed (0.1192ms)
+Ô£ö a refusal from Xero is thrown as its own error rather than as silence (0.3399ms)
+Ô£ö the books-behind signal is off until the practice turns it on, behind a warning (2924.8975ms)
+Ô£ö the books signal keeps a count and a date, and throws the rows away (0.7252ms)
+Ô£ö a books check is refused while the signal is off, so nothing is read (2259.3449ms)
+Ô£ö crc32 is the referenceÔÇÖs checksum, not our own idea of one (1.9164ms)
+Ô£ö an archive unpacks into exactly the files it was given, bytes and all (2.7653ms)
+Ô£ö an archive of nothing is still a valid, empty archive (0.1827ms)
+Ô£ö a clientÔÇÖs file keeps its name ÔÇö the UTF-8 flag is set (0.2324ms)
+Ô£ö two files with the same name both survive ÔÇö an archive never keeps only one (0.3995ms)
+Ô£ö what is stored is the file as it is ÔÇö this compresses nothing and mangles nothing (0.4399ms)
+Ôä╣ tests 563
+Ôä╣ suites 0
+Ôä╣ pass 563
+Ôä╣ fail 0
+Ôä╣ cancelled 0
+Ôä╣ skipped 0
+Ôä╣ todo 0
+Ôä╣ duration_ms 81540.7687
+Ôä╣ Error: 91.57% line coverage does not meet threshold of 93%.
+Ôä╣ Error: 74.65% branch coverage does not meet threshold of 75%.
+Ôä╣ Error: 88.86% function coverage does not meet threshold of 90%.
+Ôä╣ start of coverage report
+Ôä╣ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Ôä╣ file                        | line % | branch % | funcs % | uncovered lines
+Ôä╣ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Ôä╣ src                         |        |          |         | 
+Ôä╣  account-views.js           |  96.93 |    45.45 |  100.00 | 35-38 60 197-198 253
+Ôä╣  app.js                     |  99.63 |    83.93 |  100.00 | 329-330
+Ôä╣  auth.js                    | 100.00 |    84.09 |  100.00 | 
+Ôä╣  blobs.js                   | 100.00 |   100.00 |  100.00 | 
+Ôä╣  board-views.js             |  99.35 |    87.56 |   98.36 | 284 739-745
+Ôä╣  bulk-ask-views.js          |  92.01 |    71.82 |  100.00 | 105-108 111-114 202-203 205-206 209-210 212-213 230-238 275-276 286-288 368-370
+Ôä╣  chase-views.js             |  98.93 |    88.89 |  100.00 | 157-158 241 439-440 549-550
+Ôä╣  client-portal.js           |  92.55 |    83.22 |   79.17 | 137-144 216 220-224 311-312 379-384 390-391 398-399 422-426 434-435 447-450 453-456 536-544 614-615
+Ôä╣  clients-views.js           |  97.74 |    66.15 |  100.00 | 184-185 293 358 415-416 526-529 633-638
+Ôä╣  clock.js                   |  96.83 |    88.89 |  100.00 | 121-124
+Ôä╣  crypto.js                  |  95.83 |    46.15 |  100.00 | 34-35 79-80
+Ôä╣  db.js                      |  96.85 |    86.27 |  100.00 | 591-593 719-721 750-768 818-819 825-827
+Ôä╣  http.js                    |  97.55 |    85.04 |   87.10 | 50 175-177 185-187 192-194
+Ôä╣  integrations-sync.js       |  98.55 |    76.92 |   75.00 | 42
+Ôä╣  integrations-views.js      |  91.78 |    53.57 |  100.00 | 29-33 88 140-145
+Ôä╣  keys-views.js              |  87.94 |    65.52 |   75.00 | 90-91 109-110 112-114 123-125 213-220 242-243 245-246 248-249 260-261 391 398-416 483-487 505 524 539-542 616-624 635-646
+Ôä╣  log.js                     | 100.00 |    94.44 |   83.33 | 
+Ôä╣  mailer.js                  |  97.99 |    94.08 |   91.49 | 173-175 478-479 496-500 512-513
+Ôä╣  members-views.js           |  95.49 |    78.33 |  100.00 | 102-103 106-107 114 211-214 217-221 230 304-305 311-313 339-340 484-485 495-496 537-538 540-541 720-721 727-731
+Ôä╣  notices.js                 |  99.38 |    90.91 |  100.00 | 446-448
+Ôä╣  public-urls.js             | 100.00 |   100.00 |  100.00 | 
+Ôä╣  quickbooks-views.js        |  38.54 |    20.00 |   20.00 | 46-50 52-56 64-79 87-92 115-165 189-195 201-207 224 231-247 256-364 368-371
+Ôä╣  ratelimit.js               | 100.00 |   100.00 |  100.00 | 
+Ôä╣  request-actions.js         |  95.78 |    74.37 |   87.88 | 212-213 226 365-366 378-383 473-478 502-515 722-725
+Ôä╣  roles.js                   |  99.29 |    94.12 |  100.00 | 139
+Ôä╣  signin-views.js            |  92.05 |    69.04 |   90.48 | 129-133 299 405-421 441-447 474-480 640-641 713-730 752-753 799-800 960-967 973-978 1018-1024
+Ôä╣  sms.js                     |  96.69 |    75.00 |   85.71 | 116-117 147-148 162-163
+Ôä╣  storage.js                 |  94.38 |    80.00 |  100.00 | 12-13 43-45
+Ôä╣  store.js                   |  98.20 |    84.14 |   97.53 | 73-75 173-174 341-343 538-539 618-619 624-629 1057-1070 1073-1079 1443-1444 2275-2277 2292-2296
+Ôä╣  style.js                   | 100.00 |   100.00 |  100.00 | 
+Ôä╣  templates-views.js         |  74.62 |    62.50 |   77.78 | 67 131-132 141-208 212-228 244-249 255-256 274-275 292-293
+Ôä╣  tenancy                    |        |          |         | 
+Ôä╣   backup-status.js          | 100.00 |    92.31 |  100.00 | 
+Ôä╣   billing.js                |  94.96 |    78.33 |   66.67 | 42-43 46-47 59-60 99-100 168-169 199-200
+Ôä╣   client-address.js         | 100.00 |    85.00 |  100.00 | 
+Ôä╣   commercial-config.js      | 100.00 |   100.00 |  100.00 | 
+Ôä╣   entry.js                  |  90.80 |    68.75 |   84.62 | 93-94 109-119 141-142
+Ôä╣   gateway.js                |  88.66 |    71.86 |   85.71 | 193-195 210-211 310-312 331-335 346-348 369-376 389-391 482-484 523-533 571-577 620-626 657-667 669-671 681 691-694 697 713-716 745-751 775-777
+Ôä╣   offboarding.js            |  91.75 |    66.67 |  100.00 | 40-41 60-62 69-70 82-84 98-100 180-182
+Ôä╣   operational-status.js     |  68.09 |    76.47 |  100.00 | 12-15 21-23 30-33 42-45
+Ôä╣   pool.js                   |  84.44 |    73.33 |  100.00 | 42-53 68-69
+Ôä╣   practice-export.js        |  91.96 |    63.11 |   94.12 | 35-36 60-61 68-69 74-75 78 140-141 193-194 196-197 212-213 249-250 252-253 268 304-306
+Ôä╣   quickbooks.js             |  95.93 |    75.00 |   82.35 | 161-165 201-205
+Ôä╣   reconcile-uploads.js      |  97.27 |    86.54 |  100.00 | 43-45
+Ôä╣   registry.js               |  93.86 |    70.00 |   94.29 | 264-269 273-280 300-301 311-313 330-331 369-371 661-663 698-706 710-712 714-716 727-730 743-745
+Ôä╣   resolve.js                |  91.72 |    75.76 |   83.33 | 97 121-130 143
+Ôä╣   restore-tombstones.js     |  92.31 |    39.13 |  100.00 | 47-49 61-62
+Ôä╣   stripe.js                 |  98.33 |    83.13 |   80.00 | 206-207 233-234
+Ôä╣   views.js                  |  95.88 |    66.67 |  100.00 | 94 205-212 273-276 284-285
+Ôä╣   xero.js                   |  90.03 |    68.24 |   77.78 | 157-161 251-260 285-289 308-321 363-367
+Ôä╣  totp.js                    | 100.00 |    91.18 |  100.00 | 
+Ôä╣  version.js                 |  90.91 |    50.00 |  100.00 | 18-19
+Ôä╣  views.js                   | 100.00 |    95.60 |  100.00 | 
+Ôä╣  xero-views.js              |  57.08 |    31.03 |   50.00 | 50-54 56-60 72-82 174-181 233-251 261-267 286 289-307 312-315 326-431
+Ôä╣ tools                       |        |          |         | 
+Ôä╣  backup-all.mjs             |  95.87 |    71.74 |  100.00 | 113-114 116-120 159-161
+Ôä╣  backup-lib.mjs             |  96.31 |    70.89 |   88.00 | 91-92 210-211 213-214 219-221 247-248 256-257 324 326
+Ôä╣  backup-tenant-history.mjs  |  93.10 |    50.00 |   71.43 | 33-34 36-37
+Ôä╣  backup.mjs                 |  81.44 |    40.00 |  100.00 | 58-64 87-97
+Ôä╣  build-marketing.mjs        |  92.59 |    40.00 |  100.00 | 12-13
+Ôä╣  finalize-deletions.mjs     |  67.61 |    14.29 |    0.00 | 39-45 52-67
+Ôä╣  hosted-backup.mjs          |  91.20 |    47.46 |   75.00 | 75 95-96 102-108 153 180-181 237-245
+Ôä╣  hosted-maintenance.mjs     |  97.99 |    44.12 |   76.47 | 33 37 47
+Ôä╣  import-tenant.mjs          |  93.70 |    35.29 |   66.67 | 55-56 69-70 105-106 118-119
+Ôä╣  reap-pending-tenants.mjs   |  68.42 |    16.67 |  100.00 | 29-30 38-53
+Ôä╣  reconcile-uploads.mjs      |  96.00 |    10.00 |    0.00 | 34-35
+Ôä╣  reset-password.mjs         |  91.49 |    16.67 |  100.00 | 60-63 76-79
+Ôä╣  restore-hosted.mjs         |  96.43 |    57.69 |   90.48 | 19-20 59-60 69-70
+Ôä╣  storage-report.mjs         | 100.00 |    16.67 |  100.00 | 
+Ôä╣ web                         |        |          |         | 
+Ôä╣  download.js                |  65.46 |    31.58 |   62.50 | 55-57 70-71 76-80 98-101 114-116 121-127 152-194
+Ôä╣  invite.js                  |  52.63 |    66.67 |  100.00 | 29-55
+Ôä╣  keys.js                    |  76.67 |    88.89 |  100.00 | 39-52
+Ôä╣  members.js                 |  86.11 |    27.27 |   66.67 | 58-65 82-84 103-106
+Ôä╣  preflight.js               |  97.97 |    86.67 |  100.00 | 171-174
+Ôä╣  reencrypt.js               |  90.68 |    61.90 |   80.00 | 52-54 69-71 94-95 108-110
+Ôä╣  setup.js                   |  79.10 |    42.86 |  100.00 | 31-33 35-37 39-41 61-65
+Ôä╣  tickmark-crypto.js         |  99.52 |    89.71 |  100.00 | 93-94
+Ôä╣  upload.js                  |  78.28 |    41.94 |   60.00 | 84-91 101-106 115-119 122-126 129-131 143-144 149-155 166-171 213-218
+Ôä╣  zip.js                     |  99.38 |    84.21 |  100.00 | 58
+Ôä╣ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Ôä╣ all files                   |  91.57 |    74.65 |   88.86 | 
+Ôä╣ ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Ôä╣ end of coverage report

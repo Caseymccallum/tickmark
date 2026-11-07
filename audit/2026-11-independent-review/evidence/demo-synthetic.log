@@ -1,0 +1,23 @@
+{"ts":"2026-11-07T18:49:53.839Z","level":"info","event":"request","method":"POST","path":"/signup","status":200,"ms":178}
+{"ts":"2026-11-07T18:49:53.851Z","level":"info","event":"request","method":"GET","path":"/verify/[redacted]","status":200,"ms":1}
+{"ts":"2026-11-07T18:49:53.860Z","level":"info","event":"request","method":"POST","path":"/verify/[redacted]","status":303,"ms":6}
+{"ts":"2026-11-07T18:49:53.868Z","level":"info","event":"request","method":"POST","path":"/members/name","status":303,"ms":3}
+{"ts":"2026-11-07T18:49:54.116Z","level":"info","event":"request","method":"POST","path":"/setup","status":303,"ms":5}
+{"ts":"2026-11-07T18:49:54.120Z","level":"info","event":"request","method":"POST","path":"/members/invite","status":201,"ms":3}
+{"ts":"2026-11-07T18:49:54.309Z","level":"info","event":"request","method":"POST","path":"/invite/[redacted]","status":303,"ms":183}
+{"ts":"2026-11-07T18:49:54.330Z","level":"info","event":"request","method":"POST","path":"/requests","status":303,"ms":6}
+{"ts":"2026-11-07T18:49:54.344Z","level":"info","event":"request","method":"POST","path":"/requests/cc2e6bd3-95aa-48e8-badc-03d20edc0a0c/link","status":200,"ms":5}
+{"ts":"2026-11-07T18:49:54.364Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/c5ddef3e-3bec-4e39-8913-8573d3e078c3","status":201,"ms":15}
+{"ts":"2026-11-07T18:49:54.382Z","level":"info","event":"request","method":"POST","path":"/r/[redacted]/items/252cbf8d-291b-4eab-ad2e-7b49086a0483","status":201,"ms":12}
+{"ts":"2026-11-07T18:49:54.389Z","level":"info","event":"request","method":"POST","path":"/requests/cc2e6bd3-95aa-48e8-badc-03d20edc0a0c/check-all","status":303,"ms":4}
+FICTIONAL SYNTHETIC DATA ONLY ÔÇö local demonstration; no billing or external services.
+Practice: FICTIONAL ÔÇö Example Practice (owner@fictional.tickmark.invalid)
+Owner password (generated for this local run): [redacted — generated for this local run only]
+Staff password (generated for this local run): [redacted — generated for this local run only]
+Key passphrase (generated for this local run): [redacted — generated for this local run only]
+Request after starting the local app: http://localhost:3000/requests/cc2e6bd3-95aa-48e8-badc-03d20edc0a0c
+Client link after starting the local app: http://localhost:3000/r/[redacted]
+Start it with: $env:TICKMARK_DATA='C:\Users\Casey\Web Apps\Tickmark\audit\2026-11-independent-review\evidence\scratch\tickmark.db'; npm start
+Staff invitation: FICTIONAL assistant staff@fictional.tickmark.invalid (accepted in the demo)
+Data directory: C:\Users\Casey\Web Apps\Tickmark\audit\2026-11-independent-review\evidence\scratch
+Two fictional PDF uploads are encrypted; one checklist item remains outstanding.

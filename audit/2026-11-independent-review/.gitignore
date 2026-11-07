@@ -1,0 +1,4 @@
+# The audit's evidence is the point, so its logs are kept even though the repository
+# ignores *.log elsewhere (build and runtime noise). These are captured output, committed
+# on purpose, and scrubbed of credentials before publication — see AUDIT_EVIDENCE_MANIFEST.md §6.
+!*.log

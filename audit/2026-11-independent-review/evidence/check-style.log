@@ -1,0 +1,17 @@
+  TOKENS             93 lines, starting at 28
+  BASE              141 lines, starting at 122
+  COMPONENTS         98 lines, starting at 264
+  FORMS              53 lines, starting at 363
+  TABLES            127 lines, starting at 417
+  SURFACES           72 lines, starting at 545
+  CLIENT_AND_MISC   192 lines, starting at 618
+  SHELL              98 lines, starting at 819
+
+  427 rules, 50.3 KB of CSS in every response
+  56 variables used, and every one of them defined
+  38 pairs of text and background clear AA; the tightest is light: warn-ink on warn-bg at 5.00:1
+  control borders clear 3:1 on all three surfaces in both themes
+  28 colour tokens, every one defined in both modes
+  a print block is present, for the page on paper
+  no backticks inside the literal, every rule closed, every token defined and above AA
+

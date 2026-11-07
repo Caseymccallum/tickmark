@@ -1,0 +1,171 @@
+{
+  "base": "http://127.0.0.1:55806",
+  "steps": [
+    {
+      "name": "home",
+      "path": "/",
+      "status": 200,
+      "bytes": 55000
+    },
+    {
+      "name": "healthz",
+      "path": "/healthz",
+      "status": 200,
+      "bytes": 43
+    },
+    {
+      "name": "signin",
+      "path": "/signin",
+      "status": 303,
+      "bytes": 0
+    },
+    {
+      "name": "board",
+      "path": "/requests",
+      "status": 200,
+      "bytes": 63078
+    },
+    {
+      "name": "files",
+      "path": "/files",
+      "status": 200,
+      "bytes": 62984
+    },
+    {
+      "name": "chase",
+      "path": "/chase",
+      "status": 200,
+      "bytes": 63702
+    },
+    {
+      "name": "keys",
+      "path": "/keys",
+      "status": 200,
+      "bytes": 66094
+    },
+    {
+      "name": "members",
+      "path": "/members",
+      "status": 200,
+      "bytes": 68772
+    },
+    {
+      "name": "templates",
+      "path": "/templates",
+      "status": 200,
+      "bytes": 61639
+    },
+    {
+      "name": "account-sessions",
+      "path": "/account/sessions",
+      "status": 200,
+      "bytes": 62454
+    },
+    {
+      "name": "integrations",
+      "path": "/integrations",
+      "status": 200,
+      "bytes": 61957
+    },
+    {
+      "name": "request",
+      "path": "/requests/cc2e6bd3-95aa-48e8-badc-03d20edc0a0c",
+      "status": 200,
+      "bytes": 77267
+    },
+    {
+      "name": "client-page",
+      "path": "/r/[redacted]",
+      "status": 200,
+      "bytes": 60945
+    },
+    {
+      "name": "anonymous-files",
+      "path": "/files",
+      "status": 303,
+      "bytes": 0
+    }
+  ],
+  "headers": {
+    "connection": "keep-alive",
+    "content-encoding": "gzip",
+    "content-length": "17257",
+    "content-security-policy": "default-src 'none'; script-src 'self' 'nonce-SRHTzzkK_KtLD2phFPnTkg'; style-src 'nonce-SRHTzzkK_KtLD2phFPnTkg'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "content-type": "text/html; charset=utf-8",
+    "cross-origin-opener-policy": "same-origin",
+    "date": "Sat, 07 Nov 2026 18:50:37 GMT",
+    "keep-alive": "timeout=5",
+    "referrer-policy": "no-referrer",
+    "vary": "accept-encoding",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY"
+  },
+  "blobs": [],
+  "findings": [],
+  "csp": "default-src 'none'; script-src 'self' 'nonce-SRHTzzkK_KtLD2phFPnTkg'; style-src 'nonce-SRHTzzkK_KtLD2phFPnTkg'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "hsts": null,
+  "xcto": "nosniff",
+  "frame": "DENY",
+  "referrer": "no-referrer",
+  "cspNoncePresent": true,
+  "healthBody": "{\"ok\":true,\"version\":\"0.2.0\",\"practices\":2}",
+  "healthHeaders": {
+    "connection": "keep-alive",
+    "content-length": "43",
+    "content-type": "application/json",
+    "cross-origin-opener-policy": "same-origin",
+    "date": "Sat, 07 Nov 2026 18:50:37 GMT",
+    "keep-alive": "timeout=5",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY"
+  },
+  "signedIn": 303,
+  "requestId": "cc2e6bd3-95aa-48e8-badc-03d20edc0a0c",
+  "requestPageMentions": {
+    "passphrase": true,
+    "encryption": true,
+    "progress": true,
+    "unreviewed": true
+  },
+  "clientPage": {
+    "status": 200,
+    "hasUploadScript": true,
+    "hasCryptoScript": false,
+    "hasPreflight": false,
+    "asksForAccount": false,
+    "viewportMeta": true,
+    "langAttr": true
+  },
+  "anonymousFilesStatus": 303,
+  "anonymousRedirect": "/signin",
+  "plaintextUpload": {
+    "status": 400,
+    "body": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>That did not work · Tickmark</title>\n  <link rel=\"icon\" href=\"data:image/svg+xml,%3Csvg%20xmlns%3D%22http"
+  },
+  "tables": [
+    "access_token",
+    "client",
+    "connection",
+    "entity",
+    "event",
+    "invite",
+    "key_wrapping",
+    "login_challenge",
+    "password_reset",
+    "practice",
+    "practice_key",
+    "practitioner",
+    "recovery_code",
+    "request",
+    "request_item",
+    "session",
+    "signup_token",
+    "template",
+    "template_item",
+    "upload",
+    "upload_reservation"
+  ],
+  "tableCount": 21,
+  "linkTokenStoredInClear": []
+}

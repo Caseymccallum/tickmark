@@ -1,0 +1,20 @@
+{
+  "before": {
+    "practices": 1,
+    "practitioners": 2,
+    "sessions": 5
+  },
+  "verifyTokenIssuedForTakenAddress": true,
+  "verifyPageStatus": 200,
+  "verifyPostStatus": 200,
+  "verifyPostLocation": null,
+  "gotSession": false,
+  "sessionCanReadBoard": 303,
+  "sessionCanReadMembers": 303,
+  "after": {
+    "practices": 1,
+    "practitioners": 2,
+    "sessions": 5
+  },
+  "ownerPasswordStillWorks": 303
+}

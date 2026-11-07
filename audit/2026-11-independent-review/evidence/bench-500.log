@@ -1,0 +1,58 @@
+{"ts":"2026-11-07T18:52:25.671Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":178}
+{"ts":"2026-11-07T18:52:25.700Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":22}
+fixture: 500 clients, 2000 documents requested, 500 files ÔÇö built in 3679 ms
+
+{"ts":"2026-11-07T18:52:25.736Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":18}
+{"ts":"2026-11-07T18:52:25.757Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":19}
+{"ts":"2026-11-07T18:52:25.779Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":16}
+{"ts":"2026-11-07T18:52:25.797Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":16}
+{"ts":"2026-11-07T18:52:25.827Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":15}
+{"ts":"2026-11-07T18:52:25.849Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":6}
+{"ts":"2026-11-07T18:52:25.864Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":6}
+{"ts":"2026-11-07T18:52:25.879Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":6}
+{"ts":"2026-11-07T18:52:25.894Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":5}
+{"ts":"2026-11-07T18:52:25.900Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":5}
+{"ts":"2026-11-07T18:52:25.912Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:25.928Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:25.943Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:25.959Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:25.976Z","level":"info","event":"request","method":"GET","path":"/requests","status":200,"ms":8}
+{"ts":"2026-11-07T18:52:25.994Z","level":"info","event":"request","method":"GET","path":"/clients","status":200,"ms":11}
+{"ts":"2026-11-07T18:52:26.009Z","level":"info","event":"request","method":"GET","path":"/clients","status":200,"ms":11}
+{"ts":"2026-11-07T18:52:26.023Z","level":"info","event":"request","method":"GET","path":"/clients","status":200,"ms":10}
+{"ts":"2026-11-07T18:52:26.039Z","level":"info","event":"request","method":"GET","path":"/clients","status":200,"ms":11}
+{"ts":"2026-11-07T18:52:26.054Z","level":"info","event":"request","method":"GET","path":"/clients","status":200,"ms":10}
+{"ts":"2026-11-07T18:52:26.078Z","level":"info","event":"request","method":"GET","path":"/chase","status":200,"ms":18}
+{"ts":"2026-11-07T18:52:26.107Z","level":"info","event":"request","method":"GET","path":"/chase","status":200,"ms":17}
+{"ts":"2026-11-07T18:52:26.138Z","level":"info","event":"request","method":"GET","path":"/chase","status":200,"ms":16}
+{"ts":"2026-11-07T18:52:26.159Z","level":"info","event":"request","method":"GET","path":"/chase","status":200,"ms":19}
+{"ts":"2026-11-07T18:52:26.185Z","level":"info","event":"request","method":"GET","path":"/chase","status":200,"ms":16}
+{"ts":"2026-11-07T18:52:26.205Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":5}
+{"ts":"2026-11-07T18:52:26.220Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.236Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.250Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.266Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.282Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.298Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.303Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.313Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.329Z","level":"info","event":"request","method":"GET","path":"/files","status":200,"ms":4}
+{"ts":"2026-11-07T18:52:26.349Z","level":"info","event":"request","method":"GET","path":"/ask-everyone","status":200,"ms":10}
+{"ts":"2026-11-07T18:52:26.365Z","level":"info","event":"request","method":"GET","path":"/ask-everyone","status":200,"ms":10}
+{"ts":"2026-11-07T18:52:26.380Z","level":"info","event":"request","method":"GET","path":"/ask-everyone","status":200,"ms":9}
+{"ts":"2026-11-07T18:52:26.396Z","level":"info","event":"request","method":"GET","path":"/ask-everyone","status":200,"ms":9}
+{"ts":"2026-11-07T18:52:26.410Z","level":"info","event":"request","method":"GET","path":"/ask-everyone","status":200,"ms":8}
+{"ts":"2026-11-07T18:52:26.419Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":200,"ms":8}
+{"ts":"2026-11-07T18:52:26.440Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:26.455Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:26.470Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":200,"ms":7}
+{"ts":"2026-11-07T18:52:26.485Z","level":"info","event":"request","method":"GET","path":"/requests.csv","status":200,"ms":6}
+     22 ms median      33 ms worst   board
+     15 ms median      22 ms worst   board, closed tab
+     16 ms median      16 ms worst   board, searched
+     15 ms median      19 ms worst   clients
+     24 ms median      31 ms worst   chase
+     16 ms median      19 ms worst   documents
+     15 ms median      16 ms worst   documents, searched
+     15 ms median      20 ms worst   ask everyone
+     15 ms median      22 ms worst   CSV of requests

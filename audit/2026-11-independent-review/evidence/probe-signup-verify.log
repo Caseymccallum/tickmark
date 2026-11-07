@@ -1,0 +1,26 @@
+{"ts":"2026-11-07T18:51:55.858Z","level":"info","event":"request","method":"POST","path":"/signup","status":200,"ms":205}
+{"ts":"2026-11-07T18:51:55.880Z","level":"info","event":"request","method":"GET","path":"/verify/[redacted]","status":200,"ms":2}
+{"ts":"2026-11-07T18:51:55.893Z","level":"info","event":"request","method":"POST","path":"/verify/[redacted]","status":200,"ms":11}
+{"ts":"2026-11-07T18:51:55.908Z","level":"info","event":"request","method":"GET","path":"/requests","status":303,"ms":1}
+{"ts":"2026-11-07T18:51:55.923Z","level":"info","event":"request","method":"GET","path":"/members","status":303,"ms":1}
+{"ts":"2026-11-07T18:51:56.137Z","level":"info","event":"request","method":"POST","path":"/signin","status":303,"ms":199}
+{
+  "before": {
+    "practices": 1,
+    "practitioners": 2,
+    "sessions": 5
+  },
+  "verifyTokenIssuedForTakenAddress": true,
+  "verifyPageStatus": 200,
+  "verifyPostStatus": 200,
+  "verifyPostLocation": null,
+  "gotSession": false,
+  "sessionCanReadBoard": 303,
+  "sessionCanReadMembers": 303,
+  "after": {
+    "practices": 1,
+    "practitioners": 2,
+    "sessions": 5
+  },
+  "ownerPasswordStillWorks": 303
+}

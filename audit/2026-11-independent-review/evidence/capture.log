@@ -1,0 +1,41 @@
+page 9
+signed in: yes (on /requests)
+[1] board
+  saved 01-board-desktop
+  saved 02-board-desktop-full
+[2] request detail
+  saved 03-request-detail-desktop
+  saved 04-request-detail-desktop-full
+  !! no image for 05-request-detail-mobile: screenshot failed: CDP request timed out: Page.captureScreenshot
+[3] client checklist (Lodge & Co, 0 of 4)
+  !! no image for 06-client-checklist-desktop: screenshot failed: CDP request timed out: Page.captureScreenshot
+page 10
+signed in: yes (on /requests)
+[1] board (already captured) — skipping 01-04
+[2] request detail mobile
+  saved 05-request-detail-mobile.jpg
+[3] client checklist (Lodge & Co, 0 of 4)
+  !! no image for 06-client-checklist-desktop: screenshot failed: CDP request timed out: Page.captureScreenshot
+  saved 07-client-checklist-mobile.jpg
+phase=desktop page=11
+signed in: yes
+  !! 01-board-desktop: screenshot failed: CDP request timed out: Page.captureScreenshot
+phase=desktop page=12
+signed in: yes
+  !! 01-board-desktop: screenshot failed: CDP request timed out: Page.captureScreenshot
+window 899717318
+page 17
+signed in: yes
+  01-board-desktop.jpg  28 KB
+  02-board-desktop-full.jpg  82 KB
+  03-request-detail-desktop.jpg  39 KB
+  04-request-detail-desktop-full.jpg  243 KB
+  06-client-checklist-desktop.jpg  30 KB
+  10-chase-desktop.jpg  40 KB
+  11-clients-desktop.jpg  26 KB
+  12-home-signedout-desktop.jpg  28 KB
+  05-request-detail-mobile.jpg  22 KB
+  07-client-checklist-mobile.jpg  16 KB
+  08-client-checklist-mobile-tall.jpg  16 KB
+  09-client-receipt-mobile.jpg  8 KB
+  14-signin-mobile.jpg  10 KB
